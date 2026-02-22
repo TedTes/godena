@@ -23,6 +23,19 @@ const settingsRows = [
   { icon: 'log-out-outline', label: 'Sign Out', value: '', danger: true },
 ];
 
+function formatIntent(intent: string) {
+  switch (intent) {
+    case 'long_term':
+      return 'Long-term';
+    case 'friendship':
+      return 'Friendship';
+    case 'marriage':
+      return 'Marriage';
+    default:
+      return 'Dating';
+  }
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
   const myGroups = mockGroups.filter((g) => g.isMember);
@@ -81,7 +94,7 @@ export default function ProfileScreen() {
   const ethnicity = profile?.ethnicity ?? 'Habesha';
   const religion = profile?.religion ?? 'Not set';
   const languages = profile?.languages ?? [];
-  const intent = profile?.intent ?? 'dating';
+  const intent = formatIntent(profile?.intent ?? 'dating');
 
   const toggleGroup = (id: string, val: boolean) => {
     setOpenGroups((prev) => ({ ...prev, [id]: val }));

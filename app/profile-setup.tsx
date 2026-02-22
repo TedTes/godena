@@ -15,15 +15,35 @@ import { useRouter } from 'expo-router';
 import { Colors, Radius, Spacing } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 
+const INTENT_OPTIONS = [
+  { value: 'friendship', label: 'Friendship' },
+  { value: 'dating', label: 'Dating' },
+  { value: 'long_term', label: 'Long-term' },
+  { value: 'marriage', label: 'Marriage' },
+] as const;
+
 export default function ProfileSetupScreen() {
   const router = useRouter();
   const [fullName, setFullName] = useState('');
   const [city, setCity] = useState('');
   const [bio, setBio] = useState('');
+  const [ethnicity, setEthnicity] = useState('');
+  const [religion, setReligion] = useState('');
+  const [languagesInput, setLanguagesInput] = useState('');
+  const [intent, setIntent] = useState<(typeof INTENT_OPTIONS)[number]['value']>('dating');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const canSubmit = fullName.trim().length >= 2 && city.trim().length >= 2 && !saving;
+  const canSubmit =
+    fullName.trim().length >= 2 &&
+    city.trim().length >= 2 &&
+    ethnicity.trim().length >= 2 &&
+    !saving;
+
+  const parsedLanguages = languagesInput
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   const saveProfile = async () => {
     if (!canSubmit) {
@@ -47,6 +67,10 @@ export default function ProfileSetupScreen() {
       full_name: fullName.trim(),
       city: city.trim(),
       bio: bio.trim() || null,
+      ethnicity: ethnicity.trim(),
+      religion: religion.trim() || null,
+      languages: parsedLanguages,
+      intent,
       last_active_at: new Date().toISOString(),
     });
 
@@ -109,6 +133,66 @@ export default function ProfileSetupScreen() {
                 multiline
                 maxLength={300}
               />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Ethnicity</Text>
+              <TextInput
+                style={styles.input}
+                value={ethnicity}
+                onChangeText={setEthnicity}
+                placeholder="Ethiopian, Eritrean, Habesha..."
+                placeholderTextColor={Colors.muted}
+              />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Religion (optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={religion}
+                onChangeText={setReligion}
+                placeholder="Orthodox Christian, Muslim..."
+                placeholderTextColor={Colors.muted}
+              />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Languages (comma separated)</Text>
+              <TextInput
+                style={styles.input}
+                value={languagesInput}
+                onChangeText={setLanguagesInput}
+                placeholder="Amharic, English, Tigrinya"
+                placeholderTextColor={Colors.muted}
+                autoCapitalize="words"
+              />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Intent</Text>
+              <View style={styles.intentRow}>
+                {INTENT_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.intentChip,
+                      intent === option.value && styles.intentChipActive,
+                    ]}
+                    onPress={() => setIntent(option.value)}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.intentChipText,
+                        intent === option.value && styles.intentChipTextActive,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -174,6 +258,31 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     paddingTop: 12,
     paddingBottom: 12,
+  },
+  intentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  intentChip: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  intentChipActive: {
+    backgroundColor: Colors.terracotta,
+    borderColor: Colors.terracotta,
+  },
+  intentChipText: {
+    fontSize: 12,
+    color: Colors.brownMid,
+    fontWeight: '600',
+  },
+  intentChipTextActive: {
+    color: Colors.white,
   },
   errorText: {
     color: Colors.error,
