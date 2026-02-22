@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockUser, mockGroups, mockEvents, mockReveal } from '../../data/mock';
+import { mockGroups, mockEvents, mockReveal } from '../../data/mock';
+import { supabase } from '../../lib/supabase';
 
 function formatTime(iso: string) {
   const d = new Date(iso);
@@ -21,6 +22,33 @@ function formatTime(iso: string) {
 export default function HomeScreen() {
   const router = useRouter();
   const myGroups = mockGroups.filter((g) => g.isMember);
+  const [firstName, setFirstName] = useState('there');
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+      if (!userId) {
+        setLoadingProfile(false);
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (profile?.full_name) {
+        setFirstName(profile.full_name.split(' ')[0] ?? profile.full_name);
+      }
+
+      setLoadingProfile(false);
+    };
+
+    void loadProfile();
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -29,7 +57,9 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.wordmark}>Godena</Text>
-            <Text style={styles.greeting}>Good morning, {mockUser.name.split(' ')[0]} 👋</Text>
+            <Text style={styles.greeting}>
+              Good morning, {loadingProfile ? '...' : firstName} 👋
+            </Text>
           </View>
           <TouchableOpacity style={styles.notifBtn}>
             <Ionicons name="notifications-outline" size={22} color={Colors.brown} />

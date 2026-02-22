@@ -1,18 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   Switch,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockUser, mockGroups } from '../../data/mock';
+import { mockGroups } from '../../data/mock';
+import { supabase } from '../../lib/supabase';
 
 const settingsRows = [
   { icon: 'notifications-outline', label: 'Notifications', value: '' },
@@ -25,13 +26,79 @@ const settingsRows = [
 export default function ProfileScreen() {
   const router = useRouter();
   const myGroups = mockGroups.filter((g) => g.isMember);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [profile, setProfile] = useState<{
+    full_name: string;
+    city: string | null;
+    bio: string | null;
+    birth_date: string | null;
+    ethnicity: string | null;
+    religion: string | null;
+    languages: string[] | null;
+    intent: string;
+  } | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(
     Object.fromEntries(myGroups.map((g) => [g.id, g.isOpenToConnect]))
   );
 
+  useEffect(() => {
+    const loadProfile = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+      if (!userId) {
+        setLoadingProfile(false);
+        router.replace('/(auth)/phone');
+        return;
+      }
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      setProfile(data ?? null);
+      setLoadingProfile(false);
+    };
+
+    void loadProfile();
+  }, [router]);
+
+  const age = useMemo(() => {
+    if (!profile?.birth_date) {
+      return null;
+    }
+    const birthYear = new Date(profile.birth_date).getFullYear();
+    if (!birthYear) {
+      return null;
+    }
+    return new Date().getFullYear() - birthYear;
+  }, [profile?.birth_date]);
+
+  const name = profile?.full_name ?? 'New Member';
+  const city = profile?.city ?? 'Unknown city';
+  const bio = profile?.bio ?? 'No bio added yet.';
+  const ethnicity = profile?.ethnicity ?? 'Habesha';
+  const religion = profile?.religion ?? 'Not set';
+  const languages = profile?.languages ?? [];
+  const intent = profile?.intent ?? 'dating';
+
   const toggleGroup = (id: string, val: boolean) => {
     setOpenGroups((prev) => ({ ...prev, [id]: val }));
   };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    router.replace('/onboarding');
+  };
+
+  if (loadingProfile) {
+    return (
+      <View style={styles.loadingWrap}>
+        <ActivityIndicator color={Colors.terracotta} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -42,15 +109,15 @@ export default function ProfileScreen() {
             <View style={styles.headerContent}>
               <View style={styles.photoWrap}>
                 <View style={styles.photoPlaceholder}>
-                  <Text style={styles.photoInitial}>{mockUser.name[0]}</Text>
+                  <Text style={styles.photoInitial}>{name[0] ?? '?'}</Text>
                 </View>
                 <TouchableOpacity style={styles.editPhotoBtn}>
                   <Ionicons name="camera" size={14} color={Colors.white} />
                 </TouchableOpacity>
               </View>
-              <Text style={styles.name}>{mockUser.name}</Text>
+              <Text style={styles.name}>{name}</Text>
               <Text style={styles.subInfo}>
-                {mockUser.age} · {mockUser.city}
+                {age ? `${age} · ` : ''}{city}
               </Text>
               <TouchableOpacity style={styles.editProfileBtn}>
                 <Text style={styles.editProfileText}>Edit Profile</Text>
@@ -61,19 +128,19 @@ export default function ProfileScreen() {
           {/* Bio */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About</Text>
-            <Text style={styles.bioText}>{mockUser.bio}</Text>
+            <Text style={styles.bioText}>{bio}</Text>
           </View>
 
           {/* Tags */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Identity</Text>
             <View style={styles.tagRow}>
-              <View style={styles.tag}><Text style={styles.tagText}>🇪🇹 {mockUser.nationality}</Text></View>
-              <View style={styles.tag}><Text style={styles.tagText}>✝️ {mockUser.religion}</Text></View>
-              {mockUser.languages.map((l) => (
+              <View style={styles.tag}><Text style={styles.tagText}>🇪🇹 {ethnicity}</Text></View>
+              <View style={styles.tag}><Text style={styles.tagText}>✝️ {religion}</Text></View>
+              {languages.map((l) => (
                 <View key={l} style={styles.tag}><Text style={styles.tagText}>🗣️ {l}</Text></View>
               ))}
-              <View style={styles.tag}><Text style={styles.tagText}>💛 {mockUser.intent}</Text></View>
+              <View style={styles.tag}><Text style={styles.tagText}>💛 {intent}</Text></View>
             </View>
           </View>
 
@@ -121,6 +188,7 @@ export default function ProfileScreen() {
                     styles.settingsRow,
                     i < settingsRows.length - 1 && styles.settingsRowBorder,
                   ]}
+                  onPress={row.label === 'Sign Out' ? signOut : undefined}
                   activeOpacity={0.7}
                 >
                   <View style={[styles.settingsIcon, row.accent && styles.settingsIconAccent, row.danger && styles.settingsIconDanger]}>
@@ -147,6 +215,12 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  loadingWrap: {
+    flex: 1,
+    backgroundColor: Colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   container: { flex: 1, backgroundColor: Colors.cream },
   safe: { flex: 1 },
 
