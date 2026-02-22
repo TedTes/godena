@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Alert,
+  Image,
   View,
   Text,
   StyleSheet,
@@ -8,9 +10,10 @@ import {
   Switch,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { mockGroups } from '../../data/mock';
 import { supabase } from '../../lib/supabase';
@@ -40,6 +43,10 @@ export default function ProfileScreen() {
   const router = useRouter();
   const myGroups = mockGroups.filter((g) => g.isMember);
   const [loadingProfile, setLoadingProfile] = useState(true);
+  const [updatingPhoto, setUpdatingPhoto] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [galleryUris, setGalleryUris] = useState<string[]>([]);
   const [profile, setProfile] = useState<{
     full_name: string;
     city: string | null;
@@ -49,33 +56,86 @@ export default function ProfileScreen() {
     religion: string | null;
     languages: string[] | null;
     intent: string;
+    avatar_url: string | null;
+    photo_urls: string[] | null;
   } | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(
     Object.fromEntries(myGroups.map((g) => [g.id, g.isOpenToConnect]))
   );
 
-  useEffect(() => {
-    const loadProfile = async () => {
+  const resolvePhotoUri = async (value: string): Promise<string | null> => {
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+
+    // Try signed URL first (works for both public and private buckets)
+    const { data, error } = await supabase.storage
+      .from('profile-photos')
+      .createSignedUrl(value, 60 * 60);
+    if (!error && data?.signedUrl) {
+      return data.signedUrl;
+    }
+
+    // Fall back to public URL (works if bucket is set to public)
+    const { data: publicData } = supabase.storage.from('profile-photos').getPublicUrl(value);
+    if (publicData?.publicUrl) {
+      return publicData.publicUrl;
+    }
+
+    return null;
+  };
+
+  const loadProfile = async (uid?: string) => {
+    const resolvedUserId = uid ?? userId;
+    if (!resolvedUserId) {
+      return;
+    }
+
+    const { data } = await supabase
+      .from('profiles')
+      .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent, avatar_url, photo_urls')
+      .eq('user_id', resolvedUserId)
+      .maybeSingle();
+
+    setProfile(data ?? null);
+
+    const avatarValue = data?.avatar_url ?? null;
+    if (avatarValue) {
+      const uri = await resolvePhotoUri(avatarValue);
+      setAvatarUri(uri ?? null);
+    } else {
+      setAvatarUri(null);
+    }
+
+    const photoValues = data?.photo_urls ?? [];
+    if (photoValues.length > 0) {
+      const resolved = await Promise.all(photoValues.map((value: string) => resolvePhotoUri(value)));
+      setGalleryUris(resolved.filter((v): v is string => Boolean(v)));
+    } else {
+      setGalleryUris([]);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      const boot = async () => {
+        setLoadingProfile(true);
       const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user.id;
-      if (!userId) {
+      const uid = sessionData.session?.user.id;
+      if (!uid) {
         setLoadingProfile(false);
         router.replace('/(auth)/phone');
         return;
       }
 
-      const { data } = await supabase
-        .from('profiles')
-        .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      setProfile(data ?? null);
+      setUserId(uid);
+      await loadProfile(uid);
       setLoadingProfile(false);
     };
 
-    void loadProfile();
-  }, [router]);
+      void boot();
+    }, [router])
+  );
 
   const age = useMemo(() => {
     if (!profile?.birth_date) {
@@ -95,6 +155,7 @@ export default function ProfileScreen() {
   const religion = profile?.religion ?? 'Not set';
   const languages = profile?.languages ?? [];
   const intent = formatIntent(profile?.intent ?? 'dating');
+  const firstPhoto = avatarUri;
 
   const toggleGroup = (id: string, val: boolean) => {
     setOpenGroups((prev) => ({ ...prev, [id]: val }));
@@ -103,6 +164,117 @@ export default function ProfileScreen() {
   const signOut = async () => {
     await supabase.auth.signOut();
     router.replace('/onboarding');
+  };
+
+  const updatePhoto = async () => {
+    if (!userId || updatingPhoto) {
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission needed', 'Photo library permission is required to update your avatar.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 5],
+      quality: 0.8,
+      base64: true,
+    });
+
+    if (result.canceled || !result.assets[0]?.uri) {
+      return;
+    }
+
+    try {
+      setUpdatingPhoto(true);
+      const asset = result.assets[0];
+      const contentType = asset.mimeType || 'image/jpeg';
+      const ext =
+        contentType === 'image/png' ? 'png' :
+        contentType === 'image/webp' ? 'webp' :
+        contentType === 'image/jpeg' ? 'jpg' :
+        'jpg';
+      const filePath = `${userId}/${Date.now()}-avatar.${ext}`;
+
+      let fileData: ArrayBuffer;
+      if (asset.base64) {
+        const dataUrl = `data:${contentType};base64,${asset.base64}`;
+        const response = await fetch(dataUrl);
+        fileData = await response.arrayBuffer();
+      } else {
+        const response = await fetch(asset.uri);
+        fileData = await response.arrayBuffer();
+      }
+
+      const { error: uploadError } = await supabase.storage
+        .from('profile-photos')
+        .upload(filePath, fileData, {
+          contentType,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        Alert.alert('Upload failed', uploadError.message);
+        setUpdatingPhoto(false);
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: filePath })
+        .eq('user_id', userId);
+
+      if (updateError) {
+        Alert.alert('Update failed', updateError.message);
+        setUpdatingPhoto(false);
+        return;
+      }
+
+      await loadProfile(userId);
+    } catch (err: any) {
+      Alert.alert('Update failed', err?.message ?? 'Could not update profile photo.');
+    } finally {
+      setUpdatingPhoto(false);
+    }
+  };
+
+  const openPhotoActions = () => {
+    const hasPhoto = Boolean(firstPhoto);
+    Alert.alert('Profile photo', 'Choose what you want to update.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Choose new photo',
+        onPress: () => void updatePhoto(),
+      },
+      ...(hasPhoto
+        ? [
+            {
+              text: 'Remove current photo',
+              style: 'destructive' as const,
+              onPress: async () => {
+                if (!userId) {
+                  return;
+                }
+                setUpdatingPhoto(true);
+                const { error } = await supabase
+                  .from('profiles')
+                  .update({ avatar_url: null })
+                  .eq('user_id', userId);
+                setUpdatingPhoto(false);
+                if (error) {
+                  Alert.alert('Update failed', error.message);
+                  return;
+                }
+                await loadProfile(userId);
+              },
+            },
+          ]
+        : []),
+    ]);
   };
 
   if (loadingProfile) {
@@ -120,19 +292,41 @@ export default function ProfileScreen() {
           {/* Header */}
           <View style={styles.headerBg}>
             <View style={styles.headerContent}>
-              <View style={styles.photoWrap}>
-                <View style={styles.photoPlaceholder}>
-                  <Text style={styles.photoInitial}>{name[0] ?? '?'}</Text>
-                </View>
-                <TouchableOpacity style={styles.editPhotoBtn}>
+              <TouchableOpacity style={styles.photoWrap} onPress={openPhotoActions} activeOpacity={0.85}>
+                {firstPhoto ? (
+                  <Image
+                    key={firstPhoto}
+                    source={{ uri: firstPhoto }}
+                    style={styles.photoImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.photoPlaceholder}>
+                    <Text style={styles.photoInitial}>{name[0] ?? '?'}</Text>
+                  </View>
+                )}
+                {updatingPhoto ? (
+                  <View style={styles.photoLoadingOverlay}>
+                    <ActivityIndicator color={Colors.white} />
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.editPhotoBtn}
+                  onPress={openPhotoActions}
+                  activeOpacity={0.85}
+                >
                   <Ionicons name="camera" size={14} color={Colors.white} />
                 </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
               <Text style={styles.name}>{name}</Text>
               <Text style={styles.subInfo}>
                 {age ? `${age} · ` : ''}{city}
               </Text>
-              <TouchableOpacity style={styles.editProfileBtn}>
+              <TouchableOpacity
+                style={styles.editProfileBtn}
+                onPress={() => router.push('/profile-setup')}
+                activeOpacity={0.85}
+              >
                 <Text style={styles.editProfileText}>Edit Profile</Text>
               </TouchableOpacity>
             </View>
@@ -142,6 +336,19 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About</Text>
             <Text style={styles.bioText}>{bio}</Text>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Profile Photos</Text>
+            {galleryUris.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {galleryUris.map((uri) => (
+                  <Image key={uri} source={{ uri }} style={styles.galleryPhoto} resizeMode="cover" />
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.emptyGalleryText}>No profile photos yet.</Text>
+            )}
           </View>
 
           {/* Tags */}
@@ -239,7 +446,7 @@ const styles = StyleSheet.create({
 
   headerBg: { backgroundColor: Colors.brown, paddingBottom: 32 },
   headerContent: { alignItems: 'center', paddingTop: Spacing.lg, paddingHorizontal: Spacing.lg },
-  photoWrap: { position: 'relative', marginBottom: 14 },
+  photoWrap: { position: 'relative', marginBottom: 14, width: 90, height: 90 },
   photoPlaceholder: {
     width: 90,
     height: 90,
@@ -249,6 +456,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 3,
     borderColor: Colors.terraLight,
+  },
+  photoImage: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    borderWidth: 3,
+    borderColor: Colors.terraLight,
+    backgroundColor: Colors.paper,
+  },
+  photoLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 45,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   photoInitial: { fontSize: 38, fontWeight: '900', color: Colors.white },
   editPhotoBtn: {
@@ -307,6 +533,18 @@ const styles = StyleSheet.create({
   privateTagText: { fontSize: 9, color: Colors.muted, fontWeight: '600' },
 
   bioText: { fontSize: 14, color: Colors.brownMid, lineHeight: 22 },
+  galleryPhoto: {
+    width: 110,
+    height: 140,
+    borderRadius: Radius.md,
+    marginRight: 10,
+    backgroundColor: Colors.paper,
+  },
+  emptyGalleryText: {
+    fontSize: 13,
+    color: Colors.muted,
+    fontStyle: 'italic',
+  },
 
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tag: {
