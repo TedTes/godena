@@ -85,6 +85,7 @@ export default function GroupsScreen() {
           keyExtractor={(c) => c}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.chips}
+          style={styles.chipsScroll}
           renderItem={({ item: cat }) => (
             <TouchableOpacity
               style={[styles.chip, activeCategory === cat && styles.chipActive]}
@@ -174,15 +175,15 @@ const styles = StyleSheet.create({
   tabRow: {
     flexDirection: 'row',
     marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
+    marginTop: Spacing.sm,
     backgroundColor: Colors.paper,
     borderRadius: Radius.full,
-    padding: 3,
-    marginBottom: Spacing.md,
+    padding: 2,
+    marginBottom: Spacing.sm,
   },
   tabBtn: {
     flex: 1,
-    height: 38,
+    paddingVertical: 7,
     borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -206,6 +207,9 @@ const styles = StyleSheet.create({
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 14, color: Colors.ink },
 
+  chipsScroll: {
+    flexGrow: 0,
+  },
   chips: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.sm,

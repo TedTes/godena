@@ -7,17 +7,22 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { supabase } from '../../lib/supabase';
 
 const CODE_LENGTH = 6;
 
 export default function OtpScreen() {
   const router = useRouter();
+  const { phone } = useLocalSearchParams<{ phone?: string }>();
   const [code, setCode] = useState('');
   const [timer, setTimer] = useState(30);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -27,13 +32,49 @@ export default function OtpScreen() {
     }
   }, [timer]);
 
+  const verify = async (token: string) => {
+    if (!phone || token.length !== CODE_LENGTH || loading) {
+      return;
+    }
+    setLoading(true);
+    setError('');
+
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      phone,
+      token,
+      type: 'sms',
+    });
+
+    setLoading(false);
+    if (verifyError) {
+      setError(verifyError.message);
+      return;
+    }
+
+    router.replace('/(tabs)/home');
+  };
+
   const handleChange = (val: string) => {
     const digits = val.replace(/\D/g, '').slice(0, CODE_LENGTH);
     setCode(digits);
     if (digits.length === CODE_LENGTH) {
-      // Auto-submit when full code entered
-      setTimeout(() => router.replace('/(tabs)/home'), 300);
+      void verify(digits);
     }
+  };
+
+  const resend = async () => {
+    if (!phone) {
+      return;
+    }
+    setError('');
+    setLoading(true);
+    const { error: resendError } = await supabase.auth.signInWithOtp({ phone });
+    setLoading(false);
+    if (resendError) {
+      setError(resendError.message);
+      return;
+    }
+    setTimer(30);
   };
 
   const digits = code.split('').concat(Array(CODE_LENGTH - code.length).fill(''));
@@ -55,6 +96,7 @@ export default function OtpScreen() {
             <Text style={styles.subtitle}>
               We sent a 6-digit code to your number. It expires in 10 minutes.
             </Text>
+            {!phone ? <Text style={styles.errorText}>Missing phone number. Go back and retry.</Text> : null}
 
             <TouchableOpacity
               style={styles.codeRow}
@@ -89,19 +131,25 @@ export default function OtpScreen() {
               {timer > 0 ? (
                 <Text style={styles.timerText}>Resend code in {timer}s</Text>
               ) : (
-                <TouchableOpacity onPress={() => setTimer(30)}>
+                <TouchableOpacity onPress={resend} disabled={loading}>
                   <Text style={styles.resendText}>Resend code</Text>
                 </TouchableOpacity>
               )}
             </View>
 
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
             <TouchableOpacity
               style={[styles.btn, code.length < CODE_LENGTH && styles.btnDisabled]}
-              onPress={() => router.replace('/(tabs)/home')}
-              disabled={code.length < CODE_LENGTH}
+              onPress={() => void verify(code)}
+              disabled={code.length < CODE_LENGTH || loading || !phone}
               activeOpacity={0.85}
             >
-              <Text style={styles.btnText}>Verify & Continue</Text>
+              {loading ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <Text style={styles.btnText}>Verify & Continue</Text>
+              )}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -182,6 +230,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.terracotta,
     fontWeight: '600',
+  },
+  errorText: {
+    fontSize: 12,
+    color: Colors.error,
+    marginBottom: 12,
   },
   btn: {
     height: 56,

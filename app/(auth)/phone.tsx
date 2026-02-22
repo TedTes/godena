@@ -8,22 +8,44 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { supabase } from '../../lib/supabase';
 
 export default function PhoneScreen() {
   const router = useRouter();
   const [phone, setPhone] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const isValid = phone.replace(/\D/g, '').length >= 10;
 
-  const handleContinue = () => {
-    if (isValid) {
-      router.push('/(auth)/otp');
+  const normalizedPhone = `${countryCode}${phone.replace(/\D/g, '')}`;
+
+  const handleContinue = async () => {
+    if (!isValid || loading) {
+      return;
     }
+    setError('');
+    setLoading(true);
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      phone: normalizedPhone,
+    });
+    setLoading(false);
+
+    if (otpError) {
+      setError(otpError.message);
+      return;
+    }
+
+    router.push({
+      pathname: '/(auth)/otp',
+      params: { phone: normalizedPhone },
+    });
   };
 
   return (
@@ -62,13 +84,19 @@ export default function PhoneScreen() {
               By continuing, you agree to our Terms of Service and Privacy Policy.
             </Text>
 
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
             <TouchableOpacity
               style={[styles.btn, !isValid && styles.btnDisabled]}
               onPress={handleContinue}
-              disabled={!isValid}
+              disabled={!isValid || loading}
               activeOpacity={0.85}
             >
-              <Text style={styles.btnText}>Send Code</Text>
+              {loading ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <Text style={styles.btnText}>Send Code</Text>
+              )}
             </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -139,7 +167,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.muted,
     lineHeight: 18,
-    marginBottom: 32,
+    marginBottom: 12,
+  },
+  errorText: {
+    color: Colors.error,
+    fontSize: 12,
+    marginBottom: 12,
   },
   btn: {
     height: 56,
