@@ -118,7 +118,7 @@ export default function ProfileSetupScreen() {
 
     const { data: existingProfile } = await supabase
       .from('profiles')
-      .select('photo_urls, avatar_url')
+      .select('photo_urls')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -163,10 +163,6 @@ export default function ProfileSetupScreen() {
       uploadedPhotoPaths.length > 0
         ? uploadedPhotoPaths
         : (existingProfile?.photo_urls ?? []);
-    const nextAvatarUrl =
-      existingProfile?.avatar_url
-      ?? uploadedPhotoPaths[0]
-      ?? null;
 
     const { error: upsertError } = await supabase.from('profiles').upsert({
       user_id: user.id,
@@ -178,7 +174,6 @@ export default function ProfileSetupScreen() {
       languages: parsedLanguages,
       intent,
       photo_urls: nextPhotoUrls,
-      avatar_url: nextAvatarUrl,
       last_active_at: new Date().toISOString(),
     });
 
