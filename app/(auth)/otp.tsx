@@ -51,7 +51,7 @@ export default function OtpScreen() {
       return;
     }
 
-    router.replace('/(tabs)/home');
+    router.replace('/');
   };
 
   const handleChange = (val: string) => {
