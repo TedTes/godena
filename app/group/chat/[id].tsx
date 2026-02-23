@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,67 +9,293 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../../constants/theme';
-import { mockGroupMessages, mockGroups } from '../../../data/mock';
+import { supabase } from '../../../lib/supabase';
 
+// ── Sender color palette — deterministic per user ──────────────────────────
+const SENDER_COLORS = ['#7a8c5c', '#c9a84c', '#5b7fa6', '#8b4220', '#6b5b8c'];
+
+function getSenderColor(senderId: string) {
+  let hash = 0;
+  for (let i = 0; i < senderId.length; i++) hash = senderId.charCodeAt(i) + ((hash << 5) - hash);
+  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
+}
+
+// ── Time / date helpers ────────────────────────────────────────────────────
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+function formatDateLabel(iso: string) {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function isSameDay(a: string, b: string) {
+  return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+// A new visual group begins when sender changes or gap > 5 min
+const GROUP_GAP_MS = 5 * 60 * 1000;
+function isGroupBreak(
+  a: { senderId: string; sentAt: string },
+  b: { senderId: string; sentAt: string }
+) {
+  if (a.senderId !== b.senderId) return true;
+  return new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime() > GROUP_GAP_MS;
+}
+
+// ── Types ──────────────────────────────────────────────────────────────────
+type RawMsg = {
+  id: string;
+  groupId: string;
+  senderId: string;
+  senderName: string;
+  senderPhoto: string;
+  content: string;
+  sentAt: string;
+  isOwn: boolean;
+};
+
+type DateDivider = { _kind: 'date'; id: string; label: string };
+type ChatMsg = RawMsg & { _kind: 'msg'; isFirstInGroup: boolean; isLastInGroup: boolean };
+type ChatItem = DateDivider | ChatMsg;
+
+// ── Component ──────────────────────────────────────────────────────────────
 export default function GroupChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const group = mockGroups.find((g) => g.id === id) || mockGroups[0];
-  const [messages, setMessages] = useState(mockGroupMessages);
+  const [group, setGroup] = useState<{
+    id: string;
+    name: string;
+    member_count: number;
+    category: string;
+  } | null>(null);
+  const [messages, setMessages] = useState<RawMsg[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const listRef = useRef<FlatList>(null);
+  const profileMapRef = useRef<Record<string, { name: string; avatar: string }>>({});
+
+  const groupVisuals = useMemo(() => {
+    switch (group?.category) {
+      case 'outdoors':     return { emoji: '🏕️', coverColor: '#7a8c5c' };
+      case 'food_drink':   return { emoji: '☕',  coverColor: '#c4622d' };
+      case 'professional': return { emoji: '💼',  coverColor: '#3d2b1f' };
+      case 'language':     return { emoji: '🗣️', coverColor: '#c9a84c' };
+      case 'faith':        return { emoji: '✝️',  coverColor: '#8b4220' };
+      case 'culture':      return { emoji: '🎉',  coverColor: '#a07820' };
+      default:             return { emoji: '👥',  coverColor: Colors.terracotta };
+    }
+  }, [group?.category]);
+
+  // Preprocess: inject date dividers + compute per-message group position
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const items: ChatItem[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const prev = i > 0 ? messages[i - 1] : null;
+      const next = i < messages.length - 1 ? messages[i + 1] : null;
+
+      // Date divider when day changes
+      if (!prev || !isSameDay(prev.sentAt, msg.sentAt)) {
+        items.push({ _kind: 'date', id: `date-${i}`, label: formatDateLabel(msg.sentAt) });
+      }
+
+      const isFirstInGroup = !prev || isGroupBreak(prev, msg);
+      const isLastInGroup  = !next || isGroupBreak(msg, next);
+
+      items.push({ ...msg, _kind: 'msg', isFirstInGroup, isLastInGroup });
+    }
+    return items;
+  }, [messages]);
+
+  const hydrateSenderProfiles = async (senderIds: string[]) => {
+    const idsNeedingFetch = senderIds.filter((sid) => !profileMapRef.current[sid]);
+    if (idsNeedingFetch.length === 0) return;
+
+    const { data } = await supabase
+      .from('profiles')
+      .select('user_id, full_name, avatar_url')
+      .in('user_id', idsNeedingFetch);
+
+    for (const p of data ?? []) {
+      const row = p as { user_id: string; full_name: string | null; avatar_url: string | null };
+      profileMapRef.current[row.user_id] = {
+        name: row.full_name || 'Member',
+        avatar: row.avatar_url || '',
+      };
+    }
+  };
+
+  const mapDbMessages = (
+    rows: Array<{ id: string; group_id: string; sender_id: string; content: string; sent_at: string }>,
+    currentUserId: string | null
+  ): RawMsg[] =>
+    rows.map((row) => {
+      const sender = profileMapRef.current[row.sender_id];
+      return {
+        id: row.id,
+        groupId: row.group_id,
+        senderId: row.sender_id,
+        senderName: sender?.name || 'Member',
+        senderPhoto: sender?.avatar || '',
+        content: row.content,
+        sentAt: row.sent_at,
+        isOwn: !!currentUserId && row.sender_id === currentUserId,
+      };
+    });
+
+  useEffect(() => {
+    const load = async () => {
+      if (!id) return;
+      setLoading(true);
+
+      const [{ data: sessionData }, groupRes, messageRes] = await Promise.all([
+        supabase.auth.getSession(),
+        supabase
+          .from('groups')
+          .select('id, name, member_count, category')
+          .eq('id', id)
+          .maybeSingle(),
+        supabase
+          .from('group_messages')
+          .select('id, group_id, sender_id, content, sent_at')
+          .eq('group_id', id)
+          .is('deleted_at', null)
+          .order('sent_at', { ascending: true })
+          .limit(200),
+      ]);
+
+      const uid = sessionData.session?.user.id ?? null;
+      setUserId(uid);
+      setGroup((groupRes.data as any) ?? null);
+
+      const messageRows =
+        (messageRes.data as Array<{ id: string; group_id: string; sender_id: string; content: string; sent_at: string }> | null) ?? [];
+      await hydrateSenderProfiles(Array.from(new Set(messageRows.map((m) => m.sender_id))));
+      setMessages(mapDbMessages(messageRows, uid));
+      setLoading(false);
+    };
+
+    void load();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    const channel = supabase
+      .channel(`group_messages:${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'group_messages',
+          filter: `group_id=eq.${id}`,
+        },
+        async (payload) => {
+          const row = payload.new as {
+            id: string;
+            group_id: string;
+            sender_id: string;
+            content: string;
+            sent_at: string;
+          };
+          await hydrateSenderProfiles([row.sender_id]);
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === row.id)) return prev;
+            return [...prev, ...mapDbMessages([row], userId)];
+          });
+          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
+        }
+      )
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [id, userId]);
 
   const send = () => {
-    const text = input.trim();
-    if (!text) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `m${Date.now()}`,
-        groupId: id || 'g1',
-        senderId: 'user-1',
-        senderName: 'Tigist Haile',
-        senderPhoto: '',
-        content: text,
-        sentAt: new Date().toISOString(),
-        isOwn: true,
-      },
-    ]);
-    setInput('');
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    void (async () => {
+      if (!id || !userId) return;
+      const text = input.trim();
+      if (!text) return;
+
+      const { error } = await supabase
+        .from('group_messages')
+        .insert({ group_id: id, sender_id: userId, content: text });
+      if (error) return;
+
+      setInput('');
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    })();
   };
+
+  const sendDisabled = !input.trim() || !userId;
+
+  const headerContent = (
+    <View style={[styles.header, { backgroundColor: groupVisuals.coverColor }]}>
+      <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <Ionicons name="arrow-back" size={22} color={Colors.white} />
+      </TouchableOpacity>
+      <View style={styles.headerCenter}>
+        <Text style={styles.headerEmoji}>{groupVisuals.emoji}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {group?.name ?? 'Group Chat'}
+          </Text>
+          <Text style={styles.headerSub}>
+            {loading ? 'Loading…' : `${group?.member_count ?? ''} members`}
+          </Text>
+        </View>
+      </View>
+      {group && (
+        <TouchableOpacity
+          style={styles.headerRight}
+          onPress={() => router.push(`/group/${group.id}`)}
+        >
+          <Ionicons name="information-circle-outline" size={24} color={Colors.white} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView
+          edges={['top']}
+          style={{ backgroundColor: groupVisuals.coverColor }}
+        >
+          {headerContent}
+        </SafeAreaView>
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator color={Colors.terracotta} />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <SafeAreaView edges={['top']} style={styles.headerSafe}>
-        <View style={[styles.header, { backgroundColor: group.coverColor }]}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color={Colors.white} />
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={styles.headerEmoji}>{group.emoji}</Text>
-            <View>
-              <Text style={styles.headerTitle} numberOfLines={1}>{group.name}</Text>
-              <Text style={styles.headerSub}>{group.memberCount} members</Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            style={styles.headerRight}
-            onPress={() => router.push(`/group/${group.id}`)}
-          >
-            <Ionicons name="information-circle-outline" size={24} color={Colors.white} />
-          </TouchableOpacity>
-        </View>
+
+      {/* ── Header ── */}
+      <SafeAreaView
+        edges={['top']}
+        style={{ backgroundColor: groupVisuals.coverColor }}
+      >
+        {headerContent}
       </SafeAreaView>
 
       <KeyboardAvoidingView
@@ -79,25 +305,44 @@ export default function GroupChatScreen() {
       >
         <FlatList
           ref={listRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
+          data={chatItems}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-          renderItem={({ item: msg, index }) => {
-            const prevMsg = index > 0 ? messages[index - 1] : null;
-            const showSender = !msg.isOwn && prevMsg?.senderId !== msg.senderId;
+          renderItem={({ item }) => {
+
+            // ── Date divider ──
+            if (item._kind === 'date') {
+              return (
+                <View style={styles.dateDivider}>
+                  <View style={styles.dateLine} />
+                  <Text style={styles.dateLabel}>{item.label}</Text>
+                  <View style={styles.dateLine} />
+                </View>
+              );
+            }
+
+            // ── Message bubble ──
+            const { isFirstInGroup, isLastInGroup } = item;
+            const senderColor = getSenderColor(item.senderId);
 
             return (
-              <View style={[styles.msgWrap, msg.isOwn && styles.msgWrapOwn]}>
-                {!msg.isOwn && (
+              <View style={[
+                styles.msgWrap,
+                item.isOwn && styles.msgWrapOwn,
+                isLastInGroup ? styles.msgWrapGroupEnd : styles.msgWrapInGroup,
+              ]}>
+
+                {/* Avatar — only for other senders */}
+                {!item.isOwn && (
                   <View style={styles.avatarWrap}>
-                    {showSender ? (
-                      msg.senderPhoto ? (
-                        <Image source={{ uri: msg.senderPhoto }} style={styles.avatar} />
+                    {isFirstInGroup ? (
+                      item.senderPhoto ? (
+                        <Image source={{ uri: item.senderPhoto }} style={styles.avatar} />
                       ) : (
-                        <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                          <Text style={styles.avatarInitial}>{msg.senderName[0]}</Text>
+                        <View style={[styles.avatar, styles.avatarPlaceholder, { backgroundColor: senderColor }]}>
+                          <Text style={styles.avatarInitial}>{item.senderName[0]}</Text>
                         </View>
                       )
                     ) : (
@@ -105,25 +350,45 @@ export default function GroupChatScreen() {
                     )}
                   </View>
                 )}
-                <View style={styles.msgColumn}>
-                  {showSender && !msg.isOwn && (
-                    <Text style={styles.senderName}>{msg.senderName}</Text>
+
+                {/* Bubble column */}
+                <View style={[styles.msgColumn, item.isOwn && styles.msgColumnOwn]}>
+
+                  {/* Sender name — only at top of each group */}
+                  {isFirstInGroup && !item.isOwn && (
+                    <Text style={[styles.senderName, { color: senderColor }]}>
+                      {item.senderName}
+                    </Text>
                   )}
-                  <View style={[styles.bubble, msg.isOwn ? styles.bubbleOwn : styles.bubbleOther]}>
-                    <Text style={[styles.bubbleText, msg.isOwn && styles.bubbleTextOwn]}>
-                      {msg.content}
+
+                  <View style={[
+                    styles.bubble,
+                    item.isOwn ? styles.bubbleOwn : styles.bubbleOther,
+                    // Tail only on the last bubble in a visual group
+                    item.isOwn && isLastInGroup  && styles.bubbleTailOwn,
+                    !item.isOwn && isLastInGroup && styles.bubbleTailOther,
+                  ]}>
+                    <Text style={[styles.bubbleText, item.isOwn && styles.bubbleTextOwn]}>
+                      {item.content}
                     </Text>
                   </View>
-                  <Text style={[styles.timestamp, msg.isOwn && styles.timestampOwn]}>
-                    {formatTime(msg.sentAt)}
-                  </Text>
+
+                  {/* Timestamp + sent tick — only at bottom of each group */}
+                  {isLastInGroup && (
+                    <View style={[styles.timestampRow, item.isOwn && styles.timestampRowOwn]}>
+                      <Text style={styles.timestamp}>{formatTime(item.sentAt)}</Text>
+                      {item.isOwn && (
+                        <Ionicons name="checkmark" size={11} color={Colors.muted} style={styles.sentIcon} />
+                      )}
+                    </View>
+                  )}
                 </View>
               </View>
             );
           }}
         />
 
-        {/* Input */}
+        {/* ── Input bar ── */}
         <SafeAreaView edges={['bottom']} style={styles.inputSafe}>
           <View style={styles.inputRow}>
             <TouchableOpacity style={styles.attachBtn}>
@@ -139,11 +404,11 @@ export default function GroupChatScreen() {
               maxLength={500}
             />
             <TouchableOpacity
-              style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, sendDisabled && styles.sendBtnDisabled]}
               onPress={send}
-              disabled={!input.trim()}
+              disabled={sendDisabled}
             >
-              <Ionicons name="send" size={18} color={Colors.white} />
+              <Ionicons name="send" size={16} color={Colors.white} />
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -155,75 +420,126 @@ export default function GroupChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   flex: { flex: 1 },
-  headerSafe: { backgroundColor: Colors.terracotta },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  // ── Header ──
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingVertical: 12,
+    paddingVertical: 11,
     gap: 10,
   },
-  backBtn: { padding: 4 },
-  headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerEmoji: { fontSize: 24 },
-  headerTitle: { fontSize: 15, fontWeight: '700', color: Colors.white },
-  headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.7)' },
-  headerRight: { padding: 4 },
-
-  messageList: { padding: Spacing.md, paddingBottom: 8, gap: 4 },
-
-  msgWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 2 },
-  msgWrapOwn: { flexDirection: 'row-reverse' },
-
-  avatarWrap: { width: 32 },
-  avatar: { width: 32, height: 32, borderRadius: 16 },
-  avatarPlaceholder: {
-    backgroundColor: Colors.terracotta,
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarInitial: { color: Colors.white, fontSize: 13, fontWeight: '700' },
-  avatarSpacer: { width: 32, height: 32 },
+  headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerEmoji: { fontSize: 22 },
+  headerTitle: { fontSize: 15, fontWeight: '700', color: Colors.white },
+  headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 1 },
+  headerRight: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
+  // ── Message list ──
+  messageList: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: 8,
+  },
+
+  // Date divider
+  dateDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 16,
+  },
+  dateLine: { flex: 1, height: 1, backgroundColor: Colors.border },
+  dateLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.muted,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+
+  // Message row
+  msgWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  msgWrapOwn: { flexDirection: 'row-reverse' },
+  msgWrapInGroup:  { marginBottom: 2 },   // tight within a run
+  msgWrapGroupEnd: { marginBottom: 10 },  // breathing room after a run
+
+  // Avatar
+  avatarWrap: { width: 32, alignSelf: 'flex-end' },
+  avatar: { width: 32, height: 32, borderRadius: 16 },
+  avatarPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { color: Colors.white, fontSize: 13, fontWeight: '700' },
+  avatarSpacer: { width: 32 },
+
+  // Bubble column
   msgColumn: { maxWidth: '72%' },
+  msgColumnOwn: { alignItems: 'flex-end' },
+
   senderName: {
     fontSize: 11,
     fontWeight: '700',
-    color: Colors.terracotta,
     marginBottom: 3,
     marginLeft: 12,
   },
+
+  // Bubbles — no tail by default; tail added on last in group only
   bubble: {
     borderRadius: 18,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 9,
   },
   bubbleOwn: {
     backgroundColor: Colors.terracotta,
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: 18, // no tail by default
   },
+  bubbleTailOwn: { borderBottomRightRadius: 4 },
   bubbleOther: {
     backgroundColor: Colors.warmWhite,
-    borderBottomLeftRadius: 4,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderBottomLeftRadius: 18, // no tail by default
   },
+  bubbleTailOther: { borderBottomLeftRadius: 4 },
+
   bubbleText: { fontSize: 14, color: Colors.ink, lineHeight: 20 },
   bubbleTextOwn: { color: Colors.white },
-  timestamp: {
-    fontSize: 10,
-    color: Colors.muted,
-    marginTop: 3,
+
+  // Timestamp row — only rendered on last bubble of a group
+  timestampRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    marginTop: 4,
     marginLeft: 12,
   },
-  timestampOwn: { textAlign: 'right', marginRight: 4, marginLeft: 0 },
+  timestampRowOwn: { justifyContent: 'flex-end', marginLeft: 0, marginRight: 4 },
+  timestamp: { fontSize: 10, color: Colors.muted },
+  sentIcon: { opacity: 0.65 },
 
+  // ── Input bar ──
   inputSafe: { backgroundColor: Colors.warmWhite },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    padding: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
@@ -259,5 +575,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendBtnDisabled: { backgroundColor: Colors.border },
+  sendBtnDisabled: { backgroundColor: Colors.borderDark },
 });
