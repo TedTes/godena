@@ -12,6 +12,7 @@ export default function RootLayout() {
         <Stack.Screen name="profile-setup" />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="premium" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="group/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="group/chat/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />

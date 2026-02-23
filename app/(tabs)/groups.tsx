@@ -24,6 +24,7 @@ import {
   upsertGroupMembership,
   type GroupRow,
 } from '../../lib/services/groups';
+import { canUserJoinAnotherGroup } from '../../lib/services/billing';
 
 const CATEGORIES = ['All', 'Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
 const ALL_CITIES_LABEL = 'All Cities';
@@ -104,6 +105,19 @@ export default function GroupsScreen() {
       return;
     }
     if (joinedIds.has(groupId) || joiningId) return;
+
+    const gate = await canUserJoinAnotherGroup(userId);
+    if (!gate.allowed) {
+      Alert.alert(
+        'Premium required',
+        `Free plan allows up to ${gate.freeLimit} group joins. Upgrade to Premium for unlimited groups.`,
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Upgrade', onPress: () => router.push('/premium') },
+        ]
+      );
+      return;
+    }
 
     setJoiningId(groupId);
     const { error } = await joinGroupMembership(groupId, userId);

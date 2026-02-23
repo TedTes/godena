@@ -27,6 +27,7 @@ type ProfileRow = {
   preferred_age_max: number | null;
   birth_date: string | null;
   is_open_to_connections: boolean;
+  is_premium: boolean;
 };
 
 type ConnectionRow = {
@@ -99,13 +100,14 @@ Deno.serve(async (req) => {
 
     const { data: cfg, error: cfgErr } = await client
       .from("matching_config")
-      .select("reveal_threshold, lookback_days")
+      .select("reveal_threshold, lookback_days, premium_priority_bonus")
       .eq("id", 1)
       .single();
     if (cfgErr || !cfg) throw cfgErr ?? new Error("missing matching_config");
 
     const revealThreshold = Number(cfg.reveal_threshold ?? 25);
     const lookbackDays = Number(cfg.lookback_days ?? 30);
+    const premiumPriorityBonus = Number(cfg.premium_priority_bonus ?? 3);
     const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
     const { data: scoreRows, error: scoreErr } = await client
@@ -141,7 +143,7 @@ Deno.serve(async (req) => {
         .eq("is_open_to_connect", true),
       client
         .from("profiles")
-        .select("user_id, full_name, gender, preferred_genders, preferred_age_min, preferred_age_max, birth_date, is_open_to_connections")
+        .select("user_id, full_name, gender, preferred_genders, preferred_age_min, preferred_age_max, birth_date, is_open_to_connections, is_premium")
         .in("user_id", userIds),
       client
         .from("connections")
@@ -181,7 +183,17 @@ Deno.serve(async (req) => {
       reason: string;
     }> = [];
 
-    for (const row of scores) {
+    const scoredQueue = scores
+      .map((row) => {
+        const pa = profileByUser.get(row.user_a_id);
+        const pb = profileByUser.get(row.user_b_id);
+        const premiumCount = Number(!!pa?.is_premium) + Number(!!pb?.is_premium);
+        const queueScore = Number(row.score) + premiumCount * premiumPriorityBonus;
+        return { ...row, queueScore };
+      })
+      .sort((a, b) => b.queueScore - a.queueScore || Number(b.score) - Number(a.score));
+
+    for (const row of scoredQueue) {
       const { group_id, user_a_id, user_b_id } = row;
       if (!openMembershipSet.has(`${group_id}:${user_a_id}`)) continue;
       if (!openMembershipSet.has(`${group_id}:${user_b_id}`)) continue;
@@ -209,6 +221,7 @@ Deno.serve(async (req) => {
         ok: true,
         reveal_threshold: revealThreshold,
         lookback_days: lookbackDays,
+        premium_priority_bonus: premiumPriorityBonus,
         candidates_scanned: scores.length,
         eligible_count: eligible.length,
         eligible_pairs: eligible,

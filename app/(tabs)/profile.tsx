@@ -214,6 +214,16 @@ export default function ProfileScreen() {
     router.replace('/onboarding');
   };
 
+  const onPressSettingRow = (label: string) => {
+    if (label === 'Sign Out') {
+      void signOut();
+      return;
+    }
+    if (label === 'Upgrade to Premium') {
+      router.push('/premium');
+    }
+  };
+
   const updatePhoto = async () => {
     if (!userId || updatingPhoto) return;
 
@@ -648,7 +658,7 @@ export default function ProfileScreen() {
                     i < settingsRows.length - 1 && styles.settingsRowDivider,
                     'accent' in row && row.accent && styles.settingsRowPremium,
                   ]}
-                  onPress={row.label === 'Sign Out' ? signOut : undefined}
+                  onPress={() => onPressSettingRow(row.label)}
                   activeOpacity={0.7}
                 >
                   <View style={[

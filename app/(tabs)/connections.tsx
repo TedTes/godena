@@ -60,6 +60,15 @@ type ActiveConnection = {
   lastAt: string;
 };
 
+type RevealHistoryItem = {
+  id: string;
+  name: string;
+  groupName: string;
+  groupEmoji: string;
+  status: ConnectionRow['status'];
+  dateLabel: string;
+};
+
 function groupEmoji(category?: string) {
   switch (category) {
     case 'outdoors': return '🥾';
@@ -75,8 +84,10 @@ function groupEmoji(category?: string) {
 export default function ConnectionsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [isPremium, setIsPremium] = useState(false);
   const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  const [revealHistory, setRevealHistory] = useState<RevealHistoryItem[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -85,23 +96,31 @@ export default function ConnectionsScreen() {
         const { data: sessionData } = await supabase.auth.getSession();
         const uid = sessionData.session?.user.id ?? null;
         if (!uid) {
+          setIsPremium(false);
           setPendingReveal(null);
           setActiveConnections([]);
+          setRevealHistory([]);
           setLoading(false);
           return;
         }
 
-        const { data: connectionsData } = await supabase
-          .from('connections')
-          .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
-          .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
-          .in('status', ['pending', 'accepted'])
-          .order('revealed_at', { ascending: false });
+        const [profileRes, connectionsRes] = await Promise.all([
+          supabase.from('profiles').select('is_premium').eq('user_id', uid).maybeSingle(),
+          supabase
+            .from('connections')
+            .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
+            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
+            .order('revealed_at', { ascending: false }),
+        ]);
 
-        const rows = (connectionsData ?? []) as ConnectionRow[];
+        const premium = !!profileRes.data?.is_premium;
+        setIsPremium(premium);
+
+        const rows = (connectionsRes.data ?? []) as ConnectionRow[];
         if (rows.length === 0) {
           setPendingReveal(null);
           setActiveConnections([]);
+          setRevealHistory([]);
           setLoading(false);
           return;
         }
@@ -138,6 +157,7 @@ export default function ConnectionsScreen() {
 
         const pending = rows.filter((c) => c.status === 'pending');
         const accepted = rows.filter((c) => c.status === 'accepted');
+        const historyRows = rows.filter((c) => ['passed', 'unmatched', 'closed'].includes(c.status));
 
         if (pending.length > 0) {
           const top = pending[0];
@@ -174,6 +194,26 @@ export default function ConnectionsScreen() {
           })
         );
 
+        if (premium) {
+          setRevealHistory(
+            historyRows.slice(0, 20).map((c) => {
+              const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
+              const p = profileByUser.get(otherId);
+              const g = groupById.get(c.group_id);
+              return {
+                id: c.id,
+                name: p?.full_name || 'Connection',
+                groupName: g?.name || 'Group',
+                groupEmoji: groupEmoji(g?.category),
+                status: c.status,
+                dateLabel: new Date(c.revealed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              };
+            })
+          );
+        } else {
+          setRevealHistory([]);
+        }
+
         setLoading(false);
       };
 
@@ -196,7 +236,6 @@ export default function ConnectionsScreen() {
             </View>
           )}
 
-          {/* New reveal */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionLabel}>New Introduction</Text>
@@ -204,11 +243,7 @@ export default function ConnectionsScreen() {
             </View>
 
             {pendingReveal ? (
-              <TouchableOpacity
-                style={styles.revealCard}
-                onPress={() => router.push('/reveal')}
-                activeOpacity={0.88}
-              >
+              <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
                 <View style={styles.revealGlow} />
                 <View style={styles.revealTop}>
                   <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
@@ -217,15 +252,9 @@ export default function ConnectionsScreen() {
                   </View>
                 </View>
                 <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
-                <Text style={styles.revealGroup}>
-                  {pendingReveal.groupEmoji} via {pendingReveal.groupName}
-                </Text>
+                <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
                 <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
-                <TouchableOpacity
-                  style={styles.revealBtn}
-                  onPress={() => router.push('/reveal')}
-                  activeOpacity={0.85}
-                >
+                <TouchableOpacity style={styles.revealBtn} onPress={() => router.push('/reveal')} activeOpacity={0.85}>
                   <Text style={styles.revealBtnText}>See Introduction →</Text>
                 </TouchableOpacity>
               </TouchableOpacity>
@@ -236,23 +265,15 @@ export default function ConnectionsScreen() {
             )}
           </View>
 
-          {/* Active connections */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Active Connections</Text>
             {activeConnections.length > 0 ? (
               activeConnections.map((c) => (
-                <TouchableOpacity
-                  key={c.id}
-                  style={styles.connectionCard}
-                  onPress={() => router.push(`/chat/${c.id}`)}
-                  activeOpacity={0.85}
-                >
+                <TouchableOpacity key={c.id} style={styles.connectionCard} onPress={() => router.push(`/chat/${c.id}`)} activeOpacity={0.85}>
                   <Image source={{ uri: c.photo }} style={styles.connPhoto} />
                   <View style={styles.connInfo}>
                     <Text style={styles.connName}>{c.name}</Text>
-                    <Text style={styles.connGroup}>
-                      {c.groupEmoji} {c.groupName}
-                    </Text>
+                    <Text style={styles.connGroup}>{c.groupEmoji} {c.groupName}</Text>
                     <Text style={styles.connLast} numberOfLines={1}>{c.lastMessage}</Text>
                   </View>
                   <View style={styles.connRight}>
@@ -268,27 +289,49 @@ export default function ConnectionsScreen() {
             )}
           </View>
 
-          {/* How it works */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Reveal History</Text>
+            {isPremium ? (
+              revealHistory.length > 0 ? (
+                revealHistory.map((h) => (
+                  <View key={h.id} style={styles.historyCard}>
+                    <View>
+                      <Text style={styles.historyName}>{h.name}</Text>
+                      <Text style={styles.historyMeta}>{h.groupEmoji} {h.groupName}</Text>
+                    </View>
+                    <View style={styles.historyRight}>
+                      <Text style={styles.historyStatus}>{h.status}</Text>
+                      <Text style={styles.historyDate}>{h.dateLabel}</Text>
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyText}>No reveal history yet.</Text>
+                </View>
+              )
+            ) : (
+              <TouchableOpacity style={styles.premiumGateCard} onPress={() => router.push('/premium')} activeOpacity={0.85}>
+                <Text style={styles.premiumGateTitle}>Premium feature</Text>
+                <Text style={styles.premiumGateText}>Upgrade to view your reveal history.</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
           <View style={styles.howBox}>
             <Text style={styles.howTitle}>How introductions work</Text>
             <View style={styles.howSteps}>
               <View style={styles.howStep}>
                 <Text style={styles.howStepNum}>1</Text>
-                <Text style={styles.howStepText}>
-                  You toggle "Open" in a group you're active in
-                </Text>
+                <Text style={styles.howStepText}>You toggle "Open" in a group you're active in</Text>
               </View>
               <View style={styles.howStep}>
                 <Text style={styles.howStepNum}>2</Text>
-                <Text style={styles.howStepText}>
-                  We watch for organic engagement between open members
-                </Text>
+                <Text style={styles.howStepText}>We watch for organic engagement between open members</Text>
               </View>
               <View style={styles.howStep}>
                 <Text style={styles.howStepNum}>3</Text>
-                <Text style={styles.howStepText}>
-                  When both signals align — we make a warm introduction. Always mutual.
-                </Text>
+                <Text style={styles.howStepText}>When both signals align — we make a warm introduction. Always mutual.</Text>
               </View>
             </View>
           </View>
@@ -332,8 +375,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   emptyText: { fontSize: 13, color: Colors.muted },
+  premiumGateCard: {
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.gold,
+    padding: Spacing.md,
+  },
+  premiumGateTitle: { fontSize: 13, fontWeight: '800', color: Colors.ink },
+  premiumGateText: { fontSize: 12, color: Colors.muted, marginTop: 4 },
 
-  // Reveal card
   revealCard: {
     backgroundColor: Colors.brown,
     borderRadius: Radius.lg,
@@ -378,7 +429,6 @@ const styles = StyleSheet.create({
   },
   revealBtnText: { fontSize: 13, fontWeight: '700', color: Colors.brown },
 
-  // Connection cards
   connectionCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -398,7 +448,23 @@ const styles = StyleSheet.create({
   connRight: { alignItems: 'flex-end', gap: 4 },
   connDate: { fontSize: 11, color: Colors.muted },
 
-  // How it works
+  historyCard: {
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  historyName: { fontSize: 14, fontWeight: '700', color: Colors.ink },
+  historyMeta: { fontSize: 12, color: Colors.muted, marginTop: 2 },
+  historyRight: { alignItems: 'flex-end' },
+  historyStatus: { fontSize: 11, color: Colors.brownMid, fontWeight: '800', textTransform: 'uppercase' },
+  historyDate: { fontSize: 11, color: Colors.brownLight, marginTop: 2 },
+
   howBox: {
     marginHorizontal: Spacing.lg,
     backgroundColor: Colors.paper,
