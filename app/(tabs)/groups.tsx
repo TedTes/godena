@@ -17,6 +17,8 @@ import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 
 const CATEGORIES = ['All', 'Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
+const ALL_CITIES_LABEL = 'All Cities';
+const VIRTUAL_CITY_LABEL = 'Virtual';
 const DB_CATEGORY_BY_LABEL: Record<string, string | null> = {
   All: null,
   Outdoors: 'outdoors',
@@ -26,6 +28,14 @@ const DB_CATEGORY_BY_LABEL: Record<string, string | null> = {
   Faith: 'faith',
 };
 const CREATE_CATEGORY_OPTIONS = CATEGORIES.filter((c) => c !== 'All');
+
+const CATEGORY_EMOJIS: Record<string, string | undefined> = {
+  Outdoors: '🏕️',
+  'Food & Drink': '☕',
+  Professional: '💼',
+  Language: '🗣️',
+  Faith: '✝️',
+};
 
 function categoryLabelFromDb(category: string) {
   switch (category) {
@@ -66,6 +76,7 @@ export default function GroupsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
+  const [activeCity, setActiveCity] = useState(ALL_CITIES_LABEL);
   const [tab, setTab] = useState<'mine' | 'discover'>('mine');
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set());
@@ -199,6 +210,17 @@ export default function GroupsScreen() {
     void load();
   }, []);
 
+  const cityOptions = useMemo(() => {
+    const cities = Array.from(
+      new Set(
+        groups
+          .map((g) => (g.city ?? '').trim())
+          .filter((c) => c.length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+    return [ALL_CITIES_LABEL, VIRTUAL_CITY_LABEL, ...cities];
+  }, [groups]);
+
   const filtered = useMemo(() => groups.filter((g) => {
     const matchSearch =
       search.length === 0 ||
@@ -206,10 +228,16 @@ export default function GroupsScreen() {
       categoryLabelFromDb(g.category).toLowerCase().includes(search.toLowerCase());
     const dbCategory = DB_CATEGORY_BY_LABEL[activeCategory];
     const matchCat = !dbCategory || g.category === dbCategory;
+    const normalizedCity = (g.city ?? '').trim();
+    const matchCity =
+      activeCity === ALL_CITIES_LABEL ||
+      (activeCity === VIRTUAL_CITY_LABEL ? g.is_virtual : normalizedCity === activeCity);
     const isMember = joinedIds.has(g.id);
     const matchTab = tab === 'mine' ? isMember : (!isMember || justJoinedIds.has(g.id));
-    return matchSearch && matchCat && matchTab;
-  }), [groups, search, activeCategory, tab, joinedIds, justJoinedIds]);
+    // City filter only applies in Discover tab
+    const effectiveMatchCity = tab === 'mine' || matchCity;
+    return matchSearch && matchCat && effectiveMatchCity && matchTab;
+  }), [groups, search, activeCategory, activeCity, tab, joinedIds, justJoinedIds]);
 
   function formatNextEvent(iso: string | null) {
     if (!iso) return null;
@@ -340,17 +368,75 @@ export default function GroupsScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.chips}
           style={styles.chipsScroll}
-          renderItem={({ item: cat }) => (
-            <TouchableOpacity
-              style={[styles.chip, activeCategory === cat && styles.chipActive]}
-              onPress={() => setActiveCategory(cat)}
-            >
-              <Text style={[styles.chipText, activeCategory === cat && styles.chipTextActive]}>
-                {cat}
-              </Text>
-            </TouchableOpacity>
-          )}
+          renderItem={({ item: cat }) => {
+            const emoji = CATEGORY_EMOJIS[cat];
+            const active = activeCategory === cat;
+            return (
+              <TouchableOpacity
+                style={[styles.chip, active && styles.chipActive]}
+                onPress={() => setActiveCategory(cat)}
+              >
+                {emoji ? <Text style={styles.chipEmoji}>{emoji}</Text> : null}
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{cat}</Text>
+              </TouchableOpacity>
+            );
+          }}
         />
+
+        {/* ── City Chips (Discover tab only) ── */}
+        {tab === 'discover' && (
+          <FlatList
+            horizontal
+            data={cityOptions}
+            keyExtractor={(city) => city}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.cityChips}
+            style={styles.cityChipsScroll}
+            renderItem={({ item: city }) => (
+              <TouchableOpacity
+                style={[styles.cityChip, activeCity === city && styles.cityChipActive]}
+                onPress={() => setActiveCity(city)}
+              >
+                <Text style={[styles.cityChipText, activeCity === city && styles.cityChipTextActive]}>
+                  {city === ALL_CITIES_LABEL ? '📍 All' : city === VIRTUAL_CITY_LABEL ? '🌐 Virtual' : city}
+                </Text>
+              </TouchableOpacity>
+            )}
+          />
+        )}
+
+        {/* ── Active Filters Summary ── */}
+        {(activeCategory !== 'All' || (tab === 'discover' && activeCity !== ALL_CITIES_LABEL)) && (
+          <View style={styles.activeFiltersRow}>
+            {activeCategory !== 'All' && (
+              <TouchableOpacity
+                style={styles.activeFilterPill}
+                onPress={() => setActiveCategory('All')}
+              >
+                <Text style={styles.activeFilterPillText}>{CATEGORY_EMOJIS[activeCategory]} {activeCategory}</Text>
+                <Ionicons name="close-circle" size={12} color={Colors.terracotta} />
+              </TouchableOpacity>
+            )}
+            {tab === 'discover' && activeCity !== ALL_CITIES_LABEL && (
+              <TouchableOpacity
+                style={styles.activeFilterPill}
+                onPress={() => setActiveCity(ALL_CITIES_LABEL)}
+              >
+                <Text style={styles.activeFilterPillText}>
+                  {activeCity === VIRTUAL_CITY_LABEL ? '🌐' : '📍'} {activeCity}
+                </Text>
+                <Ionicons name="close-circle" size={12} color={Colors.terracotta} />
+              </TouchableOpacity>
+            )}
+            <View style={{ flex: 1 }} />
+            <TouchableOpacity
+              onPress={() => { setActiveCategory('All'); setActiveCity(ALL_CITIES_LABEL); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.clearAllText}>Clear all</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* ── List ── */}
         {loading ? (
@@ -378,7 +464,9 @@ export default function GroupsScreen() {
                 <Text style={styles.emptySubtext}>
                   {loadError || (tab === 'mine'
                     ? 'Discover and join a group to get started'
-                    : 'Try a different search or category')}
+                    : (activeCategory !== 'All' || activeCity !== ALL_CITIES_LABEL)
+                      ? 'Try clearing some filters'
+                      : 'Try a different search or category')}
                 </Text>
               </View>
             }
@@ -581,18 +669,70 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   chip: {
-    paddingHorizontal: 14,
-    height: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    height: 34,
     borderRadius: Radius.full,
     backgroundColor: Colors.paper,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  chipActive: { backgroundColor: Colors.terracotta, borderColor: Colors.terracotta },
+  chipEmoji: { fontSize: 13 },
+  chipText: { fontSize: 12, fontWeight: '600', color: Colors.muted },
+  chipTextActive: { color: Colors.white },
+
+  // ── City Chips (secondary / Discover only) ──
+  cityChipsScroll: { flexGrow: 0 },
+  cityChips: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.sm,
+    gap: 6,
+    alignItems: 'center',
+  },
+  cityChip: {
+    paddingHorizontal: 11,
+    height: 27,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.warmWhite,
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chipActive: { backgroundColor: Colors.terracotta, borderColor: Colors.terracotta },
-  chipText: { fontSize: 12, fontWeight: '600', color: Colors.muted },
-  chipTextActive: { color: Colors.white },
+  cityChipActive: { backgroundColor: Colors.brownLight, borderColor: Colors.brownLight },
+  cityChipText: { fontSize: 11, fontWeight: '600', color: Colors.muted },
+  cityChipTextActive: { color: Colors.white },
+
+  // ── Active Filters Summary ──
+  activeFiltersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(196,98,45,0.05)',
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.15)',
+  },
+  activeFilterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.25)',
+  },
+  activeFilterPillText: { fontSize: 11, fontWeight: '700', color: Colors.terracotta },
+  clearAllText: { fontSize: 11, fontWeight: '600', color: Colors.muted, textDecorationLine: 'underline' },
 
   // ── Loading ──
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },

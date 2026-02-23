@@ -70,6 +70,13 @@ type ReactionRow = {
   user_id: string;
 };
 
+type EventRsvpRow = {
+  event_id: string;
+  user_id: string;
+  status: 'going' | 'interested' | 'not_going';
+  attended_at: string | null;
+};
+
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -80,11 +87,19 @@ export default function GroupDetailScreen() {
   const [members, setMembers] = useState<Member[]>([]);
   const [memberNames, setMemberNames] = useState<Record<string, { name: string; avatar: string | null }>>({});
   const [groupEvents, setGroupEvents] = useState<Event[]>([]);
+  const [eventRsvps, setEventRsvps] = useState<EventRsvpRow[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [reactionRows, setReactionRows] = useState<ReactionRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [joinSuccess, setJoinSuccess] = useState(false);
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [creatingEvent, setCreatingEvent] = useState(false);
+  const [eventTitleDraft, setEventTitleDraft] = useState('');
+  const [eventDateDraft, setEventDateDraft] = useState('');
+  const [eventTimeDraft, setEventTimeDraft] = useState('');
+  const [eventLocationDraft, setEventLocationDraft] = useState('');
+  const [eventVirtualDraft, setEventVirtualDraft] = useState(false);
   const [postDraft, setPostDraft] = useState('');
   const [posting, setPosting] = useState(false);
 
@@ -157,6 +172,17 @@ export default function GroupDetailScreen() {
       setReactionRows((reactionsData as ReactionRow[] | null) ?? []);
     } else {
       setReactionRows([]);
+    }
+
+    const eventIds = eventsData.map((e) => e.id);
+    if (eventIds.length > 0) {
+      const { data: rsvpsData } = await supabase
+        .from('event_rsvps')
+        .select('event_id, user_id, status, attended_at')
+        .in('event_id', eventIds);
+      setEventRsvps((rsvpsData as EventRsvpRow[] | null) ?? []);
+    } else {
+      setEventRsvps([]);
     }
 
     const authorIds = Array.from(new Set([
@@ -294,6 +320,110 @@ export default function GroupDetailScreen() {
 
   const formatTime = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const getEventStats = (eventId: string) => {
+    const rows = eventRsvps.filter((r) => r.event_id === eventId);
+    return {
+      going: rows.filter((r) => r.status === 'going').length,
+      interested: rows.filter((r) => r.status === 'interested').length,
+      attended: rows.filter((r) => !!r.attended_at).length,
+      mine: rows.find((r) => r.user_id === userId),
+    };
+  };
+
+  const handleCreateEvent = async () => {
+    if (!membership || !userId || !id || creatingEvent) return;
+    const title = eventTitleDraft.trim();
+    const date = eventDateDraft.trim();
+    const time = eventTimeDraft.trim();
+    if (!title || !date || !time) {
+      Alert.alert('Missing fields', 'Title, date, and time are required.');
+      return;
+    }
+
+    const startsAt = new Date(`${date}T${time}:00`);
+    if (Number.isNaN(startsAt.getTime())) {
+      Alert.alert('Invalid date/time', 'Use YYYY-MM-DD and HH:mm.');
+      return;
+    }
+
+    setCreatingEvent(true);
+    const { data, error } = await supabase
+      .from('group_events')
+      .insert({
+        group_id: id,
+        created_by: userId,
+        title,
+        starts_at: startsAt.toISOString(),
+        location_name: eventVirtualDraft ? null : (eventLocationDraft.trim() || null),
+        is_virtual: eventVirtualDraft,
+      })
+      .select('id, title, starts_at, location_name, is_virtual')
+      .single();
+    setCreatingEvent(false);
+
+    if (error || !data) {
+      Alert.alert('Could not create event', error?.message || 'Unknown error');
+      return;
+    }
+
+    setGroupEvents((prev) => [data as Event, ...prev].sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
+    setShowEventForm(false);
+    setEventTitleDraft('');
+    setEventDateDraft('');
+    setEventTimeDraft('');
+    setEventLocationDraft('');
+    setEventVirtualDraft(false);
+  };
+
+  const handleRsvp = async (eventId: string, status: 'going' | 'interested' | 'not_going') => {
+    if (!membership || !userId) return;
+    const { data, error } = await supabase
+      .from('event_rsvps')
+      .upsert(
+        { event_id: eventId, user_id: userId, status, attended_at: null },
+        { onConflict: 'event_id,user_id' }
+      )
+      .select('event_id, user_id, status, attended_at')
+      .single();
+
+    if (error || !data) {
+      Alert.alert('Could not update RSVP', error?.message || 'Unknown error');
+      return;
+    }
+
+    setEventRsvps((prev) => {
+      const rest = prev.filter((r) => !(r.event_id === eventId && r.user_id === userId));
+      return [...rest, data as EventRsvpRow];
+    });
+  };
+
+  const handleMarkAttended = async (eventId: string) => {
+    if (!membership || !userId) return;
+    const mine = eventRsvps.find((r) => r.event_id === eventId && r.user_id === userId);
+    if (!mine || mine.status !== 'going') {
+      Alert.alert('RSVP first', 'Set RSVP to Going before marking attendance.');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('event_rsvps')
+      .update({ attended_at: new Date().toISOString() })
+      .eq('event_id', eventId)
+      .eq('user_id', userId)
+      .select('event_id, user_id, status, attended_at')
+      .single();
+
+    if (error || !data) {
+      Alert.alert('Could not mark attendance', error?.message || 'Unknown error');
+      return;
+    }
+
+    setEventRsvps((prev) => {
+      const rest = prev.filter((r) => !(r.event_id === eventId && r.user_id === userId));
+      return [...rest, data as EventRsvpRow];
+    });
+  };
 
   if (loading || !group) {
     return (
@@ -454,7 +584,7 @@ export default function GroupDetailScreen() {
                       {groupEvents[0].is_virtual ? 'Virtual' : (groupEvents[0].location_name || 'TBD')}
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.rsvpBtn}>
+                  <TouchableOpacity style={styles.rsvpBtn} onPress={() => setActiveTab('events')}>
                     <Text style={styles.rsvpText}>RSVP</Text>
                   </TouchableOpacity>
                 </View>
@@ -499,34 +629,203 @@ export default function GroupDetailScreen() {
         {/* ── Events ── */}
         {activeTab === 'events' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionLabel}>
-              {groupEvents.length > 0 ? `${groupEvents.length} upcoming` : 'No upcoming events'}
-            </Text>
+
+            {/* Header row: count label + create toggle */}
+            <View style={styles.eventsHeaderRow}>
+              <Text style={[styles.sectionLabel, { marginBottom: 0, marginTop: 0 }]}>
+                {groupEvents.length > 0 ? `${groupEvents.length} upcoming` : 'Upcoming events'}
+              </Text>
+              {membership && (
+                <TouchableOpacity
+                  style={[styles.eventCreateToggle, showEventForm && styles.eventCreateToggleActive]}
+                  onPress={() => setShowEventForm((v) => !v)}
+                >
+                  <Ionicons
+                    name={showEventForm ? 'close' : 'add'}
+                    size={13}
+                    color={showEventForm ? Colors.muted : Colors.terracotta}
+                  />
+                  <Text style={[styles.eventCreateToggleText, showEventForm && styles.eventCreateToggleTextCancel]}>
+                    {showEventForm ? 'Cancel' : 'New Event'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Create Event form */}
+            {membership && showEventForm && (
+              <View style={styles.eventCreateCard}>
+                <Text style={styles.eventFormTitle}>📅 Create an Event</Text>
+
+                <View style={styles.eventFieldGroup}>
+                  <Text style={styles.eventFieldLabel}>Title</Text>
+                  <TextInput
+                    style={styles.eventInput}
+                    value={eventTitleDraft}
+                    onChangeText={setEventTitleDraft}
+                    placeholder="e.g. Coffee & Catch-up"
+                    placeholderTextColor={Colors.muted}
+                  />
+                </View>
+
+                <View style={styles.eventInputRow}>
+                  <View style={[styles.eventFieldGroup, { flex: 1 }]}>
+                    <Text style={styles.eventFieldLabel}>Date</Text>
+                    <TextInput
+                      style={styles.eventInput}
+                      value={eventDateDraft}
+                      onChangeText={setEventDateDraft}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor={Colors.muted}
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={[styles.eventFieldGroup, { flex: 1 }]}>
+                    <Text style={styles.eventFieldLabel}>Time</Text>
+                    <TextInput
+                      style={styles.eventInput}
+                      value={eventTimeDraft}
+                      onChangeText={setEventTimeDraft}
+                      placeholder="HH:mm"
+                      placeholderTextColor={Colors.muted}
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+
+                {!eventVirtualDraft && (
+                  <View style={styles.eventFieldGroup}>
+                    <Text style={styles.eventFieldLabel}>Location</Text>
+                    <TextInput
+                      style={styles.eventInput}
+                      value={eventLocationDraft}
+                      onChangeText={setEventLocationDraft}
+                      placeholder="Where will it happen?"
+                      placeholderTextColor={Colors.muted}
+                    />
+                  </View>
+                )}
+
+                <View style={styles.eventVirtualRow}>
+                  <Text style={styles.eventVirtualLabel}>Virtual event</Text>
+                  <Switch
+                    value={eventVirtualDraft}
+                    onValueChange={setEventVirtualDraft}
+                    trackColor={{ false: Colors.border, true: Colors.olive }}
+                    thumbColor={Colors.white}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.eventSaveBtn, creatingEvent && styles.eventSaveBtnDisabled]}
+                  onPress={() => void handleCreateEvent()}
+                  disabled={creatingEvent}
+                >
+                  {creatingEvent
+                    ? <ActivityIndicator size="small" color={Colors.white} />
+                    : <Text style={styles.eventSaveBtnText}>Save Event</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Events list or empty state */}
             {groupEvents.length > 0 ? (
               <View style={styles.membersCard}>
-                {groupEvents.map((ev, i) => (
-                  <View key={ev.id} style={[styles.eventRow, i > 0 && styles.memberRowDivider]}>
-                    <View style={styles.eventDateBlock}>
-                      <Text style={styles.eventDateMonth}>
-                        {new Date(ev.starts_at).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}
-                      </Text>
-                      <Text style={styles.eventDateDay}>{new Date(ev.starts_at).getDate()}</Text>
+                {groupEvents.map((ev, i) => {
+                  const stats = getEventStats(ev.id);
+                  const myRsvp = stats.mine;
+                  return (
+                    <View key={ev.id} style={[styles.eventBlock, i > 0 && styles.memberRowDivider]}>
+                      <View style={styles.eventRow}>
+                        <View style={styles.eventDateBlock}>
+                          <Text style={styles.eventDateMonth}>
+                            {new Date(ev.starts_at).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}
+                          </Text>
+                          <Text style={styles.eventDateDay}>{new Date(ev.starts_at).getDate()}</Text>
+                        </View>
+                        <View style={styles.eventInfo}>
+                          <Text style={styles.eventTitle}>{ev.title}</Text>
+                          <Text style={styles.eventTime}>{formatTime(ev.starts_at)}</Text>
+                          <Text style={styles.eventLocation}>
+                            {ev.is_virtual ? 'Virtual' : (ev.location_name || 'TBD')}
+                          </Text>
+                          {(stats.going > 0 || stats.interested > 0 || stats.attended > 0) && (
+                            <View style={styles.eventStatsRow}>
+                              {stats.going > 0 && (
+                                <View style={styles.eventStatChip}>
+                                  <Text style={styles.eventStatChipText}>✅ {stats.going} going</Text>
+                                </View>
+                              )}
+                              {stats.interested > 0 && (
+                                <View style={styles.eventStatChip}>
+                                  <Text style={styles.eventStatChipText}>👀 {stats.interested}</Text>
+                                </View>
+                              )}
+                              {stats.attended > 0 && (
+                                <View style={[styles.eventStatChip, styles.eventStatChipAttended]}>
+                                  <Text style={styles.eventStatChipAttendedText}>✓ {stats.attended} attended</Text>
+                                </View>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {membership ? (
+                        <View style={styles.rsvpRow}>
+                          {(['going', 'interested', 'not_going'] as const).map((status) => {
+                            const active = myRsvp?.status === status;
+                            const label = status === 'going' ? '✅ Going' : status === 'interested' ? '👀 Interested' : '✗ Not going';
+                            return (
+                              <TouchableOpacity
+                                key={`${ev.id}-${status}`}
+                                style={[
+                                  styles.rsvpPill,
+                                  active && (status === 'going' ? styles.rsvpPillGoing : status === 'interested' ? styles.rsvpPillInterested : styles.rsvpPillNotGoing),
+                                ]}
+                                onPress={() => void handleRsvp(ev.id, status)}
+                              >
+                                <Text style={[
+                                  styles.rsvpPillText,
+                                  active && (status === 'going' ? styles.rsvpPillTextGoing : status === 'interested' ? styles.rsvpPillTextInterested : styles.rsvpPillTextNotGoing),
+                                ]}>
+                                  {label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                          {myRsvp?.attended_at ? (
+                            <View style={styles.attendedChip}>
+                              <Ionicons name="checkmark-circle" size={11} color={Colors.success} />
+                              <Text style={styles.attendedChipText}>Attended</Text>
+                            </View>
+                          ) : myRsvp?.status === 'going' ? (
+                            <TouchableOpacity
+                              style={styles.attendedBtn}
+                              onPress={() => void handleMarkAttended(ev.id)}
+                            >
+                              <Text style={styles.attendedBtnText}>Mark attended</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      ) : (
+                        <Text style={styles.eventsJoinHint}>Join to RSVP and track attendance.</Text>
+                      )}
                     </View>
-                    <View style={styles.eventInfo}>
-                      <Text style={styles.eventTitle}>{ev.title}</Text>
-                      <Text style={styles.eventTime}>{formatTime(ev.starts_at)}</Text>
-                      <Text style={styles.eventLocation}>
-                        {ev.is_virtual ? 'Virtual' : (ev.location_name || 'TBD')}
-                      </Text>
-                    </View>
-                    <TouchableOpacity style={styles.rsvpBtn}>
-                      <Text style={styles.rsvpText}>RSVP</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             ) : (
-              <Text style={styles.emptyText}>No events scheduled yet</Text>
+              <View style={styles.eventsEmpty}>
+                <View style={styles.eventsEmptyIcon}>
+                  <Ionicons name="calendar-outline" size={28} color={Colors.borderDark} />
+                </View>
+                <Text style={styles.eventsEmptyTitle}>No upcoming events</Text>
+                <Text style={styles.eventsEmptyText}>
+                  {membership ? 'Be the first to create an event for this group.' : 'Join the group to create events.'}
+                </Text>
+              </View>
             )}
           </View>
         )}
@@ -867,6 +1166,71 @@ const styles = StyleSheet.create({
   organizerText: { fontSize: 10, color: Colors.gold, fontWeight: '700' },
 
   // ── Events ──
+  eventsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  eventCreateToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  eventCreateToggleActive: { backgroundColor: Colors.paper, borderColor: Colors.borderDark },
+  eventCreateToggleText: { fontSize: 12, color: Colors.terracotta, fontWeight: '700' },
+  eventCreateToggleTextCancel: { color: Colors.muted },
+  eventCreateCard: {
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: 10,
+    marginBottom: Spacing.md,
+  },
+  eventFormTitle: { fontSize: 14, fontWeight: '800', color: Colors.ink },
+  eventFieldGroup: { gap: 5 },
+  eventFieldLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  eventInputRow: { flexDirection: 'row', gap: 8 },
+  eventInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.paper,
+    color: Colors.ink,
+    fontSize: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  eventInputHalf: { flex: 1 },
+  eventVirtualRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  eventVirtualLabel: { fontSize: 13, color: Colors.brownMid, fontWeight: '600' },
+  eventSaveBtn: {
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  eventSaveBtnDisabled: { opacity: 0.6 },
+  eventSaveBtnText: { fontSize: 13, fontWeight: '700', color: Colors.white },
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -880,11 +1244,12 @@ const styles = StyleSheet.create({
   },
   eventRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
     paddingVertical: 12,
     paddingHorizontal: Spacing.md,
   },
+  eventBlock: { paddingVertical: 4 },
   eventDateBlock: {
     width: 44,
     height: 48,
@@ -901,6 +1266,21 @@ const styles = StyleSheet.create({
   eventTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
   eventTime: { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginBottom: 1 },
   eventLocation: { fontSize: 11, color: Colors.muted },
+  eventStatsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 6 },
+  eventStatChip: {
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.full,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  eventStatChipText: { fontSize: 10, color: Colors.brownMid, fontWeight: '600' },
+  eventStatChipAttended: {
+    backgroundColor: 'rgba(90,158,111,0.1)',
+    borderColor: 'rgba(90,158,111,0.3)',
+  },
+  eventStatChipAttendedText: { fontSize: 10, color: Colors.success, fontWeight: '600' },
   rsvpBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -909,6 +1289,71 @@ const styles = StyleSheet.create({
     borderColor: Colors.terracotta,
   },
   rsvpText: { fontSize: 11, fontWeight: '700', color: Colors.terracotta },
+  rsvpRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingBottom: 12,
+    alignItems: 'center',
+  },
+  rsvpPill: {
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.paper,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  rsvpPillGoing: { borderColor: Colors.olive, backgroundColor: 'rgba(122,140,92,0.1)' },
+  rsvpPillInterested: { borderColor: Colors.gold, backgroundColor: 'rgba(201,168,76,0.1)' },
+  rsvpPillNotGoing: { borderColor: Colors.borderDark, backgroundColor: Colors.paper },
+  rsvpPillText: { fontSize: 11, color: Colors.brownMid, fontWeight: '600' },
+  rsvpPillTextGoing: { color: Colors.olive },
+  rsvpPillTextInterested: { color: Colors.gold },
+  rsvpPillTextNotGoing: { color: Colors.muted },
+  attendedBtn: {
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.borderDark,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: Colors.paper,
+  },
+  attendedBtnText: { fontSize: 11, color: Colors.brownMid, fontWeight: '600' },
+  attendedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(90,158,111,0.1)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(90,158,111,0.3)',
+  },
+  attendedChipText: { fontSize: 11, color: Colors.success, fontWeight: '700' },
+  eventsJoinHint: {
+    paddingHorizontal: Spacing.md,
+    paddingBottom: 12,
+    fontSize: 11,
+    color: Colors.muted,
+    fontStyle: 'italic',
+  },
+  eventsEmpty: { alignItems: 'center', paddingVertical: 36, gap: 8 },
+  eventsEmptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  eventsEmptyTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink },
+  eventsEmptyText: { fontSize: 13, color: Colors.muted, textAlign: 'center', lineHeight: 19, paddingHorizontal: 20 },
 
   // ── Posts ──
   postComposer: {
