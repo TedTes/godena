@@ -274,8 +274,8 @@ export default function GroupDetailScreen() {
     if (!id || !membership || !userId) return;
     if (val) {
       Alert.alert(
-        'Set openness signal?',
-        `You'll quietly signal that you're open to a connection from ${group?.name}. Only a mutual signal triggers a reveal — nobody will know unless it's both of you.`,
+        'Signal your openness?',
+        `You'll quietly signal that you're open to meeting someone from ${group?.name}. Only a mutual signal leads to an introduction — and it's always private.`,
         [
           { text: 'Not yet', style: 'cancel' },
           {
@@ -496,7 +496,7 @@ export default function GroupDetailScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.joinSuccessTitle}>You joined {group.name}!</Text>
-              <Text style={styles.joinSuccessSubtext}>Explore events, chat, and signal connections.</Text>
+              <Text style={styles.joinSuccessSubtext}>Explore events, join the chat, and quietly signal who you're open to meeting.</Text>
             </View>
           </View>
         )}
@@ -509,7 +509,7 @@ export default function GroupDetailScreen() {
             </View>
             <Text style={styles.joinPromptTitle}>Join to participate</Text>
             <Text style={styles.joinPromptText}>
-              Members access the group chat, events, and connection signals.
+              Members can join group chat, RSVP to events, and quietly signal who they're open to meeting.
             </Text>
             <TouchableOpacity
               style={[styles.joinGroupBtn, joining && styles.joinGroupBtnDisabled]}
@@ -532,8 +532,8 @@ export default function GroupDetailScreen() {
             </Text>
             <Text style={styles.openDesc}>
               {isOpen
-                ? "Your signal is private. We'll only reveal when it's mutual and the time feels right."
-                : 'Signal quietly. Only fires when both people are genuinely open.'}
+                ? "Your signal is private. We'll introduce you when both of you have been genuinely active here together."
+                : 'Signal quietly. Introductions only happen when both of you are open — and have been showing up together recently.'}
             </Text>
           </View>
           <Switch

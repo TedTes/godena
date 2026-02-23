@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   View,
@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Switch,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
@@ -92,6 +92,10 @@ export default function GroupsScreen() {
   const [loadError, setLoadError] = useState('');
   const [unreadByGroup, setUnreadByGroup] = useState<Record<string, number>>({});
   const [lastMessages, setLastMessages] = useState<Record<string, { content: string; sentAt: string; isOwn: boolean }>>({});
+
+  // Refs for stable access inside useFocusEffect (avoids stale closure issues)
+  const userIdRef = useRef<string | null>(null);
+  const joinedIdsRef = useRef<Set<string>>(new Set());
 
   const joinGroup = async (groupId: string) => {
     if (!userId) {
@@ -184,7 +188,10 @@ export default function GroupsScreen() {
 
       setGroups((groupsData ?? []) as GroupRow[]);
       const membershipRows = (membershipsResponse?.data ?? []) as Array<{ group_id: string; last_seen_at: string | null }>;
-      setJoinedIds(new Set<string>(membershipRows.map((m) => m.group_id)));
+      const ids = new Set<string>(membershipRows.map((m) => m.group_id));
+      setJoinedIds(ids);
+      userIdRef.current = uid;
+      joinedIdsRef.current = ids;
 
       if (uid && membershipRows.length > 0) {
         const groupIds = membershipRows.map((m) => m.group_id);
@@ -214,6 +221,43 @@ export default function GroupsScreen() {
     };
     void load();
   }, []);
+
+  // Silently refresh unread counts whenever the screen regains focus
+  // (e.g. after returning from a group chat). Reads from refs so the
+  // callback stays stable and doesn't re-register on every render.
+  useFocusEffect(
+    useCallback(() => {
+      const uid = userIdRef.current;
+      const ids = joinedIdsRef.current;
+      if (!uid || ids.size === 0) return;
+
+      void (async () => {
+        const groupIds = Array.from(ids);
+        const [membershipsRes, { data: recentMessages }] = await Promise.all([
+          fetchUserMemberships(uid),
+          fetchRecentMessagesForGroups(groupIds),
+        ]);
+        const membershipRows = (membershipsRes?.data ?? []) as Array<{ group_id: string; last_seen_at: string | null }>;
+        const seenMap = new Map(membershipRows.map((m) => [m.group_id, m.last_seen_at]));
+
+        const unread: Record<string, number> = {};
+        const lastMsg: Record<string, { content: string; sentAt: string; isOwn: boolean }> = {};
+        for (const row of recentMessages ?? []) {
+          const msg = row as { group_id: string; sender_id: string; sent_at: string; content: string };
+          if (!lastMsg[msg.group_id]) {
+            lastMsg[msg.group_id] = { content: msg.content, sentAt: msg.sent_at, isOwn: msg.sender_id === uid };
+          }
+          if (msg.sender_id === uid) continue;
+          const seenAt = seenMap.get(msg.group_id);
+          if (!seenAt || new Date(msg.sent_at).getTime() > new Date(seenAt).getTime()) {
+            unread[msg.group_id] = (unread[msg.group_id] ?? 0) + 1;
+          }
+        }
+        setUnreadByGroup(unread);
+        setLastMessages(lastMsg);
+      })();
+    }, []) // empty deps — reads live values from refs
+  );
 
   const cityOptions = useMemo(() => {
     const cities = Array.from(

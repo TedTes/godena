@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   View,
   Text,
   StyleSheet,
@@ -100,6 +101,7 @@ export default function GroupChatScreen() {
   const listRef = useRef<FlatList>(null);
   const profileMapRef = useRef<Record<string, { name: string; avatar: string }>>({});
   const atBottomRef = useRef(true);
+  const pillAnim = useRef(new Animated.Value(0)).current;
 
   const groupVisuals = useMemo(() => {
     switch (group?.category) {
@@ -225,6 +227,19 @@ export default function GroupChatScreen() {
     return () => clearTimeout(timer);
   }, [id, userId, messages.length]);
 
+  // Animate the new-messages pill in when it first appears, reset instantly on dismiss.
+  const prevHasPending = useRef(false);
+  useEffect(() => {
+    const hasPending = pendingCount > 0;
+    if (hasPending && !prevHasPending.current) {
+      pillAnim.setValue(0);
+      Animated.timing(pillAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    } else if (!hasPending) {
+      pillAnim.setValue(0);
+    }
+    prevHasPending.current = hasPending;
+  }, [pendingCount]);
+
   const handleScroll = useCallback((e: {
     nativeEvent: { contentSize: { height: number }; layoutMeasurement: { height: number }; contentOffset: { y: number } }
   }) => {
@@ -253,6 +268,7 @@ export default function GroupChatScreen() {
       }
 
       setInput('');
+      setPendingCount(0);
       void markGroupSeen();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     })();
@@ -409,7 +425,16 @@ export default function GroupChatScreen() {
 
         {/* ── New messages pill ── */}
         {pendingCount > 0 && (
-          <View style={styles.newMsgPillWrap} pointerEvents="box-none">
+          <Animated.View
+            style={[
+              styles.newMsgPillWrap,
+              {
+                opacity: pillAnim,
+                transform: [{ translateY: pillAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }],
+              },
+            ]}
+            pointerEvents="box-none"
+          >
             <TouchableOpacity
               style={styles.newMsgPill}
               onPress={() => {
@@ -423,7 +448,7 @@ export default function GroupChatScreen() {
                 {pendingCount === 1 ? '1 new message' : `${pendingCount} new messages`}
               </Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         )}
         </View>
 
