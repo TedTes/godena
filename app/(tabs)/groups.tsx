@@ -72,6 +72,7 @@ export default function GroupsScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState<string | null>(null);
+  const [justJoinedIds, setJustJoinedIds] = useState<Set<string>>(new Set());
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -104,6 +105,14 @@ export default function GroupsScreen() {
     setGroups((prev) =>
       prev.map((g) => g.id === groupId ? { ...g, member_count: g.member_count + 1 } : g)
     );
+    setJustJoinedIds((prev) => new Set([...prev, groupId]));
+    setTimeout(() => {
+      setJustJoinedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(groupId);
+        return next;
+      });
+    }, 1400);
   };
 
   const createGroup = async () => {
@@ -198,9 +207,9 @@ export default function GroupsScreen() {
     const dbCategory = DB_CATEGORY_BY_LABEL[activeCategory];
     const matchCat = !dbCategory || g.category === dbCategory;
     const isMember = joinedIds.has(g.id);
-    const matchTab = tab === 'mine' ? isMember : !isMember;
+    const matchTab = tab === 'mine' ? isMember : (!isMember || justJoinedIds.has(g.id));
     return matchSearch && matchCat && matchTab;
-  }), [groups, search, activeCategory, tab, joinedIds]);
+  }), [groups, search, activeCategory, tab, joinedIds, justJoinedIds]);
 
   function formatNextEvent(iso: string | null) {
     if (!iso) return null;
@@ -418,6 +427,11 @@ export default function GroupsScreen() {
                   {/* Right action */}
                   {tab === 'mine' ? (
                     <Ionicons name="chevron-forward" size={18} color={Colors.borderDark} style={styles.cardChevron} />
+                  ) : justJoinedIds.has(g.id) ? (
+                    <View style={styles.joinBtnSuccess}>
+                      <Ionicons name="checkmark" size={13} color={Colors.success} />
+                      <Text style={styles.joinTextSuccess}>Joined!</Text>
+                    </View>
                   ) : (
                     <TouchableOpacity
                       style={[styles.joinBtn, isJoined && styles.joinBtnJoined]}
@@ -652,4 +666,17 @@ const styles = StyleSheet.create({
   },
   joinText: { fontSize: 12, fontWeight: '700', color: Colors.white },
   joinTextJoined: { color: Colors.olive },
+  joinBtnSuccess: {
+    marginRight: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(90,158,111,0.12)',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(90,158,111,0.3)',
+  },
+  joinTextSuccess: { fontSize: 12, fontWeight: '700', color: Colors.success },
 });

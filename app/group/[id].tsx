@@ -9,6 +9,7 @@ import {
   Image,
   Switch,
   Alert,
+  TextInput,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -63,6 +64,12 @@ type Post = {
   created_at: string;
 };
 
+type ReactionRow = {
+  post_id: string;
+  reaction: string;
+  user_id: string;
+};
+
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -74,8 +81,12 @@ export default function GroupDetailScreen() {
   const [memberNames, setMemberNames] = useState<Record<string, { name: string; avatar: string | null }>>({});
   const [groupEvents, setGroupEvents] = useState<Event[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
+  const [reactionRows, setReactionRows] = useState<ReactionRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  const [joinSuccess, setJoinSuccess] = useState(false);
+  const [postDraft, setPostDraft] = useState('');
+  const [posting, setPosting] = useState(false);
 
   const visuals = useMemo(
     () => getGroupVisuals(group?.category ?? 'other'),
@@ -131,13 +142,26 @@ export default function GroupDetailScreen() {
 
     setMembership((membershipRes.data as Membership | null) ?? null);
     const membersData = (membersRes.data as Member[] | null) ?? [];
+    const eventsData = (eventsRes.data as Event[] | null) ?? [];
+    const postsData = (postsRes.data as Post[] | null) ?? [];
     setMembers(membersData);
-    setGroupEvents((eventsRes.data as Event[] | null) ?? []);
-    setPosts((postsRes.data as Post[] | null) ?? []);
+    setGroupEvents(eventsData);
+    setPosts(postsData);
+
+    const postIds = postsData.map((p) => p.id);
+    if (postIds.length > 0) {
+      const { data: reactionsData } = await supabase
+        .from('group_post_reactions')
+        .select('post_id, reaction, user_id')
+        .in('post_id', postIds);
+      setReactionRows((reactionsData as ReactionRow[] | null) ?? []);
+    } else {
+      setReactionRows([]);
+    }
 
     const authorIds = Array.from(new Set([
       ...membersData.map((m) => m.user_id),
-      ...((postsRes.data as Post[] | null) ?? []).map((p) => p.author_id),
+      ...postsData.map((p) => p.author_id),
     ]));
 
     if (authorIds.length > 0) {
@@ -160,6 +184,61 @@ export default function GroupDetailScreen() {
   };
 
   useEffect(() => { void load(); }, [id]);
+
+  const handleCreatePost = async () => {
+    if (!id || !userId || !membership || posting) return;
+    const content = postDraft.trim();
+    if (!content) return;
+
+    setPosting(true);
+    const { data, error } = await supabase
+      .from('group_posts')
+      .insert({ group_id: id, author_id: userId, content })
+      .select('id, author_id, content, created_at')
+      .single();
+    setPosting(false);
+
+    if (error || !data) {
+      Alert.alert('Could not post', error?.message || 'Unknown error');
+      return;
+    }
+
+    setPosts((prev) => [data as Post, ...prev]);
+    setPostDraft('');
+  };
+
+  const handleReactionToggle = async (postId: string, reaction: string) => {
+    if (!membership || !userId) return;
+    const alreadyReacted = reactionRows.some(
+      (r) => r.post_id === postId && r.reaction === reaction && r.user_id === userId
+    );
+
+    if (alreadyReacted) {
+      const { error } = await supabase
+        .from('group_post_reactions')
+        .delete()
+        .eq('post_id', postId)
+        .eq('user_id', userId)
+        .eq('reaction', reaction);
+      if (error) {
+        Alert.alert('Could not remove reaction', error.message);
+        return;
+      }
+      setReactionRows((prev) =>
+        prev.filter((r) => !(r.post_id === postId && r.user_id === userId && r.reaction === reaction))
+      );
+      return;
+    }
+
+    const { error } = await supabase
+      .from('group_post_reactions')
+      .insert({ post_id: postId, user_id: userId, reaction });
+    if (error) {
+      Alert.alert('Could not add reaction', error.message);
+      return;
+    }
+    setReactionRows((prev) => [...prev, { post_id: postId, user_id: userId, reaction }]);
+  };
 
   const handleOpenToggle = (val: boolean) => {
     if (!id || !membership || !userId) return;
@@ -202,7 +281,12 @@ export default function GroupDetailScreen() {
       .upsert({ group_id: id, user_id: userId }, { onConflict: 'group_id,user_id', ignoreDuplicates: true });
     setJoining(false);
     if (error) { Alert.alert('Could not join group', error.message); return; }
-    await load();
+    // Optimistic updates — avoids full reload flash
+    setMembership({ role: 'member', is_open_to_connect: false });
+    setGroup((prev) => prev ? { ...prev, member_count: prev.member_count + 1 } : prev);
+    setMembers((prev) => [{ user_id: userId, role: 'member' }, ...prev]);
+    setJoinSuccess(true);
+    setTimeout(() => setJoinSuccess(false), 2500);
   };
 
   const formatDate = (iso: string) =>
@@ -256,8 +340,21 @@ export default function GroupDetailScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false}>
 
+        {/* ── Join Success Banner ── */}
+        {joinSuccess && (
+          <View style={styles.joinSuccessBanner}>
+            <View style={styles.joinSuccessIconWrap}>
+              <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.joinSuccessTitle}>You joined {group.name}!</Text>
+              <Text style={styles.joinSuccessSubtext}>Explore events, chat, and signal connections.</Text>
+            </View>
+          </View>
+        )}
+
         {/* ── Join Prompt ── */}
-        {!membership && (
+        {!membership && !joinSuccess && (
           <View style={styles.joinPrompt}>
             <View style={styles.joinPromptIcon}>
               <Ionicons name="people" size={22} color={Colors.terracotta} />
@@ -437,6 +534,32 @@ export default function GroupDetailScreen() {
         {/* ── Activity ── */}
         {activeTab === 'activity' && (
           <View style={styles.tabContent}>
+            {membership && (
+              <View style={styles.postComposer}>
+                <TextInput
+                  style={styles.postInput}
+                  value={postDraft}
+                  onChangeText={setPostDraft}
+                  placeholder="Share something with the group..."
+                  placeholderTextColor={Colors.muted}
+                  multiline
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.postBtn,
+                    (posting || postDraft.trim().length === 0) && styles.postBtnDisabled,
+                  ]}
+                  onPress={() => void handleCreatePost()}
+                  disabled={posting || postDraft.trim().length === 0}
+                >
+                  {posting
+                    ? <ActivityIndicator size="small" color={Colors.white} />
+                    : <Text style={styles.postBtnText}>Post</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            )}
+
             <Text style={styles.sectionLabel}>
               {posts.length > 0 ? `${posts.length} recent posts` : 'No recent activity'}
             </Text>
@@ -445,6 +568,8 @@ export default function GroupDetailScreen() {
                 {posts.map((p) => {
                   const author = memberNames[p.author_id];
                   const initial = (author?.name?.[0] || 'M').toUpperCase();
+                  const reactionsForPost = reactionRows.filter((r) => r.post_id === p.id);
+                  const reactionTypes = Array.from(new Set(reactionsForPost.map((r) => r.reaction)));
                   return (
                     <View key={p.id} style={styles.postCard}>
                       <View style={styles.postHeader}>
@@ -461,6 +586,36 @@ export default function GroupDetailScreen() {
                         </View>
                       </View>
                       <Text style={styles.postText}>{p.content}</Text>
+                      <View style={styles.reactionsWrap}>
+                        {reactionTypes.map((reaction) => {
+                          const count = reactionsForPost.filter((r) => r.reaction === reaction).length;
+                          const mine = reactionsForPost.some(
+                            (r) => r.reaction === reaction && r.user_id === userId
+                          );
+                          return (
+                            <TouchableOpacity
+                              key={`${p.id}-${reaction}`}
+                              style={[styles.reactionChip, mine && styles.reactionChipActive]}
+                              onPress={() => void handleReactionToggle(p.id, reaction)}
+                              disabled={!membership}
+                            >
+                              <Text style={[styles.reactionText, mine && styles.reactionTextActive]}>
+                                {reaction} {count}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        {['❤️', '👍', '🔥'].map((reaction) => (
+                          <TouchableOpacity
+                            key={`${p.id}-quick-${reaction}`}
+                            style={styles.quickReactBtn}
+                            onPress={() => void handleReactionToggle(p.id, reaction)}
+                            disabled={!membership}
+                          >
+                            <Text style={styles.quickReactText}>{reaction}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
                     </View>
                   );
                 })}
@@ -521,6 +676,30 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   heroCategoryText: { fontSize: 11, color: 'rgba(255,255,255,0.9)', fontWeight: '700' },
+
+  // ── Join Success Banner ──
+  joinSuccessBanner: {
+    margin: Spacing.lg,
+    marginBottom: 0,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: 'rgba(90,158,111,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(90,158,111,0.3)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  joinSuccessIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(90,158,111,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  joinSuccessTitle: { fontSize: 14, fontWeight: '800', color: Colors.success, marginBottom: 2 },
+  joinSuccessSubtext: { fontSize: 12, color: Colors.brownMid, lineHeight: 17 },
 
   // ── Join Prompt ──
   joinPrompt: {
@@ -732,6 +911,32 @@ const styles = StyleSheet.create({
   rsvpText: { fontSize: 11, fontWeight: '700', color: Colors.terracotta },
 
   // ── Posts ──
+  postComposer: {
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  postInput: {
+    minHeight: 72,
+    fontSize: 14,
+    color: Colors.ink,
+    textAlignVertical: 'top',
+  },
+  postBtn: {
+    marginTop: 10,
+    alignSelf: 'flex-end',
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minWidth: 68,
+    alignItems: 'center',
+  },
+  postBtnDisabled: { opacity: 0.5 },
+  postBtnText: { fontSize: 12, fontWeight: '700', color: Colors.white },
   postCard: {
     backgroundColor: Colors.warmWhite,
     borderWidth: 1,
@@ -752,4 +957,28 @@ const styles = StyleSheet.create({
   postAuthor: { fontSize: 13, fontWeight: '700', color: Colors.ink },
   postMeta: { fontSize: 11, color: Colors.muted, marginTop: 1 },
   postText: { fontSize: 13, color: Colors.brownMid, lineHeight: 20 },
+  reactionsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  reactionChip: {
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.paper,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  reactionChipActive: {
+    borderColor: Colors.terracotta,
+    backgroundColor: 'rgba(196,98,45,0.1)',
+  },
+  reactionText: { fontSize: 11, fontWeight: '600', color: Colors.brownMid },
+  reactionTextActive: { color: Colors.terracotta },
+  quickReactBtn: {
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: Colors.warmWhite,
+  },
+  quickReactText: { fontSize: 11 },
 });
