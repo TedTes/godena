@@ -1,0 +1,233 @@
+// @ts-nocheck
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+type ScoreRow = {
+  group_id: string;
+  user_a_id: string;
+  user_b_id: string;
+  score: number;
+  last_interaction_at: string | null;
+};
+
+type MembershipRow = {
+  group_id: string;
+  user_id: string;
+  is_open_to_connect: boolean;
+};
+
+type ProfileRow = {
+  user_id: string;
+  full_name: string | null;
+  gender: string;
+  preferred_genders: string[] | null;
+  preferred_age_min: number | null;
+  preferred_age_max: number | null;
+  birth_date: string | null;
+  is_open_to_connections: boolean;
+};
+
+type ConnectionRow = {
+  group_id: string;
+  user_a_id: string;
+  user_b_id: string;
+};
+
+function pairOrder(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+
+function pairKey(groupId: string, a: string, b: string) {
+  const [u1, u2] = pairOrder(a, b);
+  return `${groupId}:${u1}:${u2}`;
+}
+
+function ageFromBirthDate(birthDate: string | null) {
+  if (!birthDate) return null;
+  const dob = new Date(birthDate);
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const m = now.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--;
+  return age >= 0 ? age : null;
+}
+
+function acceptsGender(preferred: string[] | null | undefined, targetGender: string | null | undefined) {
+  if (!preferred || preferred.length === 0) return true;
+  if (!targetGender) return false;
+  return preferred.includes(targetGender);
+}
+
+function acceptsAge(minAge: number | null, maxAge: number | null, targetAge: number | null) {
+  if (minAge == null && maxAge == null) return true;
+  if (targetAge == null) return false;
+  if (minAge != null && targetAge < minAge) return false;
+  if (maxAge != null && targetAge > maxAge) return false;
+  return true;
+}
+
+function preferencesMatch(a: ProfileRow, b: ProfileRow) {
+  if (!a.is_open_to_connections || !b.is_open_to_connections) return false;
+
+  const ageA = ageFromBirthDate(a.birth_date);
+  const ageB = ageFromBirthDate(b.birth_date);
+
+  const aAcceptsB = acceptsGender(a.preferred_genders, b.gender)
+    && acceptsAge(a.preferred_age_min, a.preferred_age_max, ageB);
+  const bAcceptsA = acceptsGender(b.preferred_genders, a.gender)
+    && acceptsAge(b.preferred_age_min, b.preferred_age_max, ageA);
+
+  return aAcceptsB && bAcceptsA;
+}
+
+Deno.serve(async (req) => {
+  try {
+    if (req.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    const internalSecret = Deno.env.get("INTERNAL_FUNCTION_SECRET");
+    if (internalSecret) {
+      const provided = req.headers.get("x-internal-secret");
+      if (provided !== internalSecret) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401 });
+      }
+    }
+
+    const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+    const { data: cfg, error: cfgErr } = await client
+      .from("matching_config")
+      .select("reveal_threshold, lookback_days")
+      .eq("id", 1)
+      .single();
+    if (cfgErr || !cfg) throw cfgErr ?? new Error("missing matching_config");
+
+    const revealThreshold = Number(cfg.reveal_threshold ?? 25);
+    const lookbackDays = Number(cfg.lookback_days ?? 30);
+    const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: scoreRows, error: scoreErr } = await client
+      .from("interaction_scores")
+      .select("group_id, user_a_id, user_b_id, score, last_interaction_at")
+      .gte("score", revealThreshold)
+      .gte("last_interaction_at", cutoff)
+      .order("score", { ascending: false })
+      .limit(50000);
+    if (scoreErr) throw scoreErr;
+
+    const scores = (scoreRows ?? []) as ScoreRow[];
+    if (scores.length === 0) {
+      return new Response(
+        JSON.stringify({ ok: true, candidates_scanned: 0, inserted: 0 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const groupIds = Array.from(new Set(scores.map((s) => s.group_id)));
+    const userIds = Array.from(new Set(scores.flatMap((s) => [s.user_a_id, s.user_b_id])));
+
+    const [membershipsRes, profilesRes, connectionsRes] = await Promise.all([
+      client
+        .from("group_memberships")
+        .select("group_id, user_id, is_open_to_connect")
+        .in("group_id", groupIds)
+        .in("user_id", userIds)
+        .eq("is_open_to_connect", true),
+      client
+        .from("profiles")
+        .select("user_id, full_name, gender, preferred_genders, preferred_age_min, preferred_age_max, birth_date, is_open_to_connections")
+        .in("user_id", userIds),
+      client
+        .from("connections")
+        .select("group_id, user_a_id, user_b_id")
+        .in("group_id", groupIds)
+        .in("user_a_id", userIds)
+        .in("user_b_id", userIds),
+    ]);
+
+    if (membershipsRes.error) throw membershipsRes.error;
+    if (profilesRes.error) throw profilesRes.error;
+    if (connectionsRes.error) throw connectionsRes.error;
+
+    const memberships = (membershipsRes.data ?? []) as MembershipRow[];
+    const profiles = (profilesRes.data ?? []) as ProfileRow[];
+    const connections = (connectionsRes.data ?? []) as ConnectionRow[];
+
+    const openMembershipSet = new Set(memberships.map((m) => `${m.group_id}:${m.user_id}`));
+    const profileByUser = new Map<string, ProfileRow>();
+    for (const p of profiles) profileByUser.set(p.user_id, p);
+    const connectedSet = new Set(connections.map((c) => pairKey(c.group_id, c.user_a_id, c.user_b_id)));
+
+    const toInsert: Array<{
+      group_id: string;
+      user_a_id: string;
+      user_b_id: string;
+      status: "pending";
+      activity_suggested: string;
+    }> = [];
+
+    for (const s of scores) {
+      if (!openMembershipSet.has(`${s.group_id}:${s.user_a_id}`)) continue;
+      if (!openMembershipSet.has(`${s.group_id}:${s.user_b_id}`)) continue;
+      if (connectedSet.has(pairKey(s.group_id, s.user_a_id, s.user_b_id))) continue;
+
+      const pa = profileByUser.get(s.user_a_id);
+      const pb = profileByUser.get(s.user_b_id);
+      if (!pa || !pb) continue;
+      if (!preferencesMatch(pa, pb)) continue;
+
+      toInsert.push({
+        group_id: s.group_id,
+        user_a_id: s.user_a_id,
+        user_b_id: s.user_b_id,
+        status: "pending",
+        activity_suggested: "Meet through a shared group activity this week.",
+      });
+    }
+
+    if (toInsert.length === 0) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          candidates_scanned: scores.length,
+          eligible: 0,
+          inserted: 0,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const { data: insertedRows, error: insertErr } = await client
+      .from("connections")
+      .upsert(toInsert, { onConflict: "group_id,user_a_id,user_b_id", ignoreDuplicates: true })
+      .select("id, group_id, user_a_id, user_b_id, status, revealed_at");
+
+    if (insertErr) throw insertErr;
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        reveal_threshold: revealThreshold,
+        lookback_days: lookbackDays,
+        candidates_scanned: scores.length,
+        eligible: toInsert.length,
+        inserted: (insertedRows ?? []).length,
+        connections: insertedRows ?? [],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : "Unknown error",
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+});
