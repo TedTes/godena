@@ -1,21 +1,37 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  ActivityIndicator,
   FlatList,
-  TouchableOpacity,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
   Image,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius } from '../../constants/theme';
+import { Colors, Radius, Spacing } from '../../constants/theme';
+import {
+  fetchConnection,
+  fetchConnectionMessages,
+  fetchGroup,
+  fetchProfile,
+  getSessionUserId,
+  insertConnectionMessage,
+  markConnectionRead,
+  removeChannel,
+  subscribeToConnectionMessages,
+  type ConnectionMessageRow,
+  type ConnectionRow,
+  type GroupRow,
+  type ProfileRow,
+} from '../../lib/services/connectionChat';
 
-type ConnectionMessage = {
+type MessageItem = {
   id: string;
   senderId: string;
   content: string;
@@ -23,230 +39,432 @@ type ConnectionMessage = {
   isOwn: boolean;
 };
 
-const mockConnectionMessages: ConnectionMessage[] = [
-  {
-    id: 'cm1',
-    senderId: 'u2',
-    content: 'Hey! Glad we got introduced through the hikers group.',
-    sentAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-    isOwn: false,
-  },
-];
-
-const mockReveal = {
-  matchName: 'Dawit',
-  matchPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=240&q=80',
-  groupEmoji: '🥾',
-  groupName: 'Habesha Hikers',
-  activitySuggestion: 'Rock Creek weekend walk',
-  activityDate: 'This Saturday',
-};
+function groupEmoji(category?: string) {
+  switch (category) {
+    case 'outdoors': return '🥾';
+    case 'food_drink': return '☕';
+    case 'professional': return '💼';
+    case 'language': return '🗣️';
+    case 'faith': return '✝️';
+    case 'culture': return '🎉';
+    default: return '👥';
+  }
+}
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
-export default function DirectChatScreen() {
+export default function ConnectionChatScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const [messages, setMessages] = useState<ConnectionMessage[]>(mockConnectionMessages);
-  const [input, setInput] = useState('');
   const listRef = useRef<FlatList>(null);
 
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [connection, setConnection] = useState<ConnectionRow | null>(null);
+  const [group, setGroup] = useState<GroupRow | null>(null);
+  const [counterpart, setCounterpart] = useState<ProfileRow | null>(null);
+  const [messages, setMessages] = useState<MessageItem[]>([]);
+  const [draft, setDraft] = useState('');
+
+  const canChat = connection?.status === 'accepted';
+
+  const title = useMemo(() => counterpart?.full_name || 'Conversation', [counterpart]);
+  const subtitle = useMemo(() => {
+    if (!group) return 'Private connection';
+    return `${groupEmoji(group.category)} ${group.name}`;
+  }, [group]);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!id) return;
+      setLoading(true);
+
+      const uid = await getSessionUserId();
+      setUserId(uid);
+      if (!uid) {
+        setLoading(false);
+        return;
+      }
+
+      const connectionRes = await fetchConnection(id);
+      const row = (connectionRes.data as ConnectionRow | null) ?? null;
+      setConnection(row);
+      if (!row) {
+        setLoading(false);
+        return;
+      }
+
+      const otherId = row.user_a_id === uid ? row.user_b_id : row.user_a_id;
+
+      const [groupRes, profileRes, messageRes] = await Promise.all([
+        fetchGroup(row.group_id),
+        fetchProfile(otherId),
+        fetchConnectionMessages(row.id),
+      ]);
+
+      setGroup((groupRes.data as GroupRow | null) ?? null);
+      setCounterpart((profileRes.data as ProfileRow | null) ?? null);
+
+      const messageRows = (messageRes.data as ConnectionMessageRow[] | null) ?? [];
+      setMessages(
+        messageRows.map((m) => ({
+          id: m.id,
+          senderId: m.sender_id,
+          content: m.content,
+          sentAt: m.sent_at,
+          isOwn: m.sender_id === uid,
+        }))
+      );
+
+      await markConnectionRead(row.id, uid);
+      setLoading(false);
+    };
+
+    void load();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || !userId) return;
+
+    const channel = subscribeToConnectionMessages(id, async (row) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === row.id)) return prev;
+        return [
+          ...prev,
+          {
+            id: row.id,
+            senderId: row.sender_id,
+            content: row.content,
+            sentAt: row.sent_at,
+            isOwn: row.sender_id === userId,
+          },
+        ];
+      });
+
+      if (row.sender_id !== userId) {
+        await markConnectionRead(id, userId);
+      }
+
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    });
+
+    return () => {
+      void removeChannel(channel);
+    };
+  }, [id, userId]);
+
   const send = () => {
-    const text = input.trim();
-    if (!text) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `cm${Date.now()}`,
-        senderId: 'user-1',
-        content: text,
-        sentAt: new Date().toISOString(),
-        isOwn: true,
-      },
-    ]);
-    setInput('');
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    void (async () => {
+      if (!id || !userId || !canChat || sending) return;
+      const content = draft.trim();
+      if (!content) return;
+
+      setSending(true);
+      setDraft('');
+
+      const { data } = await insertConnectionMessage(id, userId, content);
+      if (data) {
+        const row = data as ConnectionMessageRow;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === row.id)) return prev;
+          return [
+            ...prev,
+            {
+              id: row.id,
+              senderId: row.sender_id,
+              content: row.content,
+              sentAt: row.sent_at,
+              isOwn: true,
+            },
+          ];
+        });
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+      } else {
+        setDraft(content);
+      }
+
+      setSending(false);
+    })();
   };
 
-  return (
-    <View style={styles.container}>
-      <SafeAreaView edges={['top']} style={styles.headerSafe}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color={Colors.ink} />
-          </TouchableOpacity>
-          <Image source={{ uri: mockReveal.matchPhoto }} style={styles.headerPhoto} />
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerName}>{mockReveal.matchName}</Text>
-            <Text style={styles.headerSub}>
-              {mockReveal.groupEmoji} {mockReveal.groupName}
-            </Text>
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.centerWrap}>
+            <ActivityIndicator color={Colors.terracotta} />
+            <Text style={styles.loadingText}>Opening your conversation…</Text>
           </View>
-          <TouchableOpacity style={styles.headerAction}>
-            <Ionicons name="ellipsis-horizontal" size={20} color={Colors.muted} />
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.flex}
-      >
-        {/* Activity card at top */}
-        <View style={styles.activityBanner}>
-          <Text style={styles.activityBannerEmoji}>⛰️</Text>
-          <View style={styles.activityBannerInfo}>
-            <Text style={styles.activityBannerTitle}>{mockReveal.activitySuggestion}</Text>
-            <Text style={styles.activityBannerDate}>{mockReveal.activityDate}</Text>
-          </View>
-          <TouchableOpacity style={styles.activityBannerBtn}>
-            <Text style={styles.activityBannerBtnText}>Plan it</Text>
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={styles.messageList}
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-          renderItem={({ item: msg }) => (
-            <View style={[styles.msgWrap, msg.isOwn && styles.msgWrapOwn]}>
-              {!msg.isOwn && (
-                <Image source={{ uri: mockReveal.matchPhoto }} style={styles.msgAvatar} />
-              )}
-              <View style={styles.msgColumn}>
-                <View style={[styles.bubble, msg.isOwn ? styles.bubbleOwn : styles.bubbleOther]}>
-                  <Text style={[styles.bubbleText, msg.isOwn && styles.bubbleTextOwn]}>
-                    {msg.content}
-                  </Text>
-                </View>
-                <Text style={[styles.timestamp, msg.isOwn && styles.timestampOwn]}>
-                  {formatTime(msg.sentAt)}
-                </Text>
-              </View>
-            </View>
-          )}
-        />
-
-        <SafeAreaView edges={['bottom']} style={styles.inputSafe}>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              placeholder={`Message ${mockReveal.matchName}…`}
-              placeholderTextColor={Colors.muted}
-              value={input}
-              onChangeText={setInput}
-              multiline
-              maxLength={500}
-            />
-            <TouchableOpacity
-              style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
-              onPress={send}
-              disabled={!input.trim()}
-            >
-              <Ionicons name="send" size={18} color={Colors.white} />
+  if (!connection || !userId) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.centerWrap}>
+            <Text style={styles.emptyTitle}>This conversation isn't available</Text>
+            <Text style={styles.emptySub}>It may have been removed or is no longer active.</Text>
+            <TouchableOpacity style={styles.quietBtn} onPress={() => router.replace('/(tabs)/connections')}>
+              <Text style={styles.quietBtnText}>Back to Connections</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
-      </KeyboardAvoidingView>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView edges={['top']} style={styles.safe}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.headerIconBtn}>
+            <Ionicons name="chevron-back" size={20} color={Colors.ink} />
+          </TouchableOpacity>
+
+          <View style={styles.headerCenter}>
+            {counterpart?.avatar_url ? (
+              <Image source={{ uri: counterpart.avatar_url }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <Ionicons name="person" size={16} color={Colors.muted} />
+              </View>
+            )}
+            <View>
+              <Text style={styles.headerTitle}>{title}</Text>
+              <Text style={styles.headerSub}>{subtitle}</Text>
+            </View>
+          </View>
+
+          <View style={styles.headerIconSpacer} />
+        </View>
+
+        {!canChat && (
+          <View style={styles.waitingBanner}>
+            <Text style={styles.waitingText}>
+              Chat opens once you've both accepted. No pressure — take your time.
+            </Text>
+          </View>
+        )}
+
+        <KeyboardAvoidingView
+          style={styles.body}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 84 : 0}
+        >
+          <FlatList
+            ref={listRef}
+            data={messages}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+            renderItem={({ item }) => (
+              <View style={[styles.bubbleRow, item.isOwn ? styles.bubbleRowOwn : styles.bubbleRowOther]}>
+                <View style={[styles.bubble, item.isOwn ? styles.bubbleOwn : styles.bubbleOther]}>
+                  <Text style={[styles.bubbleText, item.isOwn ? styles.bubbleTextOwn : styles.bubbleTextOther]}>
+                    {item.content}
+                  </Text>
+                  <Text style={[styles.timeText, item.isOwn ? styles.timeOwn : styles.timeOther]}>
+                    {formatTime(item.sentAt)}
+                  </Text>
+                </View>
+              </View>
+            )}
+            ListEmptyComponent={
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyEmoji}>👋</Text>
+                <Text style={styles.emptyTitle}>You're connected</Text>
+                <Text style={styles.emptySub}>
+                  {group
+                    ? `You were introduced through ${group.name}. Be the first to say hello.`
+                    : 'This is the beginning of your conversation. Send the first message.'}
+                </Text>
+              </View>
+            }
+          />
+
+          <View style={styles.composerWrap}>
+            <TextInput
+              style={styles.input}
+              placeholder={canChat ? 'Type a message...' : 'Chat opens after both of you accept…'}
+              placeholderTextColor={Colors.muted}
+              value={draft}
+              onChangeText={setDraft}
+              editable={canChat && !sending}
+              multiline
+              maxLength={2000}
+            />
+            <TouchableOpacity
+              style={[styles.sendBtn, (!canChat || sending || !draft.trim()) && styles.sendBtnDisabled]}
+              onPress={send}
+              disabled={!canChat || sending || !draft.trim()}
+            >
+              {sending ? (
+                <ActivityIndicator color={Colors.white} size="small" />
+              ) : (
+                <Ionicons name="send" size={16} color={Colors.white} />
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
-  flex: { flex: 1 },
-  headerSafe: { backgroundColor: Colors.warmWhite, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 10,
-    gap: 10,
-  },
-  backBtn: { padding: 4 },
-  headerPhoto: { width: 40, height: 40, borderRadius: 20 },
-  headerInfo: { flex: 1 },
-  headerName: { fontSize: 15, fontWeight: '700', color: Colors.ink },
-  headerSub: { fontSize: 11, color: Colors.muted },
-  headerAction: { padding: 4 },
+  safe: { flex: 1 },
+  body: { flex: 1 },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.lg },
 
-  activityBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: Colors.paper,
+  header: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    padding: Spacing.md,
-  },
-  activityBannerEmoji: { fontSize: 20 },
-  activityBannerInfo: { flex: 1 },
-  activityBannerTitle: { fontSize: 13, fontWeight: '700', color: Colors.ink },
-  activityBannerDate: { fontSize: 11, color: Colors.muted },
-  activityBannerBtn: {
-    backgroundColor: Colors.terracotta,
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
-  activityBannerBtnText: { fontSize: 12, fontWeight: '700', color: Colors.white },
-
-  messageList: { padding: Spacing.md, gap: 8, paddingBottom: 8 },
-  msgWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  msgWrapOwn: { flexDirection: 'row-reverse' },
-  msgAvatar: { width: 30, height: 30, borderRadius: 15 },
-  msgColumn: { maxWidth: '72%' },
-  bubble: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  bubbleOwn: { backgroundColor: Colors.terracotta, borderBottomRightRadius: 4 },
-  bubbleOther: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: Colors.warmWhite,
-    borderBottomLeftRadius: 4,
+  },
+  headerIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerIconSpacer: { width: 36, height: 36 },
+  headerCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 8,
+  },
+  avatar: { width: 34, height: 34, borderRadius: Radius.full, backgroundColor: Colors.paper },
+  avatarFallback: {
+    width: 34,
+    height: 34,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink },
+  headerSub: { fontSize: 11, color: Colors.muted, marginTop: 1 },
+
+  waitingBanner: {
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
     borderWidth: 1,
     borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
   },
-  bubbleText: { fontSize: 14, color: Colors.ink, lineHeight: 20 },
-  bubbleTextOwn: { color: Colors.white },
-  timestamp: { fontSize: 10, color: Colors.muted, marginTop: 3, marginLeft: 4 },
-  timestampOwn: { textAlign: 'right', marginRight: 4, marginLeft: 0 },
+  waitingText: { color: Colors.muted, fontSize: 12 },
 
-  inputSafe: { backgroundColor: Colors.warmWhite },
-  inputRow: {
+  listContent: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xl,
+    gap: 8,
+  },
+  bubbleRow: { flexDirection: 'row', marginBottom: 2 },
+  bubbleRowOwn: { justifyContent: 'flex-end' },
+  bubbleRowOther: { justifyContent: 'flex-start' },
+  bubble: {
+    maxWidth: '78%',
+    borderRadius: Radius.lg,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  bubbleOwn: {
+    backgroundColor: Colors.terracotta,
+    borderColor: Colors.terracotta,
+    borderBottomRightRadius: 6,
+  },
+  bubbleOther: {
+    backgroundColor: Colors.warmWhite,
+    borderColor: Colors.border,
+    borderBottomLeftRadius: 6,
+  },
+  bubbleText: { fontSize: 14, lineHeight: 19 },
+  bubbleTextOwn: { color: Colors.white },
+  bubbleTextOther: { color: Colors.ink },
+  timeText: { marginTop: 4, fontSize: 10 },
+  timeOwn: { color: 'rgba(255,255,255,0.82)', textAlign: 'right' },
+  timeOther: { color: Colors.muted, textAlign: 'left' },
+
+  emptyWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.xl,
+    gap: 4,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: Colors.ink },
+  emptySub: { fontSize: 13, color: Colors.muted, textAlign: 'center' },
+
+  composerWrap: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    paddingHorizontal: Spacing.md,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    padding: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
   },
   input: {
     flex: 1,
-    minHeight: 38,
-    maxHeight: 100,
-    backgroundColor: Colors.cream,
-    borderRadius: 19,
-    paddingHorizontal: 14,
-    paddingTop: 9,
-    paddingBottom: 9,
-    fontSize: 14,
-    color: Colors.ink,
+    minHeight: 40,
+    maxHeight: 110,
+    backgroundColor: Colors.paper,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: Colors.ink,
+    fontSize: 14,
   },
   sendBtn: {
     width: 38,
     height: 38,
-    borderRadius: 19,
+    borderRadius: Radius.full,
     backgroundColor: Colors.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendBtnDisabled: { backgroundColor: Colors.border },
+  sendBtnDisabled: { opacity: 0.45 },
+
+  backBtn: {
+    marginTop: 12,
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  backBtnText: { color: Colors.white, fontWeight: '700' },
+
+  loadingText: { marginTop: 10, fontSize: 13, color: Colors.muted, textAlign: 'center' },
+  emptyEmoji: { fontSize: 28, marginBottom: 4 },
+  quietBtn: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  quietBtnText: { color: Colors.muted, fontWeight: '600', fontSize: 14 },
 });

@@ -30,9 +30,11 @@ type ProfileRow = {
 };
 
 type ConnectionRow = {
+  id: string;
   group_id: string;
   user_a_id: string;
   user_b_id: string;
+  status?: string;
 };
 
 type GroupRow = {
@@ -154,7 +156,7 @@ Deno.serve(async (req) => {
         .in("user_id", userIds),
       client
         .from("connections")
-        .select("group_id, user_a_id, user_b_id")
+        .select("id, group_id, user_a_id, user_b_id, status")
         .in("group_id", groupIds)
         .in("user_a_id", userIds)
         .in("user_b_id", userIds),
@@ -172,6 +174,13 @@ Deno.serve(async (req) => {
     const profileByUser = new Map<string, ProfileRow>();
     for (const p of profiles) profileByUser.set(p.user_id, p);
     const connectedSet = new Set(connections.map((c) => pairKey(c.group_id, c.user_a_id, c.user_b_id)));
+    const usersWithPending = new Set<string>();
+    for (const c of connections) {
+      if (c.status === "pending") {
+        usersWithPending.add(c.user_a_id);
+        usersWithPending.add(c.user_b_id);
+      }
+    }
 
     const toInsert: Array<{
       group_id: string;
@@ -185,6 +194,7 @@ Deno.serve(async (req) => {
       if (!openMembershipSet.has(`${s.group_id}:${s.user_a_id}`)) continue;
       if (!openMembershipSet.has(`${s.group_id}:${s.user_b_id}`)) continue;
       if (connectedSet.has(pairKey(s.group_id, s.user_a_id, s.user_b_id))) continue;
+      if (usersWithPending.has(s.user_a_id) || usersWithPending.has(s.user_b_id)) continue;
 
       const pa = profileByUser.get(s.user_a_id);
       const pb = profileByUser.get(s.user_b_id);
@@ -198,6 +208,9 @@ Deno.serve(async (req) => {
         status: "pending",
         activity_suggested: "Meet through a shared group activity this week.",
       });
+      // Prevent multiple pending rows in same run for the same user.
+      usersWithPending.add(s.user_a_id);
+      usersWithPending.add(s.user_b_id);
     }
 
     if (toInsert.length === 0) {
