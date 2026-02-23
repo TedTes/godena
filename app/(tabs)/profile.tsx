@@ -37,6 +37,17 @@ function getIntentMeta(intent: string) {
   return INTENT_META[intent] ?? INTENT_META.dating;
 }
 
+function abbrevGender(g: string): string {
+  const s = g.toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  if (s === 'male')   return 'M';
+  if (s === 'female') return 'F';
+  if (s.includes('non')) return 'NB';
+  // Capitalise first letter, keep short
+  return s.charAt(0).toUpperCase() + s.slice(1, 8) + (s.length > 8 ? '.' : '');
+}
+
+const COMPLETENESS_TOTAL = 7;
+
 export default function ProfileScreen() {
   const router = useRouter();
   const myGroups = mockGroups.filter((g) => g.isMember);
@@ -57,6 +68,11 @@ export default function ProfileScreen() {
     religion: string | null;
     languages: string[] | null;
     intent: string;
+    gender: string | null;
+    preferred_genders: string[] | null;
+    preferred_age_min: number | null;
+    preferred_age_max: number | null;
+    is_open_to_connections: boolean | null;
     avatar_url: string | null;
     photo_urls: string[] | null;
   } | null>(null);
@@ -84,7 +100,7 @@ export default function ProfileScreen() {
 
     const { data } = await supabase
       .from('profiles')
-      .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent, avatar_url, photo_urls')
+      .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, avatar_url, photo_urls')
       .eq('user_id', resolvedUserId)
       .maybeSingle();
 
@@ -144,13 +160,41 @@ export default function ProfileScreen() {
     return new Date().getFullYear() - birthYear;
   }, [profile?.birth_date]);
 
-  const name      = profile?.full_name ?? 'New Member';
-  const city      = profile?.city ?? 'Unknown city';
-  const bio       = profile?.bio ?? 'No bio added yet.';
-  const ethnicity = profile?.ethnicity ?? 'Habesha';
-  const religion  = profile?.religion ?? null;
-  const languages = profile?.languages ?? [];
-  const intentMeta = getIntentMeta(profile?.intent ?? 'dating');
+  const name            = profile?.full_name ?? 'New Member';
+  const city            = profile?.city ?? 'Unknown city';
+  const ethnicity       = profile?.ethnicity ?? null;
+  const religion        = profile?.religion ?? null;
+  const languages       = profile?.languages ?? [];
+  const intentMeta      = getIntentMeta(profile?.intent ?? 'dating');
+  const preferredGenders = profile?.preferred_genders ?? [];
+
+  const preferredAgeLabel     =
+    profile?.preferred_age_min != null && profile?.preferred_age_max != null
+      ? `${profile.preferred_age_min}–${profile.preferred_age_max} years`
+      : null;
+
+  // Interleaved identity + preference grid (identity left col, prefs right col)
+  const detailItems = [
+    ethnicity                   ? { emoji: '🇪🇹', value: ethnicity }                                            : null,
+    profile?.gender             ? { emoji: '🧍',  value: abbrevGender(profile.gender) }                         : null,
+    religion                    ? { emoji: '✝️',  value: religion }                                             : null,
+    preferredGenders.length > 0 ? { emoji: '💞',  value: preferredGenders.map(abbrevGender).join(', ') }        : null,
+    languages.length > 0        ? { emoji: '🗣️', value: languages.join(', ') }                                 : null,
+    preferredAgeLabel           ? { emoji: '🎂',  value: preferredAgeLabel }                                    : null,
+  ].filter((x): x is { emoji: string; value: string } => Boolean(x));
+
+  // Profile completeness
+  const completenessScore = [
+    Boolean(profile?.full_name?.trim()),
+    Boolean(profile?.bio?.trim()),
+    Boolean(profile?.avatar_url),
+    galleryPhotos.filter((p) => !p.isAvatar).length > 0,
+    Boolean(profile?.ethnicity?.trim()),
+    Boolean(profile?.religion?.trim()),
+    languages.length > 0,
+  ].filter(Boolean).length;
+  const completenessPercent = Math.round((completenessScore / COMPLETENESS_TOTAL) * 100);
+  const isProfileComplete = completenessScore === COMPLETENESS_TOTAL;
 
   const toggleGroup = (id: string, val: boolean) =>
     setOpenGroups((prev) => ({ ...prev, [id]: val }));
@@ -201,20 +245,14 @@ export default function ProfileScreen() {
         .from('profile-photos')
         .upload(filePath, fileData, { contentType, upsert: false });
 
-      if (uploadError) {
-        Alert.alert('Upload failed', uploadError.message);
-        return;
-      }
+      if (uploadError) { Alert.alert('Upload failed', uploadError.message); return; }
 
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ avatar_url: filePath })
         .eq('user_id', userId);
 
-      if (updateError) {
-        Alert.alert('Update failed', updateError.message);
-        return;
-      }
+      if (updateError) { Alert.alert('Update failed', updateError.message); return; }
 
       const resolvedAvatarUri = await resolvePhotoUri(filePath);
       setAvatarUri(resolvedAvatarUri ?? null);
@@ -273,32 +311,21 @@ export default function ProfileScreen() {
         .from('profile-photos')
         .upload(filePath, fileData, { contentType, upsert: false });
 
-      if (uploadError) {
-        Alert.alert('Upload failed', uploadError.message);
-        return;
-      }
+      if (uploadError) { Alert.alert('Upload failed', uploadError.message); return; }
 
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ photo_urls: [...current, filePath] })
         .eq('user_id', userId);
 
-      if (updateError) {
-        Alert.alert('Update failed', updateError.message);
-        return;
-      }
+      if (updateError) { Alert.alert('Update failed', updateError.message); return; }
 
       const resolvedUri = await resolvePhotoUri(filePath);
       setProfile((prev) =>
-        prev
-          ? { ...prev, photo_urls: [...(prev.photo_urls ?? []), filePath] }
-          : prev
+        prev ? { ...prev, photo_urls: [...(prev.photo_urls ?? []), filePath] } : prev
       );
       if (resolvedUri) {
-        setGalleryPhotos((prev) => [
-          ...prev,
-          { uri: resolvedUri, path: filePath, isAvatar: false },
-        ]);
+        setGalleryPhotos((prev) => [...prev, { uri: resolvedUri, path: filePath, isAvatar: false }]);
       }
     } catch (err: any) {
       Alert.alert('Update failed', err?.message ?? 'Could not add gallery photo.');
@@ -325,20 +352,13 @@ export default function ProfileScreen() {
       return;
     }
 
-    const { error: storageError } = await supabase.storage
-      .from('profile-photos')
-      .remove([path]);
-
+    const { error: storageError } = await supabase.storage.from('profile-photos').remove([path]);
     setUpdatingPhoto(false);
 
-    if (storageError) {
-      Alert.alert('Storage cleanup warning', storageError.message);
-    }
+    if (storageError) Alert.alert('Storage cleanup warning', storageError.message);
 
     setProfile((prev) =>
-      prev
-        ? { ...prev, photo_urls: (prev.photo_urls ?? []).filter((p) => p !== path) }
-        : prev
+      prev ? { ...prev, photo_urls: (prev.photo_urls ?? []).filter((p) => p !== path) } : prev
     );
     setGalleryPhotos((prev) => prev.filter((p) => p.path !== path));
   };
@@ -396,7 +416,7 @@ export default function ProfileScreen() {
                   />
                 ) : (
                   <View style={styles.photoPlaceholder}>
-                    <Text style={styles.photoInitial}>{name[0] ?? '?'}</Text>
+                    <Text style={styles.photoInitial}>{name[0]?.toUpperCase() ?? '?'}</Text>
                   </View>
                 )}
                 {updatingPhoto && (
@@ -437,94 +457,137 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* ── Gallery ── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Photos</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.galleryScroll}
+          {/* ── Completeness Banner ── */}
+          {!isProfileComplete && (
+            <TouchableOpacity
+              style={styles.completenessBanner}
+              onPress={() => router.push('/profile-setup')}
+              activeOpacity={0.85}
             >
-              {galleryPhotos.map((photo) => (
-                <View key={photo.path} style={styles.galleryPhotoWrap}>
-                  <Image source={{ uri: photo.uri }} style={styles.galleryPhoto} resizeMode="cover" />
-                  {!photo.isAvatar ? (
-                    <TouchableOpacity
-                      style={styles.galleryRemoveBtn}
-                      onPress={() => void removeGalleryPhoto(photo.path)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.galleryRemoveText}>×</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <View style={styles.avatarBadge}>
-                      <Text style={styles.avatarBadgeText}>Avatar</Text>
-                    </View>
-                  )}
+              <Ionicons name="sparkles-outline" size={18} color={Colors.terracotta} />
+              <View style={styles.completenessMiddle}>
+                <Text style={styles.completenessTitle}>
+                  Complete your profile — {completenessPercent}%
+                </Text>
+                <View style={styles.completenessTrack}>
+                  <View
+                    style={[styles.completenessFill, { width: `${completenessPercent}%` as any }]}
+                  />
                 </View>
-              ))}
-              <TouchableOpacity style={styles.addPhotoTile} onPress={() => void addGalleryPhoto()} activeOpacity={0.8}>
-                <Ionicons name="add" size={24} color={Colors.terracotta} />
-                <Text style={styles.addPhotoLabel}>Add</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={15} color={Colors.borderDark} />
+            </TouchableOpacity>
+          )}
+
+          {/* ── Photos ── */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionLabel}>Photos</Text>
+              {galleryPhotos.length > 0 && (
+                <Text style={styles.sectionMeta}>{galleryPhotos.length} / 5</Text>
+              )}
+            </View>
+
+            {galleryPhotos.length === 0 ? (
+              <TouchableOpacity
+                style={styles.galleryEmptyCard}
+                onPress={() => void addGalleryPhoto()}
+                activeOpacity={0.85}
+              >
+                <View style={styles.galleryEmptyIcon}>
+                  <Ionicons name="images-outline" size={26} color={Colors.muted} />
+                </View>
+                <Text style={styles.galleryEmptyTitle}>Add photos</Text>
+                <Text style={styles.galleryEmptySubtext}>
+                  Profiles with photos get far more connections
+                </Text>
+                <View style={styles.galleryEmptyBtn}>
+                  <Ionicons name="add" size={14} color={Colors.white} />
+                  <Text style={styles.galleryEmptyBtnText}>Upload a photo</Text>
+                </View>
               </TouchableOpacity>
-            </ScrollView>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.galleryScroll}
+              >
+                {galleryPhotos.map((photo) => (
+                  <View key={photo.path} style={styles.galleryPhotoWrap}>
+                    <Image source={{ uri: photo.uri }} style={styles.galleryPhoto} resizeMode="cover" />
+                    {photo.isAvatar ? (
+                      <View style={styles.avatarBadge}>
+                        <Text style={styles.avatarBadgeText}>Avatar</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.galleryRemoveBtn}
+                        onPress={() => void removeGalleryPhoto(photo.path)}
+                        activeOpacity={0.85}
+                        hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                      >
+                        <Ionicons name="close" size={11} color={Colors.white} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+                {(profile?.photo_urls ?? []).length < 4 && (
+                  <TouchableOpacity
+                    style={styles.addPhotoTile}
+                    onPress={() => void addGalleryPhoto()}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={26} color={Colors.terracotta} />
+                    <Text style={styles.addPhotoLabel}>Add</Text>
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+            )}
           </View>
 
           {/* ── About ── */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About</Text>
             <View style={styles.card}>
-              <Text style={styles.bioText}>{bio}</Text>
+              {profile?.bio ? (
+                <Text style={styles.bioText}>{profile.bio}</Text>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => router.push('/profile-setup')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.bioEmpty}>
+                    Tap to introduce yourself — your bio helps others decide if you'd connect well.
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
-          {/* ── Identity ── */}
+          {/* ── About Me (identity + preferences grid) ── */}
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Identity</Text>
-            <View style={styles.card}>
-              <View style={styles.identityRow}>
-                <View style={styles.identityIconBox}>
-                  <Text style={styles.identityEmoji}>🇪🇹</Text>
+            <Text style={styles.sectionLabel}>About Me</Text>
+            <View style={[styles.card, styles.cardNoPad]}>
+              {detailItems.length > 0 ? (
+                <View style={styles.detailChips}>
+                  {detailItems.map((item) => (
+                    <View key={item.emoji} style={styles.detailChip}>
+                      <Text style={styles.detailChipEmoji}>{item.emoji}</Text>
+                      <Text style={styles.detailChipValue}>{item.value}</Text>
+                    </View>
+                  ))}
                 </View>
-                <View style={styles.identityInfo}>
-                  <Text style={styles.identityFieldLabel}>Ethnicity</Text>
-                  <Text style={styles.identityValue}>{ethnicity}</Text>
-                </View>
-              </View>
-
-              {religion ? (
-                <View style={[styles.identityRow, styles.identityRowDivider]}>
-                  <View style={styles.identityIconBox}>
-                    <Text style={styles.identityEmoji}>✝️</Text>
-                  </View>
-                  <View style={styles.identityInfo}>
-                    <Text style={styles.identityFieldLabel}>Religion</Text>
-                    <Text style={styles.identityValue}>{religion}</Text>
-                  </View>
-                </View>
-              ) : null}
-
-              {languages.length > 0 ? (
-                <View style={[styles.identityRow, styles.identityRowDivider]}>
-                  <View style={styles.identityIconBox}>
-                    <Text style={styles.identityEmoji}>🗣️</Text>
-                  </View>
-                  <View style={styles.identityInfo}>
-                    <Text style={styles.identityFieldLabel}>Languages</Text>
-                    <Text style={styles.identityValue}>{languages.join(', ')}</Text>
-                  </View>
-                </View>
-              ) : null}
-
-              <View style={[styles.identityRow, styles.identityRowDivider]}>
-                <View style={styles.identityIconBox}>
-                  <Text style={styles.identityEmoji}>{intentMeta.emoji}</Text>
-                </View>
-                <View style={styles.identityInfo}>
-                  <Text style={styles.identityFieldLabel}>Looking for</Text>
-                  <Text style={styles.identityValue}>{intentMeta.label}</Text>
-                </View>
-              </View>
+              ) : (
+                <TouchableOpacity
+                  style={{ padding: Spacing.md }}
+                  onPress={() => router.push('/profile-setup')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.bioEmpty}>
+                    Add your identity and preferences to help others connect with you.
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
@@ -542,11 +605,11 @@ export default function ProfileScreen() {
             </Text>
             <View style={styles.card}>
               {myGroups.map((g, i) => (
-                <View key={g.id} style={[styles.signalRow, i > 0 && styles.signalRowDivider]}>
+                <View key={g.id} style={[styles.infoRow, i > 0 && styles.infoRowDivider]}>
                   <View style={[styles.signalDot, { backgroundColor: g.coverColor + '28' }]}>
-                    <Text style={styles.signalDotEmoji}>{g.emoji}</Text>
+                    <Text style={styles.infoEmoji}>{g.emoji}</Text>
                   </View>
-                  <View style={styles.signalInfo}>
+                  <View style={styles.infoText}>
                     <Text style={styles.signalName} numberOfLines={1}>{g.name}</Text>
                     <Text style={[styles.signalState, openGroups[g.id] && styles.signalStateOn]}>
                       {openGroups[g.id] ? '🌱 Open to connect' : 'Not signalling'}
@@ -570,7 +633,11 @@ export default function ProfileScreen() {
               {settingsRows.map((row, i) => (
                 <TouchableOpacity
                   key={row.label}
-                  style={[styles.settingsRow, i < settingsRows.length - 1 && styles.settingsRowDivider]}
+                  style={[
+                    styles.settingsRow,
+                    i < settingsRows.length - 1 && styles.settingsRowDivider,
+                    'accent' in row && row.accent && styles.settingsRowPremium,
+                  ]}
                   onPress={row.label === 'Sign Out' ? signOut : undefined}
                   activeOpacity={0.7}
                 >
@@ -582,7 +649,11 @@ export default function ProfileScreen() {
                     <Ionicons
                       name={row.icon as any}
                       size={18}
-                      color={'danger' in row && row.danger ? Colors.error : 'accent' in row && row.accent ? Colors.terracotta : Colors.brownMid}
+                      color={
+                        'danger' in row && row.danger ? Colors.error :
+                        'accent' in row && row.accent ? Colors.gold :
+                        Colors.brownMid
+                      }
                     />
                   </View>
                   <Text style={[
@@ -592,7 +663,13 @@ export default function ProfileScreen() {
                   ]}>
                     {row.label}
                   </Text>
-                  <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
+                  {'accent' in row && row.accent ? (
+                    <View style={styles.premiumBadge}>
+                      <Text style={styles.premiumBadgeText}>PRO</Text>
+                    </View>
+                  ) : (
+                    <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
+                  )}
                 </TouchableOpacity>
               ))}
             </View>
@@ -622,10 +699,10 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 32,
     paddingBottom: 36,
     shadowColor: Colors.ink,
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    shadowOpacity: 0.14,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   headerContent: {
     alignItems: 'center',
@@ -634,12 +711,7 @@ const styles = StyleSheet.create({
   },
 
   // Avatar
-  photoWrap: {
-    position: 'relative',
-    width: 108,
-    height: 108,
-    marginBottom: 18,
-  },
+  photoWrap: { position: 'relative', width: 108, height: 108, marginBottom: 18 },
   photoPlaceholder: {
     width: 108,
     height: 108,
@@ -648,19 +720,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   photoImage: {
     width: 108,
     height: 108,
     borderRadius: 54,
     borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderColor: 'rgba(255,255,255,0.15)',
     backgroundColor: Colors.brownMid,
   },
   photoLoadingOverlay: {
     position: 'absolute',
-    inset: 0,
+    top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 54,
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
@@ -682,26 +754,10 @@ const styles = StyleSheet.create({
   },
 
   // Name & meta
-  name: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: Colors.white,
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginBottom: 14,
-  },
+  name: { fontSize: 26, fontWeight: '900', color: Colors.white, marginBottom: 6, textAlign: 'center' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 14 },
   metaText: { fontSize: 13, color: Colors.brownLight },
-  metaDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: Colors.brownLight,
-  },
+  metaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: Colors.brownLight },
 
   // Intent pill
   intentPill: {
@@ -713,11 +769,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(196,98,45,0.3)',
   },
-  intentPillText: {
-    fontSize: 12,
-    color: Colors.terraLight,
-    fontWeight: '700',
-  },
+  intentPillText: { fontSize: 12, color: Colors.terraLight, fontWeight: '700' },
 
   // Edit button
   editBtn: {
@@ -729,17 +781,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
-  editBtnText: {
-    fontSize: 13,
-    color: Colors.brown,
-    fontWeight: '700',
+  editBtnText: { fontSize: 13, color: Colors.brown, fontWeight: '700' },
+
+  // ── Completeness banner ──
+  completenessBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: Spacing.lg,
+    marginTop: 20,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.2)',
+    padding: 14,
+  },
+  completenessMiddle: { flex: 1, gap: 6 },
+  completenessTitle: { fontSize: 13, fontWeight: '700', color: Colors.ink },
+  completenessTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+    overflow: 'hidden',
+  },
+  completenessFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: Colors.terracotta,
   },
 
   // ── Sections ──
-  section: {
-    paddingHorizontal: Spacing.lg,
-    marginTop: Spacing.lg,
-  },
+  section: { paddingHorizontal: Spacing.lg, marginTop: 20 },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
@@ -748,17 +820,23 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: 10,
   },
+  sectionMeta: {
+    fontSize: 11,
+    color: Colors.muted,
+    fontWeight: '500',
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
   sectionSubtext: {
     fontSize: 12,
     color: Colors.muted,
     lineHeight: 18,
     marginBottom: 10,
+    marginTop: -6,
   },
 
   // ── Card ──
@@ -772,22 +850,53 @@ const styles = StyleSheet.create({
   cardNoPad: { padding: 0, overflow: 'hidden' },
 
   // ── Gallery ──
-  galleryScroll: {
-    gap: 10,
-    paddingRight: Spacing.lg,
+  galleryEmptyCard: {
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    gap: 6,
   },
-  galleryPhoto: {
-    width: 112,
-    height: 148,
-    borderRadius: Radius.md,
+  galleryEmptyIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
   },
+  galleryEmptyTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink },
+  galleryEmptySubtext: { fontSize: 12, color: Colors.muted, textAlign: 'center', lineHeight: 18 },
+  galleryEmptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 8,
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  galleryEmptyBtnText: { fontSize: 13, color: Colors.white, fontWeight: '700' },
+
+  galleryScroll: { gap: 10, paddingRight: Spacing.lg },
   galleryPhotoWrap: {
     width: 112,
     height: 148,
     borderRadius: Radius.md,
     overflow: 'hidden',
     position: 'relative',
+  },
+  galleryPhoto: {
+    width: 112,
+    height: 148,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.paper,
   },
   galleryRemoveBtn: {
     position: 'absolute',
@@ -796,21 +905,15 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  galleryRemoveText: {
-    color: Colors.white,
-    fontSize: 15,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
   avatarBadge: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: 'rgba(61,43,31,0.8)',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(61,43,31,0.75)',
     borderRadius: Radius.full,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -834,31 +937,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
   },
-  addPhotoLabel: {
-    fontSize: 11,
-    color: Colors.terracotta,
-    fontWeight: '700',
-  },
+  addPhotoLabel: { fontSize: 11, color: Colors.terracotta, fontWeight: '700' },
 
   // ── Bio ──
-  bioText: {
+  bioText: { fontSize: 14, color: Colors.brownMid, lineHeight: 23 },
+  bioEmpty: {
     fontSize: 14,
-    color: Colors.brownMid,
-    lineHeight: 23,
+    color: Colors.muted,
+    lineHeight: 22,
+    fontStyle: 'italic',
   },
 
-  // ── Identity ──
-  identityRow: {
+  // ── Info rows (shared by Identity, Looking For, and Signals) ──
+  infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingVertical: 10,
   },
-  identityRowDivider: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  identityIconBox: {
+  infoRowDivider: { borderTopWidth: 1, borderTopColor: Colors.border },
+  infoIconBox: {
     width: 40,
     height: 40,
     borderRadius: 11,
@@ -866,9 +964,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  identityEmoji: { fontSize: 20 },
-  identityInfo: { flex: 1 },
-  identityFieldLabel: {
+  infoEmoji: { fontSize: 19 },
+  infoText: { flex: 1 },
+  infoFieldLabel: {
     fontSize: 10,
     color: Colors.muted,
     fontWeight: '600',
@@ -876,11 +974,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 2,
   },
-  identityValue: {
-    fontSize: 14,
-    color: Colors.ink,
-    fontWeight: '600',
-  },
+  infoValue: { fontSize: 14, color: Colors.ink, fontWeight: '600' },
 
   // ── Private badge ──
   privateBadge: {
@@ -897,45 +991,15 @@ const styles = StyleSheet.create({
   privateBadgeText: { fontSize: 9, color: Colors.muted, fontWeight: '600' },
 
   // ── Signal rows ──
-  signalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 13,
-  },
-  signalRowDivider: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  signalDot: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  signalDotEmoji: { fontSize: 22 },
-  signalInfo: { flex: 1 },
-  signalName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.ink,
-    marginBottom: 2,
-  },
+  signalDot: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  signalName: { fontSize: 13, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
   signalState: { fontSize: 11, color: Colors.muted },
   signalStateOn: { color: Colors.olive, fontWeight: '600' },
 
   // ── Settings ──
-  settingsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-  },
-  settingsRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
+  settingsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+  settingsRowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.border },
+  settingsRowPremium: { backgroundColor: 'rgba(201,168,76,0.06)' },
   settingsIcon: {
     width: 36,
     height: 36,
@@ -944,9 +1008,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  settingsIconAccent: { backgroundColor: 'rgba(196,98,45,0.1)' },
+  settingsIconAccent: { backgroundColor: 'rgba(201,168,76,0.12)' },
   settingsIconDanger: { backgroundColor: 'rgba(217,79,79,0.1)' },
   settingsLabel: { flex: 1, fontSize: 14, color: Colors.ink, fontWeight: '500' },
   settingsLabelDanger: { color: Colors.error },
-  settingsLabelAccent: { color: Colors.terracotta, fontWeight: '600' },
+  settingsLabelAccent: { color: Colors.gold, fontWeight: '600' },
+  premiumBadge: {
+    backgroundColor: Colors.gold,
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  premiumBadgeText: { fontSize: 9, color: Colors.white, fontWeight: '800', letterSpacing: 0.5 },
+
+  // ── About Me chips ──
+  detailChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    padding: Spacing.md,
+  },
+  detailChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  detailChipEmoji: { fontSize: 13 },
+  detailChipValue: { fontSize: 13, color: Colors.ink, fontWeight: '600' },
 });

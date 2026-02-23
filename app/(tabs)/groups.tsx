@@ -1,39 +1,180 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockGroups } from '../../data/mock';
+import { supabase } from '../../lib/supabase';
 
 const CATEGORIES = ['All', 'Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
+const DB_CATEGORY_BY_LABEL: Record<string, string | null> = {
+  All: null,
+  Outdoors: 'outdoors',
+  'Food & Drink': 'food_drink',
+  Professional: 'professional',
+  Language: 'language',
+  Faith: 'faith',
+};
+
+function categoryLabelFromDb(category: string) {
+  switch (category) {
+    case 'food_drink':
+      return 'Food & Drink';
+    case 'outdoors':
+      return 'Outdoors';
+    case 'professional':
+      return 'Professional';
+    case 'language':
+      return 'Language';
+    case 'faith':
+      return 'Faith';
+    case 'culture':
+      return 'Culture';
+    default:
+      return 'Other';
+  }
+}
+
+function getGroupVisuals(category: string) {
+  switch (category) {
+    case 'outdoors':
+      return { emoji: '🏕️', coverColor: '#7a8c5c' };
+    case 'food_drink':
+      return { emoji: '☕', coverColor: '#c4622d' };
+    case 'professional':
+      return { emoji: '💼', coverColor: '#3d2b1f' };
+    case 'language':
+      return { emoji: '🗣️', coverColor: '#c9a84c' };
+    case 'faith':
+      return { emoji: '✝️', coverColor: '#8b4220' };
+    case 'culture':
+      return { emoji: '🎉', coverColor: '#a07820' };
+    default:
+      return { emoji: '👥', coverColor: '#6b4c3b' };
+  }
+}
+
+type GroupRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  city: string | null;
+  is_virtual: boolean;
+  member_count: number;
+  next_event_at: string | null;
+};
 
 export default function GroupsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [tab, setTab] = useState<'mine' | 'discover'>('mine');
+  const [groups, setGroups] = useState<GroupRow[]>([]);
   const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set());
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [joiningId, setJoiningId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState('');
 
-  const filtered = mockGroups.filter((g) => {
+  const joinGroup = async (groupId: string) => {
+    if (!userId) {
+      Alert.alert('Sign in required', 'Please sign in again to join groups.');
+      router.replace('/(auth)/phone');
+      return;
+    }
+    if (joinedIds.has(groupId) || joiningId) {
+      return;
+    }
+
+    setJoiningId(groupId);
+
+    const { error } = await supabase
+      .from('group_memberships')
+      .upsert(
+        { group_id: groupId, user_id: userId },
+        { onConflict: 'group_id,user_id', ignoreDuplicates: true }
+      );
+
+    setJoiningId(null);
+
+    if (error) {
+      Alert.alert('Could not join group', error.message);
+      return;
+    }
+
+    setJoinedIds((prev) => new Set([...prev, groupId]));
+    setGroups((prev) =>
+      prev.map((group) =>
+        group.id === groupId
+          ? { ...group, member_count: group.member_count + 1 }
+          : group
+      )
+    );
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setLoadError('');
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData.session?.user.id ?? null;
+      setUserId(uid);
+
+      const [{ data: groupsData, error: groupsError }, membershipsResponse] = await Promise.all([
+        supabase
+          .from('groups')
+          .select('id, name, description, category, city, is_virtual, member_count, next_event_at')
+          .order('created_at', { ascending: false }),
+        uid
+          ? supabase.from('group_memberships').select('group_id').eq('user_id', uid)
+          : Promise.resolve({ data: [], error: null } as any),
+      ]);
+
+      if (groupsError) {
+        setLoadError(groupsError.message);
+        setLoading(false);
+        return;
+      }
+
+      const membershipIds = new Set<string>(
+        (membershipsResponse?.data ?? []).map((m: { group_id: string }) => m.group_id)
+      );
+
+      setGroups((groupsData ?? []) as GroupRow[]);
+      setJoinedIds(membershipIds);
+      setLoading(false);
+    };
+
+    void load();
+  }, []);
+
+  const filtered = useMemo(() => groups.filter((g) => {
     const matchSearch =
       search.length === 0 ||
       g.name.toLowerCase().includes(search.toLowerCase()) ||
-      g.category.toLowerCase().includes(search.toLowerCase());
-    const matchCat = activeCategory === 'All' || g.category === activeCategory;
-    const matchTab = tab === 'mine' ? g.isMember : !g.isMember;
+      categoryLabelFromDb(g.category).toLowerCase().includes(search.toLowerCase());
+    const dbCategory = DB_CATEGORY_BY_LABEL[activeCategory];
+    const matchCat = !dbCategory || g.category === dbCategory;
+    const isMember = joinedIds.has(g.id);
+    const matchTab = tab === 'mine' ? isMember : !isMember;
     return matchSearch && matchCat && matchTab;
-  });
+  }), [groups, search, activeCategory, tab, joinedIds]);
 
-  function formatNextEvent(iso: string) {
+  function formatNextEvent(iso: string | null) {
+    if (!iso) return 'TBD';
     const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'TBD';
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
@@ -98,68 +239,70 @@ export default function GroupsScreen() {
           )}
         />
 
-        {/* List */}
-        <FlatList
-          data={filtered}
-          keyExtractor={(g) => g.id}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>No groups found</Text>
-            </View>
-          }
-          renderItem={({ item: g }) => {
-            const isJoined = g.isMember || joinedIds.has(g.id);
-            return (
-              <View style={styles.card}>
-                <TouchableOpacity
-                  style={styles.cardPressable}
-                  onPress={() => router.push(`/group/${g.id}`)}
-                  activeOpacity={0.85}
-                >
-                  <View style={[styles.cardAccent, { backgroundColor: g.coverColor }]}>
-                    <Text style={styles.cardEmoji}>{g.emoji}</Text>
-                  </View>
-                  <View style={styles.cardBody}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName} numberOfLines={1}>{g.name}</Text>
-                      {g.isVirtual && (
-                        <View style={styles.virtualBadge}>
-                          <Text style={styles.virtualText}>Virtual</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.cardDesc} numberOfLines={2}>{g.description}</Text>
-                    <View style={styles.cardMeta}>
-                      <View style={styles.cardMetaItem}>
-                        <Ionicons name="people-outline" size={12} color={Colors.muted} />
-                        <Text style={styles.cardMetaText}>{g.memberCount}</Text>
-                      </View>
-                      <View style={styles.cardMetaItem}>
-                        <Ionicons name="calendar-outline" size={12} color={Colors.muted} />
-                        <Text style={styles.cardMetaText}>{formatNextEvent(g.nextEventAt)}</Text>
-                      </View>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.joinBtn, isJoined && styles.joinBtnJoined]}
-                  onPress={() => {
-                    if (!isJoined) {
-                      setJoinedIds((prev) => new Set([...prev, g.id]));
-                    }
-                  }}
-                  disabled={isJoined}
-                >
-                  <Text style={[styles.joinText, isJoined && styles.joinTextJoined]}>
-                    {isJoined ? '✓ Joined' : 'Join'}
-                  </Text>
-                </TouchableOpacity>
+        {loading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={Colors.terracotta} />
+          </View>
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={(g) => g.id}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>{loadError || 'No groups found'}</Text>
               </View>
-            );
-          }}
-        />
+            }
+            renderItem={({ item: g }) => {
+              const isJoined = joinedIds.has(g.id);
+              const visuals = getGroupVisuals(g.category);
+              return (
+                <View style={styles.card}>
+                  <TouchableOpacity
+                    style={styles.cardPressable}
+                    onPress={() => router.push(`/group/${g.id}`)}
+                    activeOpacity={0.85}
+                  >
+                    <View style={[styles.cardAccent, { backgroundColor: visuals.coverColor }]}>
+                      <Text style={styles.cardEmoji}>{visuals.emoji}</Text>
+                    </View>
+                    <View style={styles.cardBody}>
+                      <View style={styles.cardTop}>
+                        <Text style={styles.cardName} numberOfLines={1}>{g.name}</Text>
+                        {g.is_virtual && (
+                          <View style={styles.virtualBadge}>
+                            <Text style={styles.virtualText}>Virtual</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.cardDesc} numberOfLines={2}>{g.description || 'No description yet.'}</Text>
+                      <View style={styles.cardMeta}>
+                        <View style={styles.cardMetaItem}>
+                          <Ionicons name="people-outline" size={12} color={Colors.muted} />
+                          <Text style={styles.cardMetaText}>{g.member_count}</Text>
+                        </View>
+                        <View style={styles.cardMetaItem}>
+                          <Ionicons name="calendar-outline" size={12} color={Colors.muted} />
+                          <Text style={styles.cardMetaText}>{formatNextEvent(g.next_event_at)}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.joinBtn, isJoined && styles.joinBtnJoined]}
+                    onPress={() => void joinGroup(g.id)}
+                    disabled={isJoined || !userId || !!joiningId}
+                  >
+                    <Text style={[styles.joinText, isJoined && styles.joinTextJoined]}>
+                      {isJoined ? '✓ Joined' : joiningId === g.id ? '...' : 'Join'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }}
+          />
+        )}
       </SafeAreaView>
     </View>
   );
@@ -206,6 +349,7 @@ const styles = StyleSheet.create({
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 14, color: Colors.ink },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   chipsScroll: {
     flexGrow: 0,
