@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   StyleSheet,
@@ -11,32 +12,193 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../constants/theme';
-import { mockReveal } from '../data/mock';
+import {
+  fetchGroups,
+  fetchPendingConnections,
+  fetchProfiles,
+  getSessionUserId,
+  updateConnectionDecision,
+  type GroupMini,
+  type PendingConnection,
+  type ProfileMini,
+} from '../lib/services/reveal';
+
+function getGroupEmoji(category?: string) {
+  switch (category) {
+    case 'outdoors': return '🏕️';
+    case 'food_drink': return '☕';
+    case 'professional': return '💼';
+    case 'language': return '🗣️';
+    case 'faith': return '✝️';
+    case 'culture': return '🎉';
+    default: return '👥';
+  }
+}
+
+function ageFromBirthDate(birthDate: string | null) {
+  if (!birthDate) return null;
+  const dob = new Date(birthDate);
+  if (Number.isNaN(dob.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const m = now.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--;
+  return age >= 18 && age <= 99 ? age : null;
+}
 
 export default function RevealScreen() {
   const router = useRouter();
-  const [accepted, setAccepted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [connection, setConnection] = useState<PendingConnection | null>(null);
+  const [counterpart, setCounterpart] = useState<ProfileMini | null>(null);
+  const [group, setGroup] = useState<GroupMini | null>(null);
+  const [successState, setSuccessState] = useState<'waiting' | 'connected' | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const uid = await getSessionUserId();
+      if (!uid) {
+        setLoading(false);
+        return;
+      }
+      setUserId(uid);
+
+      const { data: pendingRows } = await fetchPendingConnections(uid);
+      const pending = ((pendingRows ?? []) as PendingConnection[])[0] ?? null;
+      if (!pending) {
+        setConnection(null);
+        setCounterpart(null);
+        setGroup(null);
+        setLoading(false);
+        return;
+      }
+      setConnection(pending);
+
+      const counterpartId = pending.user_a_id === uid ? pending.user_b_id : pending.user_a_id;
+      const [{ data: profiles }, { data: groups }] = await Promise.all([
+        fetchProfiles([counterpartId]),
+        fetchGroups([pending.group_id]),
+      ]);
+
+      setCounterpart(((profiles ?? []) as ProfileMini[])[0] ?? null);
+      setGroup(((groups ?? []) as GroupMini[])[0] ?? null);
+      setLoading(false);
+    };
+
+    void load();
+  }, []);
+
+  const revealData = useMemo(() => {
+    const matchName = counterpart?.full_name || 'Someone';
+    const matchAge = ageFromBirthDate(counterpart?.birth_date ?? null);
+    const groupName = group?.name || 'your group';
+    const groupEmoji = getGroupEmoji(group?.category);
+    return {
+      matchName,
+      matchAge,
+      matchPhoto: counterpart?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=300&q=80',
+      groupName,
+      groupEmoji,
+      message: `You and ${matchName} have both been showing up in ${groupName}. Want a gentle introduction?`,
+      activitySuggestion: connection?.activity_suggested || `Try a simple meetup through ${groupName}`,
+      activityDate: 'This week',
+      sharedSignals: [
+        'Mutual openness in this group',
+        'Recent shared activity',
+      ],
+    };
+  }, [counterpart, group, connection]);
 
   const handleAccept = () => {
-    setAccepted(true);
-    setTimeout(() => {
-      router.replace('/chat/c1');
-    }, 1200);
+    void (async () => {
+      if (!userId || !connection || saving) return;
+      setSaving(true);
+      const { data, error } = await updateConnectionDecision(connection, userId, 'accept');
+      setSaving(false);
+      if (error || !data) return;
+      setConnection(data as PendingConnection);
+
+      if (data.status === 'accepted') {
+        setSuccessState('connected');
+        setTimeout(() => {
+          router.replace(`/chat/${data.id}`);
+        }, 1200);
+      } else {
+        setSuccessState('waiting');
+      }
+    })();
   };
 
   const handleDecline = () => {
-    router.back();
+    void (async () => {
+      if (!userId || !connection || saving) return;
+      setSaving(true);
+      const { error } = await updateConnectionDecision(connection, userId, 'pass');
+      setSaving(false);
+      if (!error) router.replace('/(tabs)/connections');
+    })();
   };
 
-  if (accepted) {
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.fullCenter}>
+            <ActivityIndicator size="large" color={Colors.terraLight} />
+            <Text style={styles.loadingText}>Finding your introduction…</Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  if (!connection) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.fullCenter}>
+            <Text style={styles.emptyEmoji}>🌱</Text>
+            <Text style={styles.emptyTitle}>Nothing waiting yet</Text>
+            <Text style={styles.emptySub}>
+              Introductions happen when both sides are open and genuinely active together. Keep showing up in your groups.
+            </Text>
+            <TouchableOpacity style={styles.emptyBtn} onPress={() => router.replace('/(tabs)/groups')}>
+              <Text style={styles.emptyBtnText}>Back to Groups</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  if (successState === 'connected') {
     return (
       <View style={styles.successContainer}>
         <SafeAreaView style={styles.safe}>
-          <View style={styles.successContent}>
-            <Text style={styles.successEmoji}>🎉</Text>
-            <Text style={styles.successTitle}>You're both connected!</Text>
+          <View style={styles.fullCenter}>
+            <Text style={styles.successEmoji}>{'🎉'}</Text>
+            <Text style={styles.successTitle}>{"You're both connected!"}</Text>
             <Text style={styles.successSub}>
-              Opening your conversation with {mockReveal.matchName}…
+              {'Opening your conversation with '}{revealData.matchName}{'...'}
+            </Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  if (successState === 'waiting') {
+    return (
+      <View style={styles.successContainer}>
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.fullCenter}>
+            <Text style={styles.successEmoji}>{'✨'}</Text>
+            <Text style={styles.successTitle}>Response sent</Text>
+            <Text style={styles.successSub}>
+              {"We'll let "}{revealData.matchName}{' take their time too.'}
             </Text>
           </View>
         </SafeAreaView>
@@ -66,7 +228,7 @@ export default function RevealScreen() {
             <View style={styles.photoRing3} />
             <View style={styles.photoRing2} />
             <View style={styles.photoRing1} />
-            <Image source={{ uri: mockReveal.matchPhoto }} style={styles.photo} />
+            <Image source={{ uri: revealData.matchPhoto }} style={styles.photo} />
             <View style={styles.sparkle}>
               <Text style={styles.sparkleText}>✨</Text>
             </View>
@@ -74,14 +236,16 @@ export default function RevealScreen() {
 
           {/* Context chip */}
           <View style={styles.contextChip}>
-            <Text style={styles.contextEmoji}>{mockReveal.groupEmoji}</Text>
-            <Text style={styles.contextText}>via {mockReveal.groupName}</Text>
+            <Text style={styles.contextEmoji}>{revealData.groupEmoji}</Text>
+            <Text style={styles.contextText}>via {revealData.groupName}</Text>
           </View>
 
           {/* Name + message */}
-          <Text style={styles.name}>{mockReveal.matchName}, {mockReveal.matchAge}</Text>
+          <Text style={styles.name}>
+            {revealData.matchName}{revealData.matchAge ? `, ${revealData.matchAge}` : ''}
+          </Text>
           <View style={styles.messageBubble}>
-            <Text style={styles.messageText}>{mockReveal.message}</Text>
+            <Text style={styles.messageText}>{revealData.message}</Text>
           </View>
 
           {/* Why */}
@@ -98,7 +262,7 @@ export default function RevealScreen() {
               </Text>
             </View>
             <View style={styles.signalChips}>
-              {mockReveal.sharedSignals.map((signal) => (
+              {revealData.sharedSignals.map((signal) => (
                 <View key={signal} style={styles.signalChip}>
                   <Text style={styles.signalChipText}>{signal}</Text>
                 </View>
@@ -112,31 +276,33 @@ export default function RevealScreen() {
               <Ionicons name="leaf-outline" size={15} color={Colors.terraLight} />
               <Text style={styles.activityLabel}>A natural first step</Text>
             </View>
-            <Text style={styles.activityTitle}>{mockReveal.activitySuggestion}</Text>
-            <Text style={styles.activityDate}>{mockReveal.activityDate}</Text>
+            <Text style={styles.activityTitle}>{revealData.activitySuggestion}</Text>
+            <Text style={styles.activityDate}>{revealData.activityDate}</Text>
           </View>
 
           {/* Note */}
           <View style={styles.noteRow}>
             <Ionicons name="lock-closed-outline" size={12} color={Colors.muted} />
             <Text style={styles.noteText}>
-              This introduction is mutual — {mockReveal.matchName} is considering it too. No rush.
+              This introduction is mutual — {revealData.matchName} is considering it too. No rush.
             </Text>
           </View>
 
           {/* Actions */}
           <View style={styles.actions}>
             <TouchableOpacity
-              style={styles.acceptBtn}
+              style={[styles.acceptBtn, saving && { opacity: 0.6 }]}
               onPress={handleAccept}
               activeOpacity={0.85}
+              disabled={saving}
             >
-              <Text style={styles.acceptText}>Yes, let's meet 👋</Text>
+              <Text style={styles.acceptText}>{saving ? 'Saving...' : "Yes, let's meet 👋"}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.declineBtn}
+              style={[styles.declineBtn, saving && { opacity: 0.6 }]}
               onPress={handleDecline}
               activeOpacity={0.7}
+              disabled={saving}
             >
               <Text style={styles.declineText}>Not right now</Text>
             </TouchableOpacity>
@@ -394,9 +560,35 @@ const styles = StyleSheet.create({
   },
   declineText: { fontSize: 14, color: 'rgba(245,240,232,0.45)' },
 
+  // Shared centered layout for loading / empty / success full-screen states
+  fullCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+
+  // Loading state
+  loadingText: { fontSize: 14, color: Colors.brownLight, marginTop: 16, textAlign: 'center' },
+
+  // Empty state
+  emptyEmoji: { fontSize: 56, marginBottom: 16 },
+  emptyTitle: { fontSize: 22, fontWeight: '800', color: Colors.cream, marginBottom: 10, textAlign: 'center' },
+  emptySub: {
+    fontSize: 14,
+    color: Colors.brownLight,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+    paddingHorizontal: 8,
+  },
+  emptyBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+  },
+  emptyBtnText: { fontSize: 14, color: Colors.brownLight, fontWeight: '600' },
+
   // Success
   successContainer: { flex: 1, backgroundColor: Colors.terracotta },
-  successContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
   successEmoji: { fontSize: 72, marginBottom: 24 },
   successTitle: { fontSize: 34, fontWeight: '900', color: Colors.white, marginBottom: 12, textAlign: 'center' },
   successSub: { fontSize: 16, color: 'rgba(255,255,255,0.8)', textAlign: 'center', lineHeight: 24 },
