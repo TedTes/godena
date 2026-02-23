@@ -15,7 +15,18 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../../constants/theme';
-import { supabase } from '../../../lib/supabase';
+import {
+  fetchGroup,
+  fetchGroupMessages,
+  fetchProfiles,
+  getSessionUserId,
+  insertGroupMessage,
+  markGroupSeen as markGroupSeenMembership,
+  removeChannel,
+  subscribeToGroupMessages,
+  triggerGroupMessagePush,
+  type GroupChatMessageRow,
+} from '../../../lib/services/groupChat';
 
 // ── Sender color palette — deterministic per user ──────────────────────────
 const SENDER_COLORS = ['#7a8c5c', '#c9a84c', '#5b7fa6', '#8b4220', '#6b5b8c'];
@@ -127,10 +138,7 @@ export default function GroupChatScreen() {
     const idsNeedingFetch = senderIds.filter((sid) => !profileMapRef.current[sid]);
     if (idsNeedingFetch.length === 0) return;
 
-    const { data } = await supabase
-      .from('profiles')
-      .select('user_id, full_name, avatar_url')
-      .in('user_id', idsNeedingFetch);
+    const { data } = await fetchProfiles(idsNeedingFetch);
 
     for (const p of data ?? []) {
       const row = p as { user_id: string; full_name: string | null; avatar_url: string | null };
@@ -161,11 +169,7 @@ export default function GroupChatScreen() {
 
   const markGroupSeen = async () => {
     if (!id || !userId) return;
-    await supabase
-      .from('group_memberships')
-      .update({ last_seen_at: new Date().toISOString() })
-      .eq('group_id', id)
-      .eq('user_id', userId);
+    await markGroupSeenMembership(id, userId);
   };
 
   useEffect(() => {
@@ -173,23 +177,12 @@ export default function GroupChatScreen() {
       if (!id) return;
       setLoading(true);
 
-      const [{ data: sessionData }, groupRes, messageRes] = await Promise.all([
-        supabase.auth.getSession(),
-        supabase
-          .from('groups')
-          .select('id, name, member_count, category')
-          .eq('id', id)
-          .maybeSingle(),
-        supabase
-          .from('group_messages')
-          .select('id, group_id, sender_id, content, sent_at')
-          .eq('group_id', id)
-          .is('deleted_at', null)
-          .order('sent_at', { ascending: true })
-          .limit(200),
+      const [uid, groupRes, messageRes] = await Promise.all([
+        getSessionUserId(),
+        fetchGroup(id),
+        fetchGroupMessages(id),
       ]);
 
-      const uid = sessionData.session?.user.id ?? null;
       setUserId(uid);
       setGroup((groupRes.data as any) ?? null);
 
@@ -206,40 +199,21 @@ export default function GroupChatScreen() {
   useEffect(() => {
     if (!id) return;
 
-    const channel = supabase
-      .channel(`group_messages:${id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'group_messages',
-          filter: `group_id=eq.${id}`,
-        },
-        async (payload) => {
-          const row = payload.new as {
-            id: string;
-            group_id: string;
-            sender_id: string;
-            content: string;
-            sent_at: string;
-          };
-          await hydrateSenderProfiles([row.sender_id]);
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === row.id)) return prev;
-            return [...prev, ...mapDbMessages([row], userId)];
-          });
-          if (atBottomRef.current) {
-            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
-          } else if (row.sender_id !== userId) {
-            // Only count messages from others as "pending unread"
-            setPendingCount((n) => n + 1);
-          }
-        }
-      )
-      .subscribe();
+    const channel = subscribeToGroupMessages(id, async (row: GroupChatMessageRow) => {
+      await hydrateSenderProfiles([row.sender_id]);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === row.id)) return prev;
+        return [...prev, ...mapDbMessages([row], userId)];
+      });
+      if (atBottomRef.current) {
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
+      } else if (row.sender_id !== userId) {
+        // Only count messages from others as "pending unread"
+        setPendingCount((n) => n + 1);
+      }
+    });
 
-    return () => { void supabase.removeChannel(channel); };
+    return () => { void removeChannel(channel); };
   }, [id, userId]);
 
   useEffect(() => {
@@ -270,18 +244,12 @@ export default function GroupChatScreen() {
       const text = input.trim();
       if (!text) return;
 
-      const { data: insertedMessage, error } = await supabase
-        .from('group_messages')
-        .insert({ group_id: id, sender_id: userId, content: text })
-        .select('id')
-        .single();
+      const { data: insertedMessage, error } = await insertGroupMessage(id, userId, text);
       if (error) return;
 
       // Fire-and-forget push fan-out for other group members.
       if (insertedMessage?.id) {
-        void supabase.functions.invoke('group-message-push', {
-          body: { group_id: id, message_id: insertedMessage.id },
-        });
+        void triggerGroupMessagePush(id, insertedMessage.id);
       }
 
       setInput('');

@@ -15,7 +15,26 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { supabase } from '../../lib/supabase';
+import {
+  createGroupEvent,
+  createGroupPost,
+  deletePostReaction,
+  fetchEventRsvps,
+  fetchGroup,
+  fetchGroupPosts,
+  fetchMembers,
+  fetchMembership,
+  fetchPostReactions,
+  fetchProfilesByUserIds,
+  fetchUpcomingEvents,
+  getSessionUserId,
+  insertPostReaction,
+  joinGroup as joinGroupMembership,
+  logInteractionEvent,
+  markEventAttended,
+  setOpenSignal,
+  upsertEventRsvp,
+} from '../../lib/services/groupDetail';
 
 function getGroupVisuals(category: string) {
   switch (category) {
@@ -118,15 +137,10 @@ export default function GroupDetailScreen() {
     if (!id) return;
     setLoading(true);
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const uid = sessionData.session?.user.id ?? null;
+    const uid = await getSessionUserId();
     setUserId(uid);
 
-    const { data: groupData, error: groupError } = await supabase
-      .from('groups')
-      .select('id, name, description, category, city, is_virtual, member_count')
-      .eq('id', id)
-      .maybeSingle();
+    const { data: groupData, error: groupError } = await fetchGroup(id);
 
     if (groupError || !groupData) { setLoading(false); return; }
     setGroup(groupData as Group);
@@ -134,29 +148,10 @@ export default function GroupDetailScreen() {
     if (!uid) { setLoading(false); return; }
 
     const [membershipRes, membersRes, eventsRes, postsRes] = await Promise.all([
-      supabase
-        .from('group_memberships')
-        .select('role, is_open_to_connect')
-        .eq('group_id', id).eq('user_id', uid).maybeSingle(),
-      supabase
-        .from('group_memberships')
-        .select('user_id, role')
-        .eq('group_id', id)
-        .order('joined_at', { ascending: false })
-        .limit(30),
-      supabase
-        .from('group_events')
-        .select('id, title, starts_at, location_name, is_virtual, created_by')
-        .eq('group_id', id)
-        .gte('starts_at', new Date().toISOString())
-        .order('starts_at', { ascending: true })
-        .limit(20),
-      supabase
-        .from('group_posts')
-        .select('id, author_id, content, created_at')
-        .eq('group_id', id)
-        .order('created_at', { ascending: false })
-        .limit(20),
+      fetchMembership(id, uid),
+      fetchMembers(id),
+      fetchUpcomingEvents(id),
+      fetchGroupPosts(id),
     ]);
 
     setMembership((membershipRes.data as Membership | null) ?? null);
@@ -168,26 +163,12 @@ export default function GroupDetailScreen() {
     setPosts(postsData);
 
     const postIds = postsData.map((p) => p.id);
-    if (postIds.length > 0) {
-      const { data: reactionsData } = await supabase
-        .from('group_post_reactions')
-        .select('post_id, reaction, user_id')
-        .in('post_id', postIds);
-      setReactionRows((reactionsData as ReactionRow[] | null) ?? []);
-    } else {
-      setReactionRows([]);
-    }
+    const { data: reactionsData } = await fetchPostReactions(postIds);
+    setReactionRows((reactionsData as ReactionRow[] | null) ?? []);
 
     const eventIds = eventsData.map((e) => e.id);
-    if (eventIds.length > 0) {
-      const { data: rsvpsData } = await supabase
-        .from('event_rsvps')
-        .select('event_id, user_id, status, attended_at')
-        .in('event_id', eventIds);
-      setEventRsvps((rsvpsData as EventRsvpRow[] | null) ?? []);
-    } else {
-      setEventRsvps([]);
-    }
+    const { data: rsvpsData } = await fetchEventRsvps(eventIds);
+    setEventRsvps((rsvpsData as EventRsvpRow[] | null) ?? []);
 
     const authorIds = Array.from(new Set([
       ...membersData.map((m) => m.user_id),
@@ -195,10 +176,7 @@ export default function GroupDetailScreen() {
     ]));
 
     if (authorIds.length > 0) {
-      const { data: profilesData } = await supabase
-        .from('profiles')
-        .select('user_id, full_name, avatar_url')
-        .in('user_id', authorIds);
+      const { data: profilesData } = await fetchProfilesByUserIds(authorIds);
 
       const map: Record<string, { name: string; avatar: string | null }> = {};
       for (const p of profilesData ?? []) {
@@ -221,11 +199,7 @@ export default function GroupDetailScreen() {
     if (!content) return;
 
     setPosting(true);
-    const { data, error } = await supabase
-      .from('group_posts')
-      .insert({ group_id: id, author_id: userId, content })
-      .select('id, author_id, content, created_at')
-      .single();
+    const { data, error } = await createGroupPost(id, userId, content);
     setPosting(false);
 
     if (error || !data) {
@@ -237,7 +211,7 @@ export default function GroupDetailScreen() {
     setPostDraft('');
   };
 
-  const logInteractionEvent = async (
+  const logInteraction = async (
     eventType: 'post_reaction' | 'same_event_rsvp' | 'same_event_attendance',
     targetId: string | null,
     sourcePostId?: string,
@@ -245,14 +219,7 @@ export default function GroupDetailScreen() {
     metadata?: Record<string, unknown>
   ) => {
     if (!id || !userId || !targetId || targetId === userId) return;
-    const { error } = await supabase.rpc('log_interaction_event', {
-      p_group_id: id,
-      p_event_type: eventType,
-      p_target_id: targetId,
-      p_source_post_id: sourcePostId ?? null,
-      p_source_event_id: sourceEventId ?? null,
-      p_metadata: metadata ?? {},
-    });
+    const { error } = await logInteractionEvent(id, eventType, targetId, sourcePostId, sourceEventId, metadata);
     if (error) {
       // Non-blocking: core UX should still succeed if analytics logging fails.
       console.warn('log_interaction_event failed', error.message);
@@ -281,16 +248,9 @@ export default function GroupDetailScreen() {
 
     let error: { message: string } | null = null;
     if (alreadyReacted) {
-      ({ error } = await supabase
-        .from('group_post_reactions')
-        .delete()
-        .eq('post_id', postId)
-        .eq('user_id', userId)
-        .eq('reaction', reaction));
+      ({ error } = await deletePostReaction(postId, userId, reaction));
     } else {
-      ({ error } = await supabase
-        .from('group_post_reactions')
-        .insert({ post_id: postId, user_id: userId, reaction }));
+      ({ error } = await insertPostReaction(postId, userId, reaction));
     }
 
     setPendingReactions((prev) => {
@@ -306,7 +266,7 @@ export default function GroupDetailScreen() {
 
     if (!alreadyReacted) {
       const targetAuthorId = posts.find((p) => p.id === postId)?.author_id ?? null;
-      void logInteractionEvent('post_reaction', targetAuthorId, postId, undefined, { reaction });
+      void logInteraction('post_reaction', targetAuthorId, postId, undefined, { reaction });
     }
   };
 
@@ -321,10 +281,7 @@ export default function GroupDetailScreen() {
           {
             text: "Yes, I'm open",
             onPress: async () => {
-              const { error } = await supabase
-                .from('group_memberships')
-                .update({ is_open_to_connect: true, openness_set_at: new Date().toISOString() })
-                .eq('group_id', id).eq('user_id', userId);
+              const { error } = await setOpenSignal(id, userId, true);
               if (error) { Alert.alert('Could not update signal', error.message); return; }
               setMembership((prev) => (prev ? { ...prev, is_open_to_connect: true } : prev));
             },
@@ -333,10 +290,7 @@ export default function GroupDetailScreen() {
       );
     } else {
       void (async () => {
-        const { error } = await supabase
-          .from('group_memberships')
-          .update({ is_open_to_connect: false })
-          .eq('group_id', id).eq('user_id', userId);
+        const { error } = await setOpenSignal(id, userId, false);
         if (error) { Alert.alert('Could not update signal', error.message); return; }
         setMembership((prev) => (prev ? { ...prev, is_open_to_connect: false } : prev));
       })();
@@ -346,9 +300,7 @@ export default function GroupDetailScreen() {
   const joinGroup = async () => {
     if (!userId || !id || joining) return;
     setJoining(true);
-    const { error } = await supabase
-      .from('group_memberships')
-      .upsert({ group_id: id, user_id: userId }, { onConflict: 'group_id,user_id', ignoreDuplicates: true });
+    const { error } = await joinGroupMembership(id, userId);
     setJoining(false);
     if (error) { Alert.alert('Could not join group', error.message); return; }
     // Optimistic updates — avoids full reload flash
@@ -392,18 +344,14 @@ export default function GroupDetailScreen() {
     }
 
     setCreatingEvent(true);
-    const { data, error } = await supabase
-      .from('group_events')
-      .insert({
-        group_id: id,
-        created_by: userId,
-        title,
-        starts_at: startsAt.toISOString(),
-        location_name: eventVirtualDraft ? null : (eventLocationDraft.trim() || null),
-        is_virtual: eventVirtualDraft,
-      })
-      .select('id, title, starts_at, location_name, is_virtual, created_by')
-      .single();
+    const { data, error } = await createGroupEvent(
+      id,
+      userId,
+      title,
+      startsAt.toISOString(),
+      eventVirtualDraft,
+      eventLocationDraft.trim() || null
+    );
     setCreatingEvent(false);
 
     if (error || !data) {
@@ -432,14 +380,7 @@ export default function GroupDetailScreen() {
     });
     setPendingRsvps((prev) => new Set([...prev, eventId]));
 
-    const { data, error } = await supabase
-      .from('event_rsvps')
-      .upsert(
-        { event_id: eventId, user_id: userId, status, attended_at: null },
-        { onConflict: 'event_id,user_id' }
-      )
-      .select('event_id, user_id, status, attended_at')
-      .single();
+    const { data, error } = await upsertEventRsvp(eventId, userId, status);
 
     setPendingRsvps((prev) => {
       const next = new Set(prev);
@@ -460,7 +401,7 @@ export default function GroupDetailScreen() {
 
     if (status === 'going' || status === 'interested') {
       const targetId = groupEvents.find((ev) => ev.id === eventId)?.created_by ?? null;
-      void logInteractionEvent('same_event_rsvp', targetId, undefined, eventId, { status });
+      void logInteraction('same_event_rsvp', targetId, undefined, eventId, { status });
     }
   };
 
@@ -480,13 +421,7 @@ export default function GroupDetailScreen() {
     );
     setPendingAttendance((prev) => new Set([...prev, eventId]));
 
-    const { data, error } = await supabase
-      .from('event_rsvps')
-      .update({ attended_at: attendedAt })
-      .eq('event_id', eventId)
-      .eq('user_id', userId)
-      .select('event_id, user_id, status, attended_at')
-      .single();
+    const { data, error } = await markEventAttended(eventId, userId);
 
     setPendingAttendance((prev) => {
       const next = new Set(prev);
@@ -505,7 +440,7 @@ export default function GroupDetailScreen() {
     });
 
     const targetId = groupEvents.find((ev) => ev.id === eventId)?.created_by ?? null;
-    void logInteractionEvent('same_event_attendance', targetId, undefined, eventId);
+    void logInteraction('same_event_attendance', targetId, undefined, eventId);
   };
 
   if (loading || !group) {

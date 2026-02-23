@@ -14,7 +14,16 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { supabase } from '../../lib/supabase';
+import {
+  createGroup as createGroupRecord,
+  fetchGroups,
+  fetchRecentMessagesForGroups,
+  fetchUserMemberships,
+  getSessionUserId,
+  joinGroup as joinGroupMembership,
+  upsertGroupMembership,
+  type GroupRow,
+} from '../../lib/services/groups';
 
 const CATEGORIES = ['All', 'Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
 const ALL_CITIES_LABEL = 'All Cities';
@@ -61,17 +70,6 @@ function getGroupVisuals(category: string) {
   }
 }
 
-type GroupRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  category: string;
-  city: string | null;
-  is_virtual: boolean;
-  member_count: number;
-  next_event_at: string | null;
-};
-
 export default function GroupsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
@@ -104,12 +102,7 @@ export default function GroupsScreen() {
     if (joinedIds.has(groupId) || joiningId) return;
 
     setJoiningId(groupId);
-    const { error } = await supabase
-      .from('group_memberships')
-      .upsert(
-        { group_id: groupId, user_id: userId },
-        { onConflict: 'group_id,user_id', ignoreDuplicates: true }
-      );
+    const { error } = await joinGroupMembership(groupId, userId);
     setJoiningId(null);
 
     if (error) { Alert.alert('Could not join group', error.message); return; }
@@ -143,19 +136,14 @@ export default function GroupsScreen() {
     if (!category) { Alert.alert('Missing category', 'Please choose a category.'); return; }
 
     setCreatingGroup(true);
-    const { data, error } = await supabase
-      .from('groups')
-      .insert({
-        name,
-        description: newGroupDescription.trim() || null,
-        category,
-        city: newGroupIsVirtual ? null : (newGroupCity.trim() || null),
-        is_virtual: newGroupIsVirtual,
-        created_by: userId,
-        member_count: 1,
-      })
-      .select('id, name, description, category, city, is_virtual, member_count, next_event_at')
-      .single();
+    const { data, error } = await createGroupRecord({
+      userId,
+      name,
+      description: newGroupDescription.trim() || null,
+      category,
+      city: newGroupCity.trim() || null,
+      isVirtual: newGroupIsVirtual,
+    });
 
     if (error || !data) {
       setCreatingGroup(false);
@@ -163,10 +151,7 @@ export default function GroupsScreen() {
       return;
     }
 
-    const membershipRes = await supabase.from('group_memberships').upsert(
-      { group_id: data.id, user_id: userId, role: 'organizer' },
-      { onConflict: 'group_id,user_id', ignoreDuplicates: true }
-    );
+    const membershipRes = await upsertGroupMembership(data.id, userId, 'organizer');
     setCreatingGroup(false);
 
     if (membershipRes.error) Alert.alert('Group created with warning', membershipRes.error.message);
@@ -187,18 +172,12 @@ export default function GroupsScreen() {
       setLoading(true);
       setLoadError('');
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData.session?.user.id ?? null;
+      const uid = await getSessionUserId();
       setUserId(uid);
 
       const [{ data: groupsData, error: groupsError }, membershipsResponse] = await Promise.all([
-        supabase
-          .from('groups')
-          .select('id, name, description, category, city, is_virtual, member_count, next_event_at')
-          .order('created_at', { ascending: false }),
-        uid
-          ? supabase.from('group_memberships').select('group_id, last_seen_at').eq('user_id', uid)
-          : Promise.resolve({ data: [], error: null } as any),
+        fetchGroups(),
+        fetchUserMemberships(uid),
       ]);
 
       if (groupsError) { setLoadError(groupsError.message); setLoading(false); return; }
@@ -210,13 +189,7 @@ export default function GroupsScreen() {
       if (uid && membershipRows.length > 0) {
         const groupIds = membershipRows.map((m) => m.group_id);
         const seenMap = new Map(membershipRows.map((m) => [m.group_id, m.last_seen_at]));
-        const { data: recentMessages } = await supabase
-          .from('group_messages')
-          .select('group_id, sender_id, sent_at, content')
-          .in('group_id', groupIds)
-          .is('deleted_at', null)
-          .order('sent_at', { ascending: false })
-          .limit(1200);
+        const { data: recentMessages } = await fetchRecentMessagesForGroups(groupIds);
 
         const unread: Record<string, number> = {};
         const lastMsg: Record<string, { content: string; sentAt: string; isOwn: boolean }> = {};
