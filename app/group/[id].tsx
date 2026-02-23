@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   StyleSheet,
@@ -13,97 +14,309 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockGroups, mockGroupMembers, mockEvents } from '../../data/mock';
+import { supabase } from '../../lib/supabase';
+
+function getGroupVisuals(category: string) {
+  switch (category) {
+    case 'outdoors':     return { emoji: '🏕️', coverColor: '#7a8c5c', label: 'Outdoors' };
+    case 'food_drink':   return { emoji: '☕',  coverColor: '#c4622d', label: 'Food & Drink' };
+    case 'professional': return { emoji: '💼',  coverColor: '#3d2b1f', label: 'Professional' };
+    case 'language':     return { emoji: '🗣️', coverColor: '#c9a84c', label: 'Language' };
+    case 'faith':        return { emoji: '✝️',  coverColor: '#8b4220', label: 'Faith' };
+    case 'culture':      return { emoji: '🎉',  coverColor: '#a07820', label: 'Culture' };
+    default:             return { emoji: '👥',  coverColor: '#6b4c3b', label: 'Other' };
+  }
+}
+
+type Group = {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  city: string | null;
+  is_virtual: boolean;
+  member_count: number;
+};
+
+type Membership = {
+  role: 'member' | 'organizer' | 'moderator';
+  is_open_to_connect: boolean;
+};
+
+type Member = {
+  user_id: string;
+  role: 'member' | 'organizer' | 'moderator';
+};
+
+type Event = {
+  id: string;
+  title: string;
+  starts_at: string;
+  location_name: string | null;
+  is_virtual: boolean;
+};
+
+type Post = {
+  id: string;
+  author_id: string;
+  content: string;
+  created_at: string;
+};
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const group = mockGroups.find((g) => g.id === id) || mockGroups[0];
-  const groupEvents = mockEvents.filter((e) => e.groupId === id);
-  const [isOpen, setIsOpen] = useState(group.isOpenToConnect);
-  const [activeTab, setActiveTab] = useState<'about' | 'members' | 'events'>('about');
+  const [activeTab, setActiveTab] = useState<'about' | 'members' | 'events' | 'activity'>('about');
+  const [loading, setLoading] = useState(true);
+  const [group, setGroup] = useState<Group | null>(null);
+  const [membership, setMembership] = useState<Membership | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [memberNames, setMemberNames] = useState<Record<string, { name: string; avatar: string | null }>>({});
+  const [groupEvents, setGroupEvents] = useState<Event[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+
+  const visuals = useMemo(
+    () => getGroupVisuals(group?.category ?? 'other'),
+    [group?.category]
+  );
+
+  const isOpen = membership?.is_open_to_connect ?? false;
+
+  const load = async () => {
+    if (!id) return;
+    setLoading(true);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const uid = sessionData.session?.user.id ?? null;
+    setUserId(uid);
+
+    const { data: groupData, error: groupError } = await supabase
+      .from('groups')
+      .select('id, name, description, category, city, is_virtual, member_count')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (groupError || !groupData) { setLoading(false); return; }
+    setGroup(groupData as Group);
+
+    if (!uid) { setLoading(false); return; }
+
+    const [membershipRes, membersRes, eventsRes, postsRes] = await Promise.all([
+      supabase
+        .from('group_memberships')
+        .select('role, is_open_to_connect')
+        .eq('group_id', id).eq('user_id', uid).maybeSingle(),
+      supabase
+        .from('group_memberships')
+        .select('user_id, role')
+        .eq('group_id', id)
+        .order('joined_at', { ascending: false })
+        .limit(30),
+      supabase
+        .from('group_events')
+        .select('id, title, starts_at, location_name, is_virtual')
+        .eq('group_id', id)
+        .gte('starts_at', new Date().toISOString())
+        .order('starts_at', { ascending: true })
+        .limit(20),
+      supabase
+        .from('group_posts')
+        .select('id, author_id, content, created_at')
+        .eq('group_id', id)
+        .order('created_at', { ascending: false })
+        .limit(20),
+    ]);
+
+    setMembership((membershipRes.data as Membership | null) ?? null);
+    const membersData = (membersRes.data as Member[] | null) ?? [];
+    setMembers(membersData);
+    setGroupEvents((eventsRes.data as Event[] | null) ?? []);
+    setPosts((postsRes.data as Post[] | null) ?? []);
+
+    const authorIds = Array.from(new Set([
+      ...membersData.map((m) => m.user_id),
+      ...((postsRes.data as Post[] | null) ?? []).map((p) => p.author_id),
+    ]));
+
+    if (authorIds.length > 0) {
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('user_id, full_name, avatar_url')
+        .in('user_id', authorIds);
+
+      const map: Record<string, { name: string; avatar: string | null }> = {};
+      for (const p of profilesData ?? []) {
+        const row = p as { user_id: string; full_name: string | null; avatar_url: string | null };
+        map[row.user_id] = { name: row.full_name || 'Member', avatar: row.avatar_url || null };
+      }
+      setMemberNames(map);
+    } else {
+      setMemberNames({});
+    }
+
+    setLoading(false);
+  };
+
+  useEffect(() => { void load(); }, [id]);
 
   const handleOpenToggle = (val: boolean) => {
+    if (!id || !membership || !userId) return;
     if (val) {
       Alert.alert(
         'Set openness signal?',
-        `You'll quietly signal that you're open to a connection from ${group.name}. Only a mutual signal triggers a reveal — nobody will know unless it's both of you.`,
+        `You'll quietly signal that you're open to a connection from ${group?.name}. Only a mutual signal triggers a reveal — nobody will know unless it's both of you.`,
         [
           { text: 'Not yet', style: 'cancel' },
           {
-            text: 'Yes, I\'m open',
-            onPress: () => setIsOpen(true),
+            text: "Yes, I'm open",
+            onPress: async () => {
+              const { error } = await supabase
+                .from('group_memberships')
+                .update({ is_open_to_connect: true, openness_set_at: new Date().toISOString() })
+                .eq('group_id', id).eq('user_id', userId);
+              if (error) { Alert.alert('Could not update signal', error.message); return; }
+              setMembership((prev) => (prev ? { ...prev, is_open_to_connect: true } : prev));
+            },
           },
         ]
       );
     } else {
-      setIsOpen(false);
+      void (async () => {
+        const { error } = await supabase
+          .from('group_memberships')
+          .update({ is_open_to_connect: false })
+          .eq('group_id', id).eq('user_id', userId);
+        if (error) { Alert.alert('Could not update signal', error.message); return; }
+        setMembership((prev) => (prev ? { ...prev, is_open_to_connect: false } : prev));
+      })();
     }
   };
 
+  const joinGroup = async () => {
+    if (!userId || !id || joining) return;
+    setJoining(true);
+    const { error } = await supabase
+      .from('group_memberships')
+      .upsert({ group_id: id, user_id: userId }, { onConflict: 'group_id,user_id', ignoreDuplicates: true });
+    setJoining(false);
+    if (error) { Alert.alert('Could not join group', error.message); return; }
+    await load();
+  };
+
+  const formatDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  const formatTime = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  if (loading || !group) {
+    return (
+      <View style={styles.loadingWrap}>
+        <ActivityIndicator color={Colors.terracotta} size="large" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* Hero */}
-      <View style={[styles.hero, { backgroundColor: group.coverColor }]}>
+
+      {/* ── Hero ── */}
+      <View style={[styles.hero, { backgroundColor: visuals.coverColor }]}>
         <SafeAreaView edges={['top']}>
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={22} color={Colors.white} />
+            <Ionicons name="arrow-back" size={20} color={Colors.white} />
           </TouchableOpacity>
         </SafeAreaView>
         <View style={styles.heroContent}>
-          <Text style={styles.heroEmoji}>{group.emoji}</Text>
+          <View style={styles.heroEmojiWrap}>
+            <Text style={styles.heroEmoji}>{visuals.emoji}</Text>
+          </View>
           <Text style={styles.heroTitle}>{group.name}</Text>
           <View style={styles.heroMeta}>
             <View style={styles.heroMetaItem}>
-              <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.7)" />
-              <Text style={styles.heroMetaText}>{group.memberCount} members</Text>
+              <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.75)" />
+              <Text style={styles.heroMetaText}>{group.member_count} members</Text>
             </View>
             <View style={styles.heroDot} />
             <View style={styles.heroMetaItem}>
-              <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.7)" />
-              <Text style={styles.heroMetaText}>{group.isVirtual ? 'Virtual' : group.city}</Text>
+              <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.75)" />
+              <Text style={styles.heroMetaText}>
+                {group.is_virtual ? 'Virtual' : group.city || 'Unknown city'}
+              </Text>
             </View>
             <View style={styles.heroDot} />
-            <Text style={styles.heroMetaText}>{group.category}</Text>
+            <View style={styles.heroCategoryChip}>
+              <Text style={styles.heroCategoryText}>{visuals.label}</Text>
+            </View>
           </View>
         </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Openness toggle */}
-        <View style={styles.openCard}>
+
+        {/* ── Join Prompt ── */}
+        {!membership && (
+          <View style={styles.joinPrompt}>
+            <View style={styles.joinPromptIcon}>
+              <Ionicons name="people" size={22} color={Colors.terracotta} />
+            </View>
+            <Text style={styles.joinPromptTitle}>Join to participate</Text>
+            <Text style={styles.joinPromptText}>
+              Members access the group chat, events, and connection signals.
+            </Text>
+            <TouchableOpacity
+              style={[styles.joinGroupBtn, joining && styles.joinGroupBtnDisabled]}
+              onPress={() => void joinGroup()}
+              disabled={joining}
+            >
+              {joining
+                ? <ActivityIndicator size="small" color={Colors.white} />
+                : <Text style={styles.joinGroupBtnText}>Join Group</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── Openness Signal ── */}
+        <View style={[styles.openCard, isOpen && styles.openCardActive]}>
           <View style={styles.openLeft}>
             <Text style={styles.openTitle}>
-              {isOpen ? '🌱 You\'re open in this group' : 'Open to a connection?'}
+              {isOpen ? '🌱 Open to connect here' : 'Open to a connection?'}
             </Text>
             <Text style={styles.openDesc}>
               {isOpen
-                ? 'Your signal is private. We\'ll only reveal when it\'s mutual and the time feels right.'
-                : 'Signal quietly. Only fires when both people are open and have genuinely connected.'}
+                ? "Your signal is private. We'll only reveal when it's mutual and the time feels right."
+                : 'Signal quietly. Only fires when both people are genuinely open.'}
             </Text>
           </View>
           <Switch
             value={isOpen}
             onValueChange={handleOpenToggle}
+            disabled={!membership}
             trackColor={{ false: Colors.border, true: Colors.olive }}
             thumbColor={Colors.white}
           />
         </View>
 
-        {/* Chat CTA */}
+        {/* ── Chat CTA ── */}
         <TouchableOpacity
-          style={styles.chatCta}
+          style={[styles.chatCta, !membership && styles.chatCtaDisabled]}
           onPress={() => router.push(`/group/chat/${group.id}`)}
+          disabled={!membership}
           activeOpacity={0.85}
         >
-          <Ionicons name="chatbubbles-outline" size={18} color={Colors.terracotta} />
-          <Text style={styles.chatCtaText}>Open Group Chat</Text>
-          <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+          <View style={styles.chatCtaIcon}>
+            <Ionicons name="chatbubbles-outline" size={18} color={Colors.terracotta} />
+          </View>
+          <Text style={styles.chatCtaText}>Group Chat</Text>
+          <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
         </TouchableOpacity>
 
-        {/* Tabs */}
+        {/* ── Tabs ── */}
         <View style={styles.tabs}>
-          {(['about', 'members', 'events'] as const).map((t) => (
+          {(['about', 'members', 'events', 'activity'] as const).map((t) => (
             <TouchableOpacity
               key={t}
               style={[styles.tab, activeTab === t && styles.tabActive]}
@@ -116,27 +329,36 @@ export default function GroupDetailScreen() {
           ))}
         </View>
 
+        {/* ── About ── */}
         {activeTab === 'about' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionLabel}>About</Text>
-            <Text style={styles.aboutText}>{group.description}</Text>
+            <View style={styles.aboutCard}>
+              <Text style={styles.aboutText}>
+                {group.description || 'No description provided yet.'}
+              </Text>
+            </View>
 
             {groupEvents[0] && (
               <>
-                <Text style={[styles.sectionLabel, { marginTop: 24 }]}>Next Event</Text>
-                <View style={styles.nextEventCard}>
-                  <Text style={styles.nextEventEmoji}>{groupEvents[0].emoji}</Text>
-                  <View style={styles.nextEventInfo}>
-                    <Text style={styles.nextEventTitle}>{groupEvents[0].title}</Text>
-                    <Text style={styles.nextEventMeta}>
-                      {groupEvents[0].date} · {groupEvents[0].time}
+                <Text style={styles.sectionLabel}>Next Event</Text>
+                <View style={styles.eventCard}>
+                  <View style={styles.eventDateBlock}>
+                    <Text style={styles.eventDateMonth}>
+                      {new Date(groupEvents[0].starts_at).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}
                     </Text>
-                    <Text style={styles.nextEventLocation}>{groupEvents[0].location}</Text>
+                    <Text style={styles.eventDateDay}>
+                      {new Date(groupEvents[0].starts_at).getDate()}
+                    </Text>
                   </View>
-                  <TouchableOpacity style={[styles.rsvpBtn, groupEvents[0].isRsvped && styles.rsvpBtnActive]}>
-                    <Text style={[styles.rsvpText, groupEvents[0].isRsvped && styles.rsvpTextActive]}>
-                      {groupEvents[0].isRsvped ? '✓ Going' : 'RSVP'}
+                  <View style={styles.eventInfo}>
+                    <Text style={styles.eventTitle}>{groupEvents[0].title}</Text>
+                    <Text style={styles.eventTime}>{formatTime(groupEvents[0].starts_at)}</Text>
+                    <Text style={styles.eventLocation}>
+                      {groupEvents[0].is_virtual ? 'Virtual' : (groupEvents[0].location_name || 'TBD')}
                     </Text>
+                  </View>
+                  <TouchableOpacity style={styles.rsvpBtn}>
+                    <Text style={styles.rsvpText}>RSVP</Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -144,53 +366,107 @@ export default function GroupDetailScreen() {
           </View>
         )}
 
+        {/* ── Members ── */}
         {activeTab === 'members' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionLabel}>{mockGroupMembers.length} members</Text>
-            {mockGroupMembers.map((m) => (
-              <View key={m.id} style={styles.memberRow}>
-                <View style={styles.memberAvatar}>
-                  {m.photo ? (
-                    <Image source={{ uri: m.photo }} style={styles.memberAvatarImg} />
-                  ) : (
-                    <View style={[styles.memberAvatarImg, styles.memberAvatarPlaceholder]}>
-                      <Text style={styles.memberInitial}>{m.name[0]}</Text>
+            <Text style={styles.sectionLabel}>{members.length} members</Text>
+            <View style={styles.membersCard}>
+              {members.map((m, i) => {
+                const info = memberNames[m.user_id];
+                const initial = (info?.name?.[0] || 'M').toUpperCase();
+                return (
+                  <View key={m.user_id} style={[styles.memberRow, i > 0 && styles.memberRowDivider]}>
+                    {info?.avatar ? (
+                      <Image source={{ uri: info.avatar }} style={styles.memberAvatar} />
+                    ) : (
+                      <View style={[styles.memberAvatar, styles.memberAvatarPlaceholder]}>
+                        <Text style={styles.memberInitial}>{initial}</Text>
+                      </View>
+                    )}
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberName}>{info?.name || 'Member'}</Text>
                     </View>
-                  )}
-                </View>
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName}>{m.name}</Text>
-                  {m.role === 'organizer' && (
-                    <Text style={styles.memberRole}>Organizer</Text>
-                  )}
-                </View>
-              </View>
-            ))}
+                    {m.role === 'organizer' && (
+                      <View style={styles.organizerBadge}>
+                        <Ionicons name="star" size={9} color={Colors.gold} />
+                        <Text style={styles.organizerText}>Organizer</Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
           </View>
         )}
 
+        {/* ── Events ── */}
         {activeTab === 'events' && (
           <View style={styles.tabContent}>
             <Text style={styles.sectionLabel}>
               {groupEvents.length > 0 ? `${groupEvents.length} upcoming` : 'No upcoming events'}
             </Text>
-            {groupEvents.map((ev) => (
-              <View key={ev.id} style={styles.eventCard}>
-                <Text style={styles.eventEmoji}>{ev.emoji}</Text>
-                <View style={styles.eventInfo}>
-                  <Text style={styles.eventTitle}>{ev.title}</Text>
-                  <Text style={styles.eventMeta}>{ev.date} · {ev.time}</Text>
-                  <Text style={styles.eventLocation}>{ev.location}</Text>
-                </View>
-                <TouchableOpacity style={[styles.rsvpBtn, ev.isRsvped && styles.rsvpBtnActive]}>
-                  <Text style={[styles.rsvpText, ev.isRsvped && styles.rsvpTextActive]}>
-                    {ev.isRsvped ? '✓' : 'RSVP'}
-                  </Text>
-                </TouchableOpacity>
+            {groupEvents.length > 0 ? (
+              <View style={styles.membersCard}>
+                {groupEvents.map((ev, i) => (
+                  <View key={ev.id} style={[styles.eventRow, i > 0 && styles.memberRowDivider]}>
+                    <View style={styles.eventDateBlock}>
+                      <Text style={styles.eventDateMonth}>
+                        {new Date(ev.starts_at).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}
+                      </Text>
+                      <Text style={styles.eventDateDay}>{new Date(ev.starts_at).getDate()}</Text>
+                    </View>
+                    <View style={styles.eventInfo}>
+                      <Text style={styles.eventTitle}>{ev.title}</Text>
+                      <Text style={styles.eventTime}>{formatTime(ev.starts_at)}</Text>
+                      <Text style={styles.eventLocation}>
+                        {ev.is_virtual ? 'Virtual' : (ev.location_name || 'TBD')}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={styles.rsvpBtn}>
+                      <Text style={styles.rsvpText}>RSVP</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
               </View>
-            ))}
-            {groupEvents.length === 0 && (
+            ) : (
               <Text style={styles.emptyText}>No events scheduled yet</Text>
+            )}
+          </View>
+        )}
+
+        {/* ── Activity ── */}
+        {activeTab === 'activity' && (
+          <View style={styles.tabContent}>
+            <Text style={styles.sectionLabel}>
+              {posts.length > 0 ? `${posts.length} recent posts` : 'No recent activity'}
+            </Text>
+            {posts.length > 0 ? (
+              <View style={{ gap: 10 }}>
+                {posts.map((p) => {
+                  const author = memberNames[p.author_id];
+                  const initial = (author?.name?.[0] || 'M').toUpperCase();
+                  return (
+                    <View key={p.id} style={styles.postCard}>
+                      <View style={styles.postHeader}>
+                        {author?.avatar ? (
+                          <Image source={{ uri: author.avatar }} style={styles.postAvatar} />
+                        ) : (
+                          <View style={[styles.postAvatar, { backgroundColor: visuals.coverColor + '44' }]}>
+                            <Text style={styles.postAvatarInitial}>{initial}</Text>
+                          </View>
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.postAuthor}>{author?.name || 'Member'}</Text>
+                          <Text style={styles.postMeta}>{formatDate(p.created_at)}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.postText}>{p.content}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={styles.emptyText}>No posts yet</Text>
             )}
           </View>
         )}
@@ -202,35 +478,89 @@ export default function GroupDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  loadingWrap: { flex: 1, backgroundColor: Colors.cream, alignItems: 'center', justifyContent: 'center' },
   container: { flex: 1, backgroundColor: Colors.cream },
+
+  // ── Hero ──
   hero: { paddingBottom: Spacing.xl },
   backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.22)',
     alignItems: 'center',
     justifyContent: 'center',
     margin: Spacing.md,
   },
   heroContent: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
-  heroEmoji: { fontSize: 44, marginBottom: 10 },
+  heroEmojiWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  heroEmoji: { fontSize: 28 },
   heroTitle: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '900',
     color: Colors.white,
     marginBottom: 10,
-    lineHeight: 34,
+    lineHeight: 32,
   },
   heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
   heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  heroMetaText: { fontSize: 12, color: 'rgba(255,255,255,0.7)' },
-  heroDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.4)' },
+  heroMetaText: { fontSize: 12, color: 'rgba(255,255,255,0.75)' },
+  heroDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.35)' },
+  heroCategoryChip: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  heroCategoryText: { fontSize: 11, color: 'rgba(255,255,255,0.9)', fontWeight: '700' },
 
-  openCard: {
+  // ── Join Prompt ──
+  joinPrompt: {
     margin: Spacing.lg,
+    padding: Spacing.lg,
+    borderRadius: Radius.lg,
     backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    gap: 6,
+  },
+  joinPromptIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(196,98,45,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  joinPromptTitle: { fontSize: 15, fontWeight: '800', color: Colors.ink },
+  joinPromptText: { fontSize: 13, color: Colors.muted, lineHeight: 19, textAlign: 'center', marginBottom: 4 },
+  joinGroupBtn: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.terracotta,
+    paddingHorizontal: 28,
+    paddingVertical: 11,
+    minWidth: 140,
+    alignItems: 'center',
+  },
+  joinGroupBtnDisabled: { opacity: 0.6 },
+  joinGroupBtnText: { fontSize: 14, color: Colors.white, fontWeight: '700' },
+
+  // ── Openness Card ──
+  openCard: {
+    marginHorizontal: Spacing.lg,
+    marginBottom: 12,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
     padding: Spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
@@ -238,32 +568,48 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     borderLeftWidth: 3,
+    borderLeftColor: Colors.border,
+  },
+  openCardActive: {
+    backgroundColor: 'rgba(122,140,92,0.07)',
     borderLeftColor: Colors.olive,
+    borderColor: 'rgba(122,140,92,0.25)',
   },
   openLeft: { flex: 1 },
-  openTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 4 },
+  openTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 3 },
   openDesc: { fontSize: 12, color: Colors.muted, lineHeight: 18 },
 
+  // ── Chat CTA ──
   chatCta: {
     marginHorizontal: Spacing.lg,
     marginBottom: Spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
+    borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
   },
-  chatCtaText: { flex: 1, fontSize: 14, fontWeight: '600', color: Colors.brown },
+  chatCtaDisabled: { opacity: 0.5 },
+  chatCtaIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(196,98,45,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatCtaText: { flex: 1, fontSize: 14, fontWeight: '600', color: Colors.ink },
 
+  // ── Tabs ──
   tabs: {
     flexDirection: 'row',
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
     marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   tab: {
     flex: 1,
@@ -273,9 +619,10 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabActive: { borderBottomColor: Colors.terracotta },
-  tabText: { fontSize: 13, fontWeight: '600', color: Colors.muted },
+  tabText: { fontSize: 12, fontWeight: '600', color: Colors.muted },
   tabTextActive: { color: Colors.terracotta },
 
+  // ── Tab Content ──
   tabContent: { paddingHorizontal: Spacing.lg },
   sectionLabel: {
     fontSize: 11,
@@ -283,68 +630,126 @@ const styles = StyleSheet.create({
     color: Colors.muted,
     textTransform: 'uppercase',
     letterSpacing: 1,
-    marginBottom: 12,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  emptyText: { fontSize: 13, color: Colors.muted, fontStyle: 'italic' },
+
+  // About
+  aboutCard: {
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
   },
   aboutText: { fontSize: 14, color: Colors.brownMid, lineHeight: 22 },
 
-  nextEventCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  // ── Shared Card Wrapper ──
+  membersCard: {
     backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
+    borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 12,
+    overflow: 'hidden',
+    marginBottom: Spacing.md,
   },
-  nextEventEmoji: { fontSize: 28 },
-  nextEventInfo: { flex: 1 },
-  nextEventTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
-  nextEventMeta: { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginBottom: 1 },
-  nextEventLocation: { fontSize: 11, color: Colors.muted },
 
+  // ── Members ──
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
   },
-  memberAvatar: { width: 44, height: 44 },
-  memberAvatarImg: { width: 44, height: 44, borderRadius: 22 },
+  memberRowDivider: { borderTopWidth: 1, borderTopColor: Colors.border },
+  memberAvatar: { width: 42, height: 42, borderRadius: 21 },
   memberAvatarPlaceholder: {
     backgroundColor: Colors.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  memberInitial: { color: Colors.white, fontSize: 18, fontWeight: '700' },
+  memberInitial: { color: Colors.white, fontSize: 17, fontWeight: '700' },
   memberInfo: { flex: 1 },
   memberName: { fontSize: 14, fontWeight: '600', color: Colors.ink },
-  memberRole: { fontSize: 11, color: Colors.terracotta, fontWeight: '600', marginTop: 2 },
+  organizerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(201,168,76,0.12)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(201,168,76,0.3)',
+  },
+  organizerText: { fontSize: 10, color: Colors.gold, fontWeight: '700' },
 
+  // ── Events ──
   eventCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+    marginBottom: Spacing.md,
+  },
+  eventRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    paddingHorizontal: Spacing.md,
   },
-  eventEmoji: { fontSize: 24 },
+  eventDateBlock: {
+    width: 44,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: Colors.paper,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eventDateMonth: { fontSize: 9, fontWeight: '800', color: Colors.terracotta, letterSpacing: 0.5 },
+  eventDateDay: { fontSize: 18, fontWeight: '900', color: Colors.ink, lineHeight: 22 },
   eventInfo: { flex: 1 },
   eventTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
-  eventMeta: { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginBottom: 1 },
+  eventTime: { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginBottom: 1 },
   eventLocation: { fontSize: 11, color: Colors.muted },
   rsvpBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: Colors.terracotta,
   },
-  rsvpBtnActive: { backgroundColor: Colors.terracotta },
   rsvpText: { fontSize: 11, fontWeight: '700', color: Colors.terracotta },
-  rsvpTextActive: { color: Colors.white },
-  emptyText: { color: Colors.muted, fontSize: 13, fontStyle: 'italic' },
+
+  // ── Posts ──
+  postCard: {
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: 10,
+  },
+  postHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  postAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postAvatarInitial: { fontSize: 14, fontWeight: '700', color: Colors.brownMid },
+  postAuthor: { fontSize: 13, fontWeight: '700', color: Colors.ink },
+  postMeta: { fontSize: 11, color: Colors.muted, marginTop: 1 },
+  postText: { fontSize: 13, color: Colors.brownMid, lineHeight: 20 },
 });
