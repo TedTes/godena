@@ -92,6 +92,8 @@ export default function GroupsScreen() {
   const [newGroupCategory, setNewGroupCategory] = useState('Outdoors');
   const [newGroupIsVirtual, setNewGroupIsVirtual] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [unreadByGroup, setUnreadByGroup] = useState<Record<string, number>>({});
+  const [lastMessages, setLastMessages] = useState<Record<string, { content: string; sentAt: string; isOwn: boolean }>>({});
 
   const joinGroup = async (groupId: string) => {
     if (!userId) {
@@ -195,16 +197,46 @@ export default function GroupsScreen() {
           .select('id, name, description, category, city, is_virtual, member_count, next_event_at')
           .order('created_at', { ascending: false }),
         uid
-          ? supabase.from('group_memberships').select('group_id').eq('user_id', uid)
+          ? supabase.from('group_memberships').select('group_id, last_seen_at').eq('user_id', uid)
           : Promise.resolve({ data: [], error: null } as any),
       ]);
 
       if (groupsError) { setLoadError(groupsError.message); setLoading(false); return; }
 
       setGroups((groupsData ?? []) as GroupRow[]);
-      setJoinedIds(new Set<string>(
-        (membershipsResponse?.data ?? []).map((m: { group_id: string }) => m.group_id)
-      ));
+      const membershipRows = (membershipsResponse?.data ?? []) as Array<{ group_id: string; last_seen_at: string | null }>;
+      setJoinedIds(new Set<string>(membershipRows.map((m) => m.group_id)));
+
+      if (uid && membershipRows.length > 0) {
+        const groupIds = membershipRows.map((m) => m.group_id);
+        const seenMap = new Map(membershipRows.map((m) => [m.group_id, m.last_seen_at]));
+        const { data: recentMessages } = await supabase
+          .from('group_messages')
+          .select('group_id, sender_id, sent_at, content')
+          .in('group_id', groupIds)
+          .is('deleted_at', null)
+          .order('sent_at', { ascending: false })
+          .limit(1200);
+
+        const unread: Record<string, number> = {};
+        const lastMsg: Record<string, { content: string; sentAt: string; isOwn: boolean }> = {};
+        for (const row of recentMessages ?? []) {
+          const msg = row as { group_id: string; sender_id: string; sent_at: string; content: string };
+          // Track last message per group (first seen since ordered desc)
+          if (!lastMsg[msg.group_id]) {
+            lastMsg[msg.group_id] = { content: msg.content, sentAt: msg.sent_at, isOwn: msg.sender_id === uid };
+          }
+          if (msg.sender_id === uid) continue;
+          const seenAt = seenMap.get(msg.group_id);
+          if (!seenAt || new Date(msg.sent_at).getTime() > new Date(seenAt).getTime()) {
+            unread[msg.group_id] = (unread[msg.group_id] ?? 0) + 1;
+          }
+        }
+        setUnreadByGroup(unread);
+        setLastMessages(lastMsg);
+      } else {
+        setUnreadByGroup({});
+      }
       setLoading(false);
     };
     void load();
@@ -239,11 +271,28 @@ export default function GroupsScreen() {
     return matchSearch && matchCat && effectiveMatchCity && matchTab;
   }), [groups, search, activeCategory, activeCity, tab, joinedIds, justJoinedIds]);
 
+  const totalUnread = useMemo(
+    () => Object.values(unreadByGroup).reduce((a, b) => a + b, 0),
+    [unreadByGroup]
+  );
+
   function formatNextEvent(iso: string | null) {
     if (!iso) return null;
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return null;
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function formatRelativeTime(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d`;
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   return (
@@ -266,9 +315,18 @@ export default function GroupsScreen() {
               style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
               onPress={() => setTab(t)}
             >
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                {t === 'mine' ? 'My Groups' : 'Discover'}
-              </Text>
+              {t === 'mine' && totalUnread > 0 ? (
+                <View style={styles.tabBtnLabelRow}>
+                  <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>My Groups</Text>
+                  <View style={styles.tabUnreadPill}>
+                    <Text style={styles.tabUnreadPillText}>{totalUnread > 99 ? '99+' : totalUnread}</Text>
+                  </View>
+                </View>
+              ) : (
+                <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
+                  {t === 'mine' ? 'My Groups' : 'Discover'}
+                </Text>
+              )}
             </TouchableOpacity>
           ))}
         </View>
@@ -474,10 +532,18 @@ export default function GroupsScreen() {
               const isJoined = joinedIds.has(g.id);
               const visuals = getGroupVisuals(g.category);
               const nextEvent = formatNextEvent(g.next_event_at);
+              const unreadCount = unreadByGroup[g.id] ?? 0;
+              const hasUnread = tab === 'mine' && unreadCount > 0;
+              const lastMsg = tab === 'mine' ? lastMessages[g.id] : null;
               return (
                 <TouchableOpacity
-                  style={styles.card}
-                  onPress={() => router.push(`/group/${g.id}`)}
+                  style={[styles.card, hasUnread && styles.cardUnread]}
+                  onPress={() => {
+                    if (hasUnread) {
+                      setUnreadByGroup((prev) => { const next = { ...prev }; delete next[g.id]; return next; });
+                    }
+                    router.push(`/group/${g.id}`);
+                  }}
                   activeOpacity={0.85}
                 >
                   {/* Colored accent */}
@@ -488,16 +554,25 @@ export default function GroupsScreen() {
                   {/* Body */}
                   <View style={styles.cardBody}>
                     <View style={styles.cardTop}>
-                      <Text style={styles.cardName} numberOfLines={1}>{g.name}</Text>
+                      <Text style={[styles.cardName, hasUnread && styles.cardNameUnread]} numberOfLines={1}>
+                        {g.name}
+                      </Text>
                       {g.is_virtual && (
                         <View style={styles.virtualBadge}>
                           <Text style={styles.virtualText}>Virtual</Text>
                         </View>
                       )}
                     </View>
-                    <Text style={styles.cardDesc} numberOfLines={1}>
-                      {g.description || 'No description yet.'}
-                    </Text>
+                    {/* Last message preview (My Groups) or description (Discover) */}
+                    {lastMsg ? (
+                      <Text style={[styles.cardDesc, styles.cardLastMsg]} numberOfLines={1}>
+                        {lastMsg.isOwn ? 'You: ' : ''}{lastMsg.content}
+                      </Text>
+                    ) : (
+                      <Text style={styles.cardDesc} numberOfLines={1}>
+                        {g.description || 'No description yet.'}
+                      </Text>
+                    )}
                     <View style={styles.cardMeta}>
                       <View style={styles.cardMetaItem}>
                         <Ionicons name="people-outline" size={11} color={Colors.muted} />
@@ -509,12 +584,22 @@ export default function GroupsScreen() {
                           <Text style={styles.cardMetaText}>{nextEvent}</Text>
                         </View>
                       )}
+                      {lastMsg && (
+                        <Text style={styles.cardLastMsgTime}>{formatRelativeTime(lastMsg.sentAt)}</Text>
+                      )}
                     </View>
                   </View>
 
                   {/* Right action */}
                   {tab === 'mine' ? (
-                    <Ionicons name="chevron-forward" size={18} color={Colors.borderDark} style={styles.cardChevron} />
+                    <View style={styles.mineRightCol}>
+                      {unreadCount > 0 && (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                        </View>
+                      )}
+                      <Ionicons name="chevron-forward" size={18} color={Colors.borderDark} />
+                    </View>
                   ) : justJoinedIds.has(g.id) ? (
                     <View style={styles.joinBtnSuccess}>
                       <Ionicons name="checkmark" size={13} color={Colors.success} />
@@ -787,7 +872,43 @@ const styles = StyleSheet.create({
   cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cardMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   cardMetaText: { fontSize: 11, color: Colors.muted },
+  unreadBadge: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.terracotta,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginLeft: 2,
+    minWidth: 22,
+    alignItems: 'center',
+  },
+  unreadBadgeText: { color: Colors.white, fontSize: 10, fontWeight: '700' },
   cardChevron: { marginRight: 14 },
+
+  // Unread card treatment
+  cardUnread: { borderColor: 'rgba(196,98,45,0.3)', backgroundColor: 'rgba(196,98,45,0.02)' },
+  cardNameUnread: { fontWeight: '800' },
+  cardLastMsg: { fontStyle: 'italic', color: Colors.brownMid },
+  cardLastMsgTime: { fontSize: 11, color: Colors.muted, marginLeft: 'auto' as any },
+
+  // Right column for My Groups (badge + chevron)
+  mineRightCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginRight: 12,
+  },
+
+  // Tab label with unread pill
+  tabBtnLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  tabUnreadPill: {
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    minWidth: 18,
+    alignItems: 'center',
+  },
+  tabUnreadPillText: { fontSize: 9, fontWeight: '800', color: Colors.white },
 
   // Join button (discover tab only)
   joinBtn: {

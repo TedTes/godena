@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -85,8 +85,10 @@ export default function GroupChatScreen() {
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  const [pendingCount, setPendingCount] = useState(0);
   const listRef = useRef<FlatList>(null);
   const profileMapRef = useRef<Record<string, { name: string; avatar: string }>>({});
+  const atBottomRef = useRef(true);
 
   const groupVisuals = useMemo(() => {
     switch (group?.category) {
@@ -157,6 +159,15 @@ export default function GroupChatScreen() {
       };
     });
 
+  const markGroupSeen = async () => {
+    if (!id || !userId) return;
+    await supabase
+      .from('group_memberships')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('group_id', id)
+      .eq('user_id', userId);
+  };
+
   useEffect(() => {
     const load = async () => {
       if (!id) return;
@@ -218,7 +229,12 @@ export default function GroupChatScreen() {
             if (prev.some((m) => m.id === row.id)) return prev;
             return [...prev, ...mapDbMessages([row], userId)];
           });
-          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
+          if (atBottomRef.current) {
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
+          } else if (row.sender_id !== userId) {
+            // Only count messages from others as "pending unread"
+            setPendingCount((n) => n + 1);
+          }
         }
       )
       .subscribe();
@@ -226,18 +242,50 @@ export default function GroupChatScreen() {
     return () => { void supabase.removeChannel(channel); };
   }, [id, userId]);
 
+  useEffect(() => {
+    if (!id || !userId) return;
+    // Mark seen shortly after initial load/new messages while chat is open.
+    const timer = setTimeout(() => {
+      void markGroupSeen();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [id, userId, messages.length]);
+
+  const handleScroll = useCallback((e: {
+    nativeEvent: { contentSize: { height: number }; layoutMeasurement: { height: number }; contentOffset: { y: number } }
+  }) => {
+    const { contentSize, layoutMeasurement, contentOffset } = e.nativeEvent;
+    const dist = contentSize.height - layoutMeasurement.height - contentOffset.y;
+    const nowAtBottom = dist < 60;
+    if (nowAtBottom && !atBottomRef.current) {
+      // User scrolled back to bottom — clear pending pill
+      setPendingCount(0);
+    }
+    atBottomRef.current = nowAtBottom;
+  }, []);
+
   const send = () => {
     void (async () => {
       if (!id || !userId) return;
       const text = input.trim();
       if (!text) return;
 
-      const { error } = await supabase
+      const { data: insertedMessage, error } = await supabase
         .from('group_messages')
-        .insert({ group_id: id, sender_id: userId, content: text });
+        .insert({ group_id: id, sender_id: userId, content: text })
+        .select('id')
+        .single();
       if (error) return;
 
+      // Fire-and-forget push fan-out for other group members.
+      if (insertedMessage?.id) {
+        void supabase.functions.invoke('group-message-push', {
+          body: { group_id: id, message_id: insertedMessage.id },
+        });
+      }
+
       setInput('');
+      void markGroupSeen();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     })();
   };
@@ -303,12 +351,15 @@ export default function GroupChatScreen() {
         style={styles.flex}
         keyboardVerticalOffset={0}
       >
+        <View style={styles.flex}>
         <FlatList
           ref={listRef}
           data={chatItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
+          scrollEventThrottle={100}
+          onScroll={handleScroll}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
           renderItem={({ item }) => {
 
@@ -387,6 +438,26 @@ export default function GroupChatScreen() {
             );
           }}
         />
+
+        {/* ── New messages pill ── */}
+        {pendingCount > 0 && (
+          <View style={styles.newMsgPillWrap} pointerEvents="box-none">
+            <TouchableOpacity
+              style={styles.newMsgPill}
+              onPress={() => {
+                listRef.current?.scrollToEnd({ animated: true });
+                setPendingCount(0);
+                atBottomRef.current = true;
+              }}
+            >
+              <Ionicons name="chevron-down" size={13} color={Colors.white} />
+              <Text style={styles.newMsgPillText}>
+                {pendingCount === 1 ? '1 new message' : `${pendingCount} new messages`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        </View>
 
         {/* ── Input bar ── */}
         <SafeAreaView edges={['bottom']} style={styles.inputSafe}>
@@ -576,4 +647,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendBtnDisabled: { backgroundColor: Colors.borderDark },
+
+  // ── New messages pill ──
+  newMsgPillWrap: {
+    position: 'absolute',
+    bottom: 12,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  newMsgPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  newMsgPillText: { fontSize: 12, fontWeight: '700', color: Colors.white },
 });
