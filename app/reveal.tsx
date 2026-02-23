@@ -6,7 +6,6 @@ import {
   Image,
   TouchableOpacity,
   ScrollView,
-  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,7 +34,7 @@ export default function RevealScreen() {
         <SafeAreaView style={styles.safe}>
           <View style={styles.successContent}>
             <Text style={styles.successEmoji}>🎉</Text>
-            <Text style={styles.successTitle}>It's a match!</Text>
+            <Text style={styles.successTitle}>You're both connected!</Text>
             <Text style={styles.successSub}>
               Opening your conversation with {mockReveal.matchName}…
             </Text>
@@ -56,6 +55,12 @@ export default function RevealScreen() {
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
         >
+          {/* Pending label */}
+          <View style={styles.pendingChip}>
+            <View style={styles.pendingDot} />
+            <Text style={styles.pendingLabel}>New introduction</Text>
+          </View>
+
           {/* Photo */}
           <View style={styles.photoSection}>
             <View style={styles.photoRing3} />
@@ -79,11 +84,33 @@ export default function RevealScreen() {
             <Text style={styles.messageText}>{mockReveal.message}</Text>
           </View>
 
-          {/* Activity suggestion */}
+          {/* Why */}
+          <View style={styles.whyCard}>
+            <Text style={styles.whyTitle}>What brought this about</Text>
+            <View style={styles.reasonRow}>
+              <Ionicons name="people-circle-outline" size={14} color={Colors.oliveLight} />
+              <Text style={styles.reasonText}>Both of you quietly signaled openness here</Text>
+            </View>
+            <View style={styles.reasonRow}>
+              <Ionicons name="flame-outline" size={14} color={Colors.oliveLight} />
+              <Text style={styles.reasonText}>
+                You've been genuinely active together recently
+              </Text>
+            </View>
+            <View style={styles.signalChips}>
+              {mockReveal.sharedSignals.map((signal) => (
+                <View key={signal} style={styles.signalChip}>
+                  <Text style={styles.signalChipText}>{signal}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* Activity suggestion — soft, not prescriptive */}
           <View style={styles.activityCard}>
             <View style={styles.activityHeader}>
-              <Ionicons name="calendar-outline" size={16} color={Colors.terracotta} />
-              <Text style={styles.activityLabel}>Suggested First Meeting</Text>
+              <Ionicons name="leaf-outline" size={15} color={Colors.terraLight} />
+              <Text style={styles.activityLabel}>A natural first step</Text>
             </View>
             <Text style={styles.activityTitle}>{mockReveal.activitySuggestion}</Text>
             <Text style={styles.activityDate}>{mockReveal.activityDate}</Text>
@@ -93,7 +120,7 @@ export default function RevealScreen() {
           <View style={styles.noteRow}>
             <Ionicons name="lock-closed-outline" size={12} color={Colors.muted} />
             <Text style={styles.noteText}>
-              This introduction is mutual. {mockReveal.matchName} is seeing the same message right now.
+              This introduction is mutual — {mockReveal.matchName} is considering it too. No rush.
             </Text>
           </View>
 
@@ -104,12 +131,12 @@ export default function RevealScreen() {
               onPress={handleAccept}
               activeOpacity={0.85}
             >
-              <Text style={styles.acceptText}>Yes, I'd love to meet 👋</Text>
+              <Text style={styles.acceptText}>Yes, let's meet 👋</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.declineBtn}
               onPress={handleDecline}
-              activeOpacity={0.85}
+              activeOpacity={0.7}
             >
               <Text style={styles.declineText}>Not right now</Text>
             </TouchableOpacity>
@@ -139,6 +166,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  // Pending framing
+  pendingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginBottom: 20,
+    marginTop: 4,
+  },
+  pendingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.terraLight,
+    opacity: 0.85,
+  },
+  pendingLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.terraLight,
+    textTransform: 'uppercase',
+    letterSpacing: 1.3,
+    opacity: 0.8,
+  },
+
   // Photo rings
   photoSection: {
     position: 'relative',
@@ -147,7 +198,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 24,
-    marginTop: 8,
   },
   photoRing3: {
     position: 'absolute',
@@ -232,13 +282,66 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // Activity card
+  // Why card
+  whyCard: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    width: '100%',
+  },
+  whyTitle: {
+    fontSize: 11,
+    color: Colors.terraLight,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 10,
+  },
+  reasonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  reasonText: {
+    flex: 1,
+    fontSize: 12,
+    color: 'rgba(245,240,232,0.78)',
+    lineHeight: 18,
+  },
+  signalChips: {
+    marginTop: 2,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  signalChip: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  signalChipText: {
+    fontSize: 11,
+    color: 'rgba(245,240,232,0.65)',
+    fontWeight: '600',
+  },
+
+  // Activity card — soft outlined, not prescriptive
   activityCard: {
-    backgroundColor: Colors.terracotta,
+    backgroundColor: 'rgba(196,98,45,0.07)',
     borderRadius: Radius.md,
     padding: Spacing.md,
     width: '100%',
-    marginBottom: 16,
+    marginTop: 4,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.2)',
   },
   activityHeader: {
     flexDirection: 'row',
@@ -249,29 +352,30 @@ const styles = StyleSheet.create({
   activityLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.7)',
+    color: Colors.terraLight,
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
   activityTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.white,
-    marginBottom: 2,
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.cream,
+    marginBottom: 3,
   },
-  activityDate: { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
+  activityDate: { fontSize: 13, color: 'rgba(245,240,232,0.55)' },
 
+  // Note
   noteRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 6,
-    marginBottom: 32,
-    paddingHorizontal: Spacing.md,
+    marginBottom: 28,
+    paddingHorizontal: Spacing.sm,
   },
   noteText: { fontSize: 12, color: Colors.muted, lineHeight: 18, flex: 1 },
 
   // Actions
-  actions: { width: '100%', gap: 12 },
+  actions: { width: '100%', gap: 10 },
   acceptBtn: {
     height: 56,
     backgroundColor: Colors.terraLight,
@@ -284,12 +388,16 @@ const styles = StyleSheet.create({
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
-  declineText: { fontSize: 14, color: Colors.muted },
+  declineText: { fontSize: 14, color: 'rgba(245,240,232,0.45)' },
 
+  // Success
   successContainer: { flex: 1, backgroundColor: Colors.terracotta },
   successContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
   successEmoji: { fontSize: 72, marginBottom: 24 },
-  successTitle: { fontSize: 40, fontWeight: '900', color: Colors.white, marginBottom: 12 },
+  successTitle: { fontSize: 34, fontWeight: '900', color: Colors.white, marginBottom: 12, textAlign: 'center' },
   successSub: { fontSize: 16, color: 'rgba(255,255,255,0.8)', textAlign: 'center', lineHeight: 24 },
 });

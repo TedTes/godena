@@ -35,6 +35,16 @@ type ConnectionRow = {
   user_b_id: string;
 };
 
+type GroupRow = {
+  id: string;
+  name: string;
+};
+
+type PushTokenRow = {
+  user_id: string;
+  expo_push_token: string;
+};
+
 function pairOrder(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
@@ -209,6 +219,88 @@ Deno.serve(async (req) => {
 
     if (insertErr) throw insertErr;
 
+    const inserted = insertedRows ?? [];
+
+    // Send contextual push notification to both participants.
+    // (No-op when tokens are missing)
+    let pushed = 0;
+    if (inserted.length > 0) {
+      const insertedGroupIds = Array.from(new Set(inserted.map((r) => r.group_id)));
+      const insertedUserIds = Array.from(
+        new Set(inserted.flatMap((r) => [r.user_a_id, r.user_b_id])),
+      );
+
+      const [groupsRes, profilesRes, tokensRes] = await Promise.all([
+        client.from("groups").select("id, name").in("id", insertedGroupIds),
+        client.from("profiles").select("user_id, full_name").in("user_id", insertedUserIds),
+        client
+          .from("user_push_tokens")
+          .select("user_id, expo_push_token")
+          .eq("is_active", true)
+          .in("user_id", insertedUserIds),
+      ]);
+      if (groupsRes.error) throw groupsRes.error;
+      if (profilesRes.error) throw profilesRes.error;
+      if (tokensRes.error) throw tokensRes.error;
+
+      const groupById = new Map<string, GroupRow>();
+      for (const g of (groupsRes.data ?? []) as GroupRow[]) groupById.set(g.id, g);
+
+      const nameByUserId = new Map<string, string>();
+      for (const p of (profilesRes.data ?? []) as Array<{ user_id: string; full_name: string | null }>) {
+        nameByUserId.set(p.user_id, p.full_name || "Someone");
+      }
+
+      const tokensByUserId = new Map<string, string[]>();
+      for (const t of (tokensRes.data ?? []) as PushTokenRow[]) {
+        const arr = tokensByUserId.get(t.user_id) ?? [];
+        arr.push(t.expo_push_token);
+        tokensByUserId.set(t.user_id, arr);
+      }
+
+      const pushPayloads: Array<Record<string, unknown>> = [];
+
+      for (const c of inserted) {
+        const groupName = groupById.get(c.group_id)?.name || "Your group";
+        const nameA = nameByUserId.get(c.user_a_id) || "Someone";
+        const nameB = nameByUserId.get(c.user_b_id) || "Someone";
+
+        const userATokens = tokensByUserId.get(c.user_a_id) ?? [];
+        for (const to of userATokens) {
+          pushPayloads.push({
+            to,
+            sound: "default",
+            title: `✨ New introduction in ${groupName}`,
+            body: `You and ${nameB} were introduced based on your shared activity.`,
+            data: { type: "reveal_pending", connection_id: c.id, group_id: c.group_id },
+          });
+        }
+
+        const userBTokens = tokensByUserId.get(c.user_b_id) ?? [];
+        for (const to of userBTokens) {
+          pushPayloads.push({
+            to,
+            sound: "default",
+            title: `✨ New introduction in ${groupName}`,
+            body: `You and ${nameA} were introduced based on your shared activity.`,
+            data: { type: "reveal_pending", connection_id: c.id, group_id: c.group_id },
+          });
+        }
+      }
+
+      if (pushPayloads.length > 0) {
+        const expoResp = await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(pushPayloads),
+        });
+        if (expoResp.ok) pushed = pushPayloads.length;
+      }
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
@@ -216,8 +308,9 @@ Deno.serve(async (req) => {
         lookback_days: lookbackDays,
         candidates_scanned: scores.length,
         eligible: toInsert.length,
-        inserted: (insertedRows ?? []).length,
-        connections: insertedRows ?? [],
+        inserted: inserted.length,
+        pushed_notifications: pushed,
+        connections: inserted,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
