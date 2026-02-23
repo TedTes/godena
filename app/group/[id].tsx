@@ -55,6 +55,7 @@ type Event = {
   starts_at: string;
   location_name: string | null;
   is_virtual: boolean;
+  created_by: string;
 };
 
 type Post = {
@@ -102,6 +103,9 @@ export default function GroupDetailScreen() {
   const [eventVirtualDraft, setEventVirtualDraft] = useState(false);
   const [postDraft, setPostDraft] = useState('');
   const [posting, setPosting] = useState(false);
+  const [pendingReactions, setPendingReactions] = useState<Set<string>>(new Set());
+  const [pendingRsvps, setPendingRsvps] = useState<Set<string>>(new Set());
+  const [pendingAttendance, setPendingAttendance] = useState<Set<string>>(new Set());
 
   const visuals = useMemo(
     () => getGroupVisuals(group?.category ?? 'other'),
@@ -142,7 +146,7 @@ export default function GroupDetailScreen() {
         .limit(30),
       supabase
         .from('group_events')
-        .select('id, title, starts_at, location_name, is_virtual')
+        .select('id, title, starts_at, location_name, is_virtual, created_by')
         .eq('group_id', id)
         .gte('starts_at', new Date().toISOString())
         .order('starts_at', { ascending: true })
@@ -233,37 +237,77 @@ export default function GroupDetailScreen() {
     setPostDraft('');
   };
 
+  const logInteractionEvent = async (
+    eventType: 'post_reaction' | 'same_event_rsvp' | 'same_event_attendance',
+    targetId: string | null,
+    sourcePostId?: string,
+    sourceEventId?: string,
+    metadata?: Record<string, unknown>
+  ) => {
+    if (!id || !userId || !targetId || targetId === userId) return;
+    const { error } = await supabase.rpc('log_interaction_event', {
+      p_group_id: id,
+      p_event_type: eventType,
+      p_target_id: targetId,
+      p_source_post_id: sourcePostId ?? null,
+      p_source_event_id: sourceEventId ?? null,
+      p_metadata: metadata ?? {},
+    });
+    if (error) {
+      // Non-blocking: core UX should still succeed if analytics logging fails.
+      console.warn('log_interaction_event failed', error.message);
+    }
+  };
+
   const handleReactionToggle = async (postId: string, reaction: string) => {
     if (!membership || !userId) return;
+    const pendingKey = `${postId}-${reaction}`;
+    if (pendingReactions.has(pendingKey)) return;
+
     const alreadyReacted = reactionRows.some(
       (r) => r.post_id === postId && r.reaction === reaction && r.user_id === userId
     );
+    const snapshot = reactionRows;
 
+    // Optimistic update
     if (alreadyReacted) {
-      const { error } = await supabase
+      setReactionRows((prev) =>
+        prev.filter((r) => !(r.post_id === postId && r.user_id === userId && r.reaction === reaction))
+      );
+    } else {
+      setReactionRows((prev) => [...prev, { post_id: postId, user_id: userId, reaction }]);
+    }
+    setPendingReactions((prev) => new Set([...prev, pendingKey]));
+
+    let error: { message: string } | null = null;
+    if (alreadyReacted) {
+      ({ error } = await supabase
         .from('group_post_reactions')
         .delete()
         .eq('post_id', postId)
         .eq('user_id', userId)
-        .eq('reaction', reaction);
-      if (error) {
-        Alert.alert('Could not remove reaction', error.message);
-        return;
-      }
-      setReactionRows((prev) =>
-        prev.filter((r) => !(r.post_id === postId && r.user_id === userId && r.reaction === reaction))
-      );
+        .eq('reaction', reaction));
+    } else {
+      ({ error } = await supabase
+        .from('group_post_reactions')
+        .insert({ post_id: postId, user_id: userId, reaction }));
+    }
+
+    setPendingReactions((prev) => {
+      const next = new Set(prev);
+      next.delete(pendingKey);
+      return next;
+    });
+
+    if (error) {
+      setReactionRows(snapshot);
       return;
     }
 
-    const { error } = await supabase
-      .from('group_post_reactions')
-      .insert({ post_id: postId, user_id: userId, reaction });
-    if (error) {
-      Alert.alert('Could not add reaction', error.message);
-      return;
+    if (!alreadyReacted) {
+      const targetAuthorId = posts.find((p) => p.id === postId)?.author_id ?? null;
+      void logInteractionEvent('post_reaction', targetAuthorId, postId, undefined, { reaction });
     }
-    setReactionRows((prev) => [...prev, { post_id: postId, user_id: userId, reaction }]);
   };
 
   const handleOpenToggle = (val: boolean) => {
@@ -358,7 +402,7 @@ export default function GroupDetailScreen() {
         location_name: eventVirtualDraft ? null : (eventLocationDraft.trim() || null),
         is_virtual: eventVirtualDraft,
       })
-      .select('id, title, starts_at, location_name, is_virtual')
+      .select('id, title, starts_at, location_name, is_virtual, created_by')
       .single();
     setCreatingEvent(false);
 
@@ -378,6 +422,16 @@ export default function GroupDetailScreen() {
 
   const handleRsvp = async (eventId: string, status: 'going' | 'interested' | 'not_going') => {
     if (!membership || !userId) return;
+    if (pendingRsvps.has(eventId)) return;
+
+    const snapshot = eventRsvps;
+    // Optimistic update
+    setEventRsvps((prev) => {
+      const rest = prev.filter((r) => !(r.event_id === eventId && r.user_id === userId));
+      return [...rest, { event_id: eventId, user_id: userId, status, attended_at: null }];
+    });
+    setPendingRsvps((prev) => new Set([...prev, eventId]));
+
     const { data, error } = await supabase
       .from('event_rsvps')
       .upsert(
@@ -387,35 +441,61 @@ export default function GroupDetailScreen() {
       .select('event_id, user_id, status, attended_at')
       .single();
 
+    setPendingRsvps((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+
     if (error || !data) {
-      Alert.alert('Could not update RSVP', error?.message || 'Unknown error');
+      setEventRsvps(snapshot);
       return;
     }
 
+    // Sync with server response (e.g. attended_at preserved correctly)
     setEventRsvps((prev) => {
       const rest = prev.filter((r) => !(r.event_id === eventId && r.user_id === userId));
       return [...rest, data as EventRsvpRow];
     });
+
+    if (status === 'going' || status === 'interested') {
+      const targetId = groupEvents.find((ev) => ev.id === eventId)?.created_by ?? null;
+      void logInteractionEvent('same_event_rsvp', targetId, undefined, eventId, { status });
+    }
   };
 
   const handleMarkAttended = async (eventId: string) => {
     if (!membership || !userId) return;
     const mine = eventRsvps.find((r) => r.event_id === eventId && r.user_id === userId);
-    if (!mine || mine.status !== 'going') {
-      Alert.alert('RSVP first', 'Set RSVP to Going before marking attendance.');
-      return;
-    }
+    if (!mine || mine.status !== 'going') return; // button only shown when going
+    if (pendingAttendance.has(eventId)) return;
+
+    const attendedAt = new Date().toISOString();
+    const snapshot = eventRsvps;
+    // Optimistic update
+    setEventRsvps((prev) =>
+      prev.map((r) =>
+        r.event_id === eventId && r.user_id === userId ? { ...r, attended_at: attendedAt } : r
+      )
+    );
+    setPendingAttendance((prev) => new Set([...prev, eventId]));
 
     const { data, error } = await supabase
       .from('event_rsvps')
-      .update({ attended_at: new Date().toISOString() })
+      .update({ attended_at: attendedAt })
       .eq('event_id', eventId)
       .eq('user_id', userId)
       .select('event_id, user_id, status, attended_at')
       .single();
 
+    setPendingAttendance((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+
     if (error || !data) {
-      Alert.alert('Could not mark attendance', error?.message || 'Unknown error');
+      setEventRsvps(snapshot);
       return;
     }
 
@@ -423,6 +503,9 @@ export default function GroupDetailScreen() {
       const rest = prev.filter((r) => !(r.event_id === eventId && r.user_id === userId));
       return [...rest, data as EventRsvpRow];
     });
+
+    const targetId = groupEvents.find((ev) => ev.id === eventId)?.created_by ?? null;
+    void logInteractionEvent('same_event_attendance', targetId, undefined, eventId);
   };
 
   if (loading || !group) {
@@ -776,6 +859,7 @@ export default function GroupDetailScreen() {
                         <View style={styles.rsvpRow}>
                           {(['going', 'interested', 'not_going'] as const).map((status) => {
                             const active = myRsvp?.status === status;
+                            const isPending = pendingRsvps.has(ev.id);
                             const label = status === 'going' ? '✅ Going' : status === 'interested' ? '👀 Interested' : '✗ Not going';
                             return (
                               <TouchableOpacity
@@ -783,8 +867,10 @@ export default function GroupDetailScreen() {
                                 style={[
                                   styles.rsvpPill,
                                   active && (status === 'going' ? styles.rsvpPillGoing : status === 'interested' ? styles.rsvpPillInterested : styles.rsvpPillNotGoing),
+                                  isPending && styles.rsvpPillPending,
                                 ]}
                                 onPress={() => void handleRsvp(ev.id, status)}
+                                disabled={isPending}
                               >
                                 <Text style={[
                                   styles.rsvpPillText,
@@ -802,10 +888,14 @@ export default function GroupDetailScreen() {
                             </View>
                           ) : myRsvp?.status === 'going' ? (
                             <TouchableOpacity
-                              style={styles.attendedBtn}
+                              style={[styles.attendedBtn, pendingAttendance.has(ev.id) && { opacity: 0.55 }]}
                               onPress={() => void handleMarkAttended(ev.id)}
+                              disabled={pendingAttendance.has(ev.id)}
                             >
-                              <Text style={styles.attendedBtnText}>Mark attended</Text>
+                              {pendingAttendance.has(ev.id)
+                                ? <ActivityIndicator size="small" color={Colors.brownMid} style={{ marginHorizontal: 4 }} />
+                                : <Text style={styles.attendedBtnText}>Mark attended</Text>
+                              }
                             </TouchableOpacity>
                           ) : null}
                         </View>
@@ -886,34 +976,60 @@ export default function GroupDetailScreen() {
                       </View>
                       <Text style={styles.postText}>{p.content}</Text>
                       <View style={styles.reactionsWrap}>
-                        {reactionTypes.map((reaction) => {
-                          const count = reactionsForPost.filter((r) => r.reaction === reaction).length;
-                          const mine = reactionsForPost.some(
-                            (r) => r.reaction === reaction && r.user_id === userId
-                          );
+                        {(() => {
+                          const PINNED = ['❤️', '👍', '🔥'];
+                          const extraReactions = reactionTypes.filter((r) => !PINNED.includes(r));
                           return (
-                            <TouchableOpacity
-                              key={`${p.id}-${reaction}`}
-                              style={[styles.reactionChip, mine && styles.reactionChipActive]}
-                              onPress={() => void handleReactionToggle(p.id, reaction)}
-                              disabled={!membership}
-                            >
-                              <Text style={[styles.reactionText, mine && styles.reactionTextActive]}>
-                                {reaction} {count}
-                              </Text>
-                            </TouchableOpacity>
+                            <>
+                              {PINNED.map((reaction) => {
+                                const count = reactionsForPost.filter((r) => r.reaction === reaction).length;
+                                const mine = reactionsForPost.some(
+                                  (r) => r.reaction === reaction && r.user_id === userId
+                                );
+                                const isPending = pendingReactions.has(`${p.id}-${reaction}`);
+                                return (
+                                  <TouchableOpacity
+                                    key={`${p.id}-${reaction}`}
+                                    style={[
+                                      styles.reactionChip,
+                                      mine && styles.reactionChipActive,
+                                      isPending && styles.reactionChipPending,
+                                    ]}
+                                    onPress={() => void handleReactionToggle(p.id, reaction)}
+                                    disabled={!membership || isPending}
+                                  >
+                                    <Text style={[styles.reactionText, mine && styles.reactionTextActive]}>
+                                      {reaction}{count > 0 ? ` ${count}` : ''}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                              {extraReactions.map((reaction) => {
+                                const count = reactionsForPost.filter((r) => r.reaction === reaction).length;
+                                const mine = reactionsForPost.some(
+                                  (r) => r.reaction === reaction && r.user_id === userId
+                                );
+                                const isPending = pendingReactions.has(`${p.id}-${reaction}`);
+                                return (
+                                  <TouchableOpacity
+                                    key={`${p.id}-${reaction}`}
+                                    style={[
+                                      styles.reactionChip,
+                                      mine && styles.reactionChipActive,
+                                      isPending && styles.reactionChipPending,
+                                    ]}
+                                    onPress={() => void handleReactionToggle(p.id, reaction)}
+                                    disabled={!membership || isPending}
+                                  >
+                                    <Text style={[styles.reactionText, mine && styles.reactionTextActive]}>
+                                      {reaction} {count}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </>
                           );
-                        })}
-                        {['❤️', '👍', '🔥'].map((reaction) => (
-                          <TouchableOpacity
-                            key={`${p.id}-quick-${reaction}`}
-                            style={styles.quickReactBtn}
-                            onPress={() => void handleReactionToggle(p.id, reaction)}
-                            disabled={!membership}
-                          >
-                            <Text style={styles.quickReactText}>{reaction}</Text>
-                          </TouchableOpacity>
-                        ))}
+                        })()}
                       </View>
                     </View>
                   );
@@ -1415,15 +1531,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.terracotta,
     backgroundColor: 'rgba(196,98,45,0.1)',
   },
+  reactionChipPending: { opacity: 0.5 },
   reactionText: { fontSize: 11, fontWeight: '600', color: Colors.brownMid },
   reactionTextActive: { color: Colors.terracotta },
-  quickReactBtn: {
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: Colors.warmWhite,
-  },
-  quickReactText: { fontSize: 11 },
+  rsvpPillPending: { opacity: 0.55 },
 });
