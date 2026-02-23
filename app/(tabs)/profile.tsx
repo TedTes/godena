@@ -45,7 +45,9 @@ export default function ProfileScreen() {
   const [updatingPhoto, setUpdatingPhoto] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [galleryUris, setGalleryUris] = useState<string[]>([]);
+  const [galleryPhotos, setGalleryPhotos] = useState<
+    Array<{ uri: string; path: string; isAvatar: boolean }>
+  >([]);
   const [profile, setProfile] = useState<{
     full_name: string;
     city: string | null;
@@ -96,12 +98,23 @@ export default function ProfileScreen() {
       setAvatarUri(null);
     }
 
-    const photoValues = data?.photo_urls ?? [];
-    if (photoValues.length > 0) {
-      const resolved = await Promise.all(photoValues.map((v: string) => resolvePhotoUri(v)));
-      setGalleryUris(resolved.filter((v): v is string => Boolean(v)));
+    const mergedPaths = [
+      ...(data?.avatar_url ? [data.avatar_url] : []),
+      ...(data?.photo_urls ?? []),
+    ].filter((v, i, arr): v is string => Boolean(v) && arr.indexOf(v) === i);
+
+    if (mergedPaths.length > 0) {
+      const resolved = await Promise.all(mergedPaths.map((v) => resolvePhotoUri(v)));
+      const photos = mergedPaths
+        .map((path, index) => ({
+          path,
+          uri: resolved[index],
+          isAvatar: Boolean(data?.avatar_url && path === data.avatar_url),
+        }))
+        .filter((p): p is { uri: string; path: string; isAvatar: boolean } => Boolean(p.uri));
+      setGalleryPhotos(photos);
     } else {
-      setGalleryUris([]);
+      setGalleryPhotos([]);
     }
   };
 
@@ -275,12 +288,59 @@ export default function ProfileScreen() {
         return;
       }
 
-      await loadProfile(userId);
+      const resolvedUri = await resolvePhotoUri(filePath);
+      setProfile((prev) =>
+        prev
+          ? { ...prev, photo_urls: [...(prev.photo_urls ?? []), filePath] }
+          : prev
+      );
+      if (resolvedUri) {
+        setGalleryPhotos((prev) => [
+          ...prev,
+          { uri: resolvedUri, path: filePath, isAvatar: false },
+        ]);
+      }
     } catch (err: any) {
       Alert.alert('Update failed', err?.message ?? 'Could not add gallery photo.');
     } finally {
       setUpdatingPhoto(false);
     }
+  };
+
+  const removeGalleryPhoto = async (path: string) => {
+    if (!userId || updatingPhoto) return;
+    const current = profile?.photo_urls ?? [];
+    if (!current.includes(path)) return;
+
+    setUpdatingPhoto(true);
+    const next = current.filter((p) => p !== path);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ photo_urls: next })
+      .eq('user_id', userId);
+
+    if (error) {
+      setUpdatingPhoto(false);
+      Alert.alert('Update failed', error.message);
+      return;
+    }
+
+    const { error: storageError } = await supabase.storage
+      .from('profile-photos')
+      .remove([path]);
+
+    setUpdatingPhoto(false);
+
+    if (storageError) {
+      Alert.alert('Storage cleanup warning', storageError.message);
+    }
+
+    setProfile((prev) =>
+      prev
+        ? { ...prev, photo_urls: (prev.photo_urls ?? []).filter((p) => p !== path) }
+        : prev
+    );
+    setGalleryPhotos((prev) => prev.filter((p) => p.path !== path));
   };
 
   const openPhotoActions = () => {
@@ -378,24 +438,37 @@ export default function ProfileScreen() {
           </View>
 
           {/* ── Gallery ── */}
-          {galleryUris.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Photos</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.galleryScroll}
-              >
-                {galleryUris.map((uri) => (
-                  <Image key={uri} source={{ uri }} style={styles.galleryPhoto} resizeMode="cover" />
-                ))}
-                <TouchableOpacity style={styles.addPhotoTile} onPress={() => void addGalleryPhoto()} activeOpacity={0.8}>
-                  <Ionicons name="add" size={24} color={Colors.terracotta} />
-                  <Text style={styles.addPhotoLabel}>Add</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          )}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Photos</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.galleryScroll}
+            >
+              {galleryPhotos.map((photo) => (
+                <View key={photo.path} style={styles.galleryPhotoWrap}>
+                  <Image source={{ uri: photo.uri }} style={styles.galleryPhoto} resizeMode="cover" />
+                  {!photo.isAvatar ? (
+                    <TouchableOpacity
+                      style={styles.galleryRemoveBtn}
+                      onPress={() => void removeGalleryPhoto(photo.path)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.galleryRemoveText}>×</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.avatarBadge}>
+                      <Text style={styles.avatarBadgeText}>Avatar</Text>
+                    </View>
+                  )}
+                </View>
+              ))}
+              <TouchableOpacity style={styles.addPhotoTile} onPress={() => void addGalleryPhoto()} activeOpacity={0.8}>
+                <Ionicons name="add" size={24} color={Colors.terracotta} />
+                <Text style={styles.addPhotoLabel}>Add</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
 
           {/* ── About ── */}
           <View style={styles.section}>
@@ -708,6 +781,46 @@ const styles = StyleSheet.create({
     height: 148,
     borderRadius: Radius.md,
     backgroundColor: Colors.paper,
+  },
+  galleryPhotoWrap: {
+    width: 112,
+    height: 148,
+    borderRadius: Radius.md,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  galleryRemoveBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  galleryRemoveText: {
+    color: Colors.white,
+    fontSize: 15,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  avatarBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(61,43,31,0.8)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  avatarBadgeText: {
+    color: Colors.white,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   addPhotoTile: {
     width: 80,

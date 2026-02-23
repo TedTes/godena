@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -7,6 +7,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -26,6 +27,15 @@ const INTENT_OPTIONS = [
   { value: 'marriage', label: 'Marriage' },
 ] as const;
 
+const GENDER_OPTIONS = [
+  { value: 'woman', label: 'Woman' },
+  { value: 'man', label: 'Man' },
+  { value: 'non_binary', label: 'Non-binary' },
+  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
+] as const;
+
+type GenderValue = (typeof GENDER_OPTIONS)[number]['value'];
+
 type SelectedPhoto = {
   uri: string;
   mimeType?: string | null;
@@ -34,6 +44,8 @@ type SelectedPhoto = {
 
 export default function ProfileSetupScreen() {
   const router = useRouter();
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [fullName, setFullName] = useState('');
   const [city, setCity] = useState('');
   const [bio, setBio] = useState('');
@@ -41,6 +53,11 @@ export default function ProfileSetupScreen() {
   const [religion, setReligion] = useState('');
   const [languagesInput, setLanguagesInput] = useState('');
   const [intent, setIntent] = useState<(typeof INTENT_OPTIONS)[number]['value']>('dating');
+  const [gender, setGender] = useState<GenderValue>('prefer_not_to_say');
+  const [preferredGenders, setPreferredGenders] = useState<GenderValue[]>([]);
+  const [preferredAgeMin, setPreferredAgeMin] = useState('');
+  const [preferredAgeMax, setPreferredAgeMax] = useState('');
+  const [isOpenToConnections, setIsOpenToConnections] = useState(true);
   const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -55,6 +72,46 @@ export default function ProfileSetupScreen() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+
+  useEffect(() => {
+    const loadExistingProfile = async () => {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const user = sessionData.session?.user;
+
+      if (sessionError || !user) {
+        setInitialLoading(false);
+        return;
+      }
+
+      const { data: existingProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('full_name, city, bio, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (profileError || !existingProfile) {
+        setInitialLoading(false);
+        return;
+      }
+
+      setIsEditMode(true);
+      setFullName(existingProfile.full_name ?? '');
+      setCity(existingProfile.city ?? '');
+      setBio(existingProfile.bio ?? '');
+      setEthnicity(existingProfile.ethnicity ?? '');
+      setReligion(existingProfile.religion ?? '');
+      setLanguagesInput((existingProfile.languages ?? []).join(', '));
+      setIntent((existingProfile.intent as typeof intent) ?? 'dating');
+      setGender((existingProfile.gender as GenderValue) ?? 'prefer_not_to_say');
+      setPreferredGenders((existingProfile.preferred_genders as GenderValue[] | null) ?? []);
+      setPreferredAgeMin(existingProfile.preferred_age_min?.toString() ?? '');
+      setPreferredAgeMax(existingProfile.preferred_age_max?.toString() ?? '');
+      setIsOpenToConnections(existingProfile.is_open_to_connections ?? true);
+      setInitialLoading(false);
+    };
+
+    void loadExistingProfile();
+  }, []);
 
   const addPhoto = async () => {
     setError('');
@@ -100,6 +157,20 @@ export default function ProfileSetupScreen() {
 
   const saveProfile = async () => {
     if (!canSubmit) {
+      return;
+    }
+
+    const minAge = preferredAgeMin.trim() ? Number(preferredAgeMin) : null;
+    const maxAge = preferredAgeMax.trim() ? Number(preferredAgeMax) : null;
+    if (
+      (minAge !== null && Number.isNaN(minAge)) ||
+      (maxAge !== null && Number.isNaN(maxAge))
+    ) {
+      setError('Preferred age range must be numeric.');
+      return;
+    }
+    if (minAge !== null && maxAge !== null && minAge > maxAge) {
+      setError('Preferred minimum age cannot be greater than maximum age.');
       return;
     }
 
@@ -173,6 +244,11 @@ export default function ProfileSetupScreen() {
       religion: religion.trim() || null,
       languages: parsedLanguages,
       intent,
+      gender,
+      preferred_genders: preferredGenders,
+      preferred_age_min: minAge,
+      preferred_age_max: maxAge,
+      is_open_to_connections: isOpenToConnections,
       photo_urls: nextPhotoUrls,
       last_active_at: new Date().toISOString(),
     });
@@ -186,6 +262,18 @@ export default function ProfileSetupScreen() {
 
     router.replace('/(tabs)/home');
   };
+
+  if (initialLoading) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={Colors.terracotta} />
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -206,9 +294,11 @@ export default function ProfileSetupScreen() {
               </TouchableOpacity>
             </View>
             <Text style={styles.wordmark}>Godena</Text>
-            <Text style={styles.title}>Set up your profile</Text>
+            <Text style={styles.title}>{isEditMode ? 'Edit your profile' : 'Set up your profile'}</Text>
             <Text style={styles.subtitle}>
-              This is your private foundation. You can edit everything later.
+              {isEditMode
+                ? 'Update your details. Your avatar and gallery are managed separately on Profile.'
+                : 'This is your private foundation. You can edit everything later.'}
             </Text>
 
             <View style={styles.field}>
@@ -309,30 +399,133 @@ export default function ProfileSetupScreen() {
             </View>
 
             <View style={styles.field}>
-              <View style={styles.photoHeader}>
-                <Text style={styles.label}>Photos</Text>
-                <Text style={styles.photoCount}>{photos.length}/4</Text>
-              </View>
-              <View style={styles.photoRow}>
-                {photos.map((photo) => (
-                  <View key={photo.uri} style={styles.photoWrap}>
-                    <Image source={{ uri: photo.uri }} style={styles.photo} />
-                    <TouchableOpacity
-                      style={styles.removePhotoBtn}
-                      onPress={() => removePhoto(photo.uri)}
-                      activeOpacity={0.8}
+              <Text style={styles.label}>Gender</Text>
+              <View style={styles.intentRow}>
+                {GENDER_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.intentChip,
+                      gender === option.value && styles.intentChipActive,
+                    ]}
+                    onPress={() => setGender(option.value)}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.intentChipText,
+                        gender === option.value && styles.intentChipTextActive,
+                      ]}
                     >
-                      <Text style={styles.removePhotoText}>×</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                {photos.length < 4 ? (
-                  <TouchableOpacity style={styles.addPhotoBtn} onPress={addPhoto} activeOpacity={0.85}>
-                    <Text style={styles.addPhotoText}>+ Add</Text>
+                      {option.label}
+                    </Text>
                   </TouchableOpacity>
-                ) : null}
+                ))}
               </View>
             </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Preferred genders</Text>
+              <View style={styles.intentRow}>
+                {GENDER_OPTIONS.filter((option) => option.value !== 'prefer_not_to_say').map((option) => {
+                  const selected = preferredGenders.includes(option.value);
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.intentChip,
+                        selected && styles.intentChipActive,
+                      ]}
+                      onPress={() =>
+                        setPreferredGenders((prev) =>
+                          selected
+                            ? prev.filter((g) => g !== option.value)
+                            : [...prev, option.value]
+                        )
+                      }
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.intentChipText,
+                          selected && styles.intentChipTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Preferred age range</Text>
+              <View style={styles.ageRow}>
+                <TextInput
+                  style={[styles.input, styles.ageInput]}
+                  value={preferredAgeMin}
+                  onChangeText={setPreferredAgeMin}
+                  keyboardType="number-pad"
+                  placeholder="Min"
+                  placeholderTextColor={Colors.muted}
+                  maxLength={2}
+                />
+                <Text style={styles.ageDash}>—</Text>
+                <TextInput
+                  style={[styles.input, styles.ageInput]}
+                  value={preferredAgeMax}
+                  onChangeText={setPreferredAgeMax}
+                  keyboardType="number-pad"
+                  placeholder="Max"
+                  placeholderTextColor={Colors.muted}
+                  maxLength={2}
+                />
+              </View>
+            </View>
+
+            <View style={styles.switchRow}>
+              <View style={styles.switchInfo}>
+                <Text style={styles.switchTitle}>Open to connections</Text>
+                <Text style={styles.switchSub}>
+                  Global default. Group-level signals still apply.
+                </Text>
+              </View>
+              <Switch
+                value={isOpenToConnections}
+                onValueChange={setIsOpenToConnections}
+                trackColor={{ false: Colors.border, true: Colors.olive }}
+                thumbColor={Colors.white}
+              />
+            </View>
+
+            {!isEditMode ? (
+              <View style={styles.field}>
+                <View style={styles.photoHeader}>
+                  <Text style={styles.label}>Photos</Text>
+                  <Text style={styles.photoCount}>{photos.length}/4</Text>
+                </View>
+                <View style={styles.photoRow}>
+                  {photos.map((photo) => (
+                    <View key={photo.uri} style={styles.photoWrap}>
+                      <Image source={{ uri: photo.uri }} style={styles.photo} />
+                      <TouchableOpacity
+                        style={styles.removePhotoBtn}
+                        onPress={() => removePhoto(photo.uri)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.removePhotoText}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  {photos.length < 4 ? (
+                    <TouchableOpacity style={styles.addPhotoBtn} onPress={addPhoto} activeOpacity={0.85}>
+                      <Text style={styles.addPhotoText}>+ Add</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -345,7 +538,7 @@ export default function ProfileSetupScreen() {
               {saving ? (
                 <ActivityIndicator color={Colors.white} />
               ) : (
-                <Text style={styles.btnText}>Save & Continue</Text>
+                <Text style={styles.btnText}>{isEditMode ? 'Save Changes' : 'Save & Continue'}</Text>
               )}
             </TouchableOpacity>
           </ScrollView>
@@ -360,6 +553,11 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: { padding: Spacing.lg, paddingTop: Spacing.xl, flexGrow: 1 },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   topRow: {
     marginBottom: 16,
   },
@@ -442,6 +640,46 @@ const styles = StyleSheet.create({
   },
   intentChipTextActive: {
     color: Colors.white,
+  },
+  ageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ageInput: {
+    flex: 1,
+  },
+  ageDash: {
+    color: Colors.muted,
+    fontSize: 20,
+    lineHeight: 20,
+    marginTop: -2,
+  },
+  switchRow: {
+    marginTop: 4,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  switchInfo: {
+    flex: 1,
+  },
+  switchTitle: {
+    fontSize: 13,
+    color: Colors.ink,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  switchSub: {
+    fontSize: 11,
+    color: Colors.muted,
+    lineHeight: 16,
   },
   photoHeader: {
     flexDirection: 'row',
