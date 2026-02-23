@@ -15,8 +15,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockGroups } from '../../data/mock';
 import { supabase } from '../../lib/supabase';
+
+type SignalGroup = {
+  id: string;
+  name: string;
+  coverColor: string;
+  emoji: string;
+  isMember: boolean;
+  isOpenToConnect: boolean;
+};
+
+const mockGroups: SignalGroup[] = [];
 
 const settingsRows = [
   { icon: 'notifications-outline', label: 'Notifications' },

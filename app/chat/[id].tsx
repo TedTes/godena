@@ -14,7 +14,33 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockConnectionMessages, mockReveal } from '../../data/mock';
+
+type ConnectionMessage = {
+  id: string;
+  senderId: string;
+  content: string;
+  sentAt: string;
+  isOwn: boolean;
+};
+
+const mockConnectionMessages: ConnectionMessage[] = [
+  {
+    id: 'cm1',
+    senderId: 'u2',
+    content: 'Hey! Glad we got introduced through the hikers group.',
+    sentAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+    isOwn: false,
+  },
+];
+
+const mockReveal = {
+  matchName: 'Dawit',
+  matchPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=240&q=80',
+  groupEmoji: '🥾',
+  groupName: 'Habesha Hikers',
+  activitySuggestion: 'Rock Creek weekend walk',
+  activityDate: 'This Saturday',
+};
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -22,7 +48,7 @@ function formatTime(iso: string) {
 
 export default function DirectChatScreen() {
   const router = useRouter();
-  const [messages, setMessages] = useState(mockConnectionMessages);
+  const [messages, setMessages] = useState<ConnectionMessage[]>(mockConnectionMessages);
   const [input, setInput] = useState('');
   const listRef = useRef<FlatList>(null);
 

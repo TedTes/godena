@@ -11,8 +11,77 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockGroups, mockEvents, mockReveal } from '../../data/mock';
 import { supabase } from '../../lib/supabase';
+
+type HomeGroup = {
+  id: string;
+  name: string;
+  memberCount: number;
+  coverColor: string;
+  emoji: string;
+  isMember: boolean;
+  isOpenToConnect: boolean;
+};
+
+type HomeEvent = {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  location: string;
+  attendeeCount: number;
+  isRsvped: boolean;
+  emoji: string;
+};
+
+const mockGroups: HomeGroup[] = [
+  {
+    id: 'g1',
+    name: 'Habesha Hikers',
+    memberCount: 36,
+    coverColor: '#7a8c5c',
+    emoji: '🥾',
+    isMember: true,
+    isOpenToConnect: true,
+  },
+  {
+    id: 'g2',
+    name: 'Coffee Circle',
+    memberCount: 22,
+    coverColor: '#c4622d',
+    emoji: '☕',
+    isMember: true,
+    isOpenToConnect: false,
+  },
+];
+
+const mockEvents: HomeEvent[] = [
+  {
+    id: 'ev1',
+    title: 'Rock Creek Walk',
+    date: 'Sat, Mar 2',
+    time: '10:00 AM',
+    location: 'Rock Creek Park',
+    attendeeCount: 18,
+    isRsvped: true,
+    emoji: '🥾',
+  },
+  {
+    id: 'ev2',
+    title: 'Coffee & Chat',
+    date: 'Sun, Mar 3',
+    time: '1:00 PM',
+    location: 'Habesha Cafe',
+    attendeeCount: 12,
+    isRsvped: false,
+    emoji: '☕',
+  },
+];
+
+const mockReveal = {
+  groupName: 'Habesha Hikers',
+  matchPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=240&q=80',
+};
 
 function formatTime(iso: string) {
   const d = new Date(iso);

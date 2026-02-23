@@ -9,9 +9,59 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { mockEvents, mockGroups } from '../../data/mock';
 
-const allEvents = [
+type GroupLite = {
+  id: string;
+  name: string;
+  isMember: boolean;
+  coverColor: string;
+};
+
+type EventLite = {
+  id: string;
+  groupId: string;
+  title: string;
+  date: string;
+  time: string;
+  location: string;
+  attendeeCount: number;
+  isRsvped: boolean;
+  emoji: string;
+};
+
+const mockGroups: GroupLite[] = [
+  { id: 'g1', name: 'Habesha Hikers', isMember: true, coverColor: '#7a8c5c' },
+  { id: 'g2', name: 'Addis Coffee Circle', isMember: true, coverColor: '#c4622d' },
+  { id: 'g4', name: 'Language Exchange', isMember: false, coverColor: '#c9a84c' },
+  { id: 'g5', name: 'Faith Community', isMember: false, coverColor: '#8b4220' },
+];
+
+const mockEvents: EventLite[] = [
+  {
+    id: 'ev1',
+    groupId: 'g1',
+    title: 'Rock Creek Saturday Walk',
+    date: 'Saturday, Mar 2',
+    time: '10:00 AM',
+    location: 'Rock Creek Park',
+    attendeeCount: 18,
+    isRsvped: true,
+    emoji: '🥾',
+  },
+  {
+    id: 'ev2',
+    groupId: 'g2',
+    title: 'Coffee & Conversation',
+    date: 'Sunday, Mar 3',
+    time: '1:00 PM',
+    location: 'Habesha Cafe',
+    attendeeCount: 12,
+    isRsvped: false,
+    emoji: '☕',
+  },
+];
+
+const allEvents: EventLite[] = [
   ...mockEvents,
   {
     id: 'ev4',
