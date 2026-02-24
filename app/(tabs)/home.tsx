@@ -34,68 +34,46 @@ type HomeEvent = {
   emoji: string;
 };
 
-const mockGroups: HomeGroup[] = [
-  {
-    id: 'g1',
-    name: 'Habesha Hikers',
-    memberCount: 36,
-    coverColor: '#7a8c5c',
-    emoji: '🥾',
-    isMember: true,
-    isOpenToConnect: true,
-  },
-  {
-    id: 'g2',
-    name: 'Coffee Circle',
-    memberCount: 22,
-    coverColor: '#c4622d',
-    emoji: '☕',
-    isMember: true,
-    isOpenToConnect: false,
-  },
-];
-
-const mockEvents: HomeEvent[] = [
-  {
-    id: 'ev1',
-    title: 'Rock Creek Walk',
-    date: 'Sat, Mar 2',
-    time: '10:00 AM',
-    location: 'Rock Creek Park',
-    attendeeCount: 18,
-    isRsvped: true,
-    emoji: '🥾',
-  },
-  {
-    id: 'ev2',
-    title: 'Coffee & Chat',
-    date: 'Sun, Mar 3',
-    time: '1:00 PM',
-    location: 'Habesha Cafe',
-    attendeeCount: 12,
-    isRsvped: false,
-    emoji: '☕',
-  },
-];
-
-const mockReveal = {
-  groupName: 'Habesha Hikers',
-  matchPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=240&q=80',
+type RevealSuggestion = {
+  connectionId: string;
+  matchName: string;
+  matchPhoto: string | null;
+  groupName: string;
 };
 
-function formatTime(iso: string) {
+function getGroupVisuals(category: string) {
+  switch (category) {
+    case 'outdoors': return { emoji: '🥾', coverColor: '#7a8c5c' };
+    case 'food_drink': return { emoji: '☕', coverColor: '#c4622d' };
+    case 'professional': return { emoji: '💼', coverColor: '#3d2b1f' };
+    case 'language': return { emoji: '🗣️', coverColor: '#c9a84c' };
+    case 'faith': return { emoji: '✝️', coverColor: '#8b4220' };
+    case 'culture': return { emoji: '🎉', coverColor: '#a07820' };
+    default: return { emoji: '👥', coverColor: '#6b4c3b' };
+  }
+}
+
+function formatEventDate(iso: string) {
   const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function formatEventTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 export default function HomeScreen() {
   const router = useRouter();
-  const myGroups = mockGroups.filter((g) => g.isMember);
+  const [myGroups, setMyGroups] = useState<HomeGroup[]>([]);
+  const [upcomingEvents, setUpcomingEvents] = useState<HomeEvent[]>([]);
   const [firstName, setFirstName] = useState('there');
   const [loadingProfile, setLoadingProfile] = useState(true);
+  const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
+  const [openSignalGroupName, setOpenSignalGroupName] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadProfile = async () => {
+    const loadHome = async () => {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
       if (!userId) {
@@ -113,16 +91,161 @@ export default function HomeScreen() {
         setFirstName(profile.full_name.split(' ')[0] ?? profile.full_name);
       }
 
+      const { data: membershipRows } = await supabase
+        .from('group_memberships')
+        .select('group_id, is_open_to_connect')
+        .eq('user_id', userId);
+
+      const memberships =
+        (membershipRows as Array<{ group_id: string; is_open_to_connect: boolean }> | null) ?? [];
+      const groupIds = memberships.map((m) => m.group_id);
+
+      if (groupIds.length > 0) {
+        const [groupsRes, eventsRes] = await Promise.all([
+          supabase
+            .from('groups')
+            .select('id, name, member_count, category')
+            .in('id', groupIds),
+          supabase
+            .from('group_events')
+            .select('id, group_id, title, starts_at, location_name, is_virtual')
+            .in('group_id', groupIds)
+            .gte('starts_at', new Date().toISOString())
+            .order('starts_at', { ascending: true })
+            .limit(12),
+        ]);
+
+        const groups =
+          (groupsRes.data as Array<{ id: string; name: string; member_count: number; category: string }> | null) ?? [];
+        const groupById = new Map(groups.map((g) => [g.id, g]));
+        const openByGroup = new Map(memberships.map((m) => [m.group_id, !!m.is_open_to_connect]));
+
+        setMyGroups(
+          groups.map((g) => {
+            const visuals = getGroupVisuals(g.category);
+            return {
+              id: g.id,
+              name: g.name,
+              memberCount: g.member_count ?? 0,
+              coverColor: visuals.coverColor,
+              emoji: visuals.emoji,
+              isMember: true,
+              isOpenToConnect: openByGroup.get(g.id) ?? false,
+            };
+          })
+        );
+
+        const firstOpenGroup = groups.find((g) => openByGroup.get(g.id));
+        setOpenSignalGroupName(firstOpenGroup?.name ?? null);
+
+        const events =
+          (eventsRes.data as Array<{
+            id: string;
+            group_id: string;
+            title: string;
+            starts_at: string;
+            location_name: string | null;
+            is_virtual: boolean;
+          }> | null) ?? [];
+
+        if (events.length > 0) {
+          const eventIds = events.map((e) => e.id);
+          const [myRsvpsRes, allGoingRes] = await Promise.all([
+            supabase
+              .from('event_rsvps')
+              .select('event_id, status')
+              .eq('user_id', userId)
+              .in('event_id', eventIds),
+            supabase
+              .from('event_rsvps')
+              .select('event_id, status')
+              .eq('status', 'going')
+              .in('event_id', eventIds),
+          ]);
+
+          const myRsvps =
+            (myRsvpsRes.data as Array<{ event_id: string; status: 'going' | 'interested' | 'not_going' }> | null) ?? [];
+          const goingRows =
+            (allGoingRes.data as Array<{ event_id: string; status: 'going' }> | null) ?? [];
+
+          const myRsvpByEvent = new Map(myRsvps.map((r) => [r.event_id, r.status]));
+          const attendeeCountByEvent: Record<string, number> = {};
+          for (const row of goingRows) {
+            attendeeCountByEvent[row.event_id] = (attendeeCountByEvent[row.event_id] ?? 0) + 1;
+          }
+
+          setUpcomingEvents(
+            events.map((ev) => {
+              const sourceGroup = groupById.get(ev.group_id);
+              const visuals = getGroupVisuals(sourceGroup?.category ?? 'other');
+              return {
+                id: ev.id,
+                title: ev.title,
+                date: formatEventDate(ev.starts_at),
+                time: formatEventTime(ev.starts_at),
+                location: ev.is_virtual ? 'Virtual' : ev.location_name || 'Location TBA',
+                attendeeCount: attendeeCountByEvent[ev.id] ?? 0,
+                isRsvped: (myRsvpByEvent.get(ev.id) ?? 'not_going') === 'going',
+                emoji: visuals.emoji,
+              };
+            })
+          );
+        } else {
+          setUpcomingEvents([]);
+        }
+      } else {
+        setMyGroups([]);
+        setUpcomingEvents([]);
+        setOpenSignalGroupName(null);
+      }
+
+      const { data: pendingConnection } = await supabase
+        .from('connections')
+        .select('id, group_id, user_a_id, user_b_id, revealed_at')
+        .eq('status', 'pending')
+        .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+        .order('revealed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingConnection) {
+        const counterpartId =
+          pendingConnection.user_a_id === userId
+            ? pendingConnection.user_b_id
+            : pendingConnection.user_a_id;
+
+        const [{ data: counterpart }, { data: group }] = await Promise.all([
+          supabase
+            .from('profiles')
+            .select('full_name, avatar_url')
+            .eq('user_id', counterpartId)
+            .maybeSingle(),
+          supabase
+            .from('groups')
+            .select('name')
+            .eq('id', pendingConnection.group_id)
+            .maybeSingle(),
+        ]);
+
+        setRevealSuggestion({
+          connectionId: pendingConnection.id,
+          matchName: counterpart?.full_name || 'Someone',
+          matchPhoto: counterpart?.avatar_url || null,
+          groupName: group?.name || 'your group',
+        });
+      } else {
+        setRevealSuggestion(null);
+      }
+
       setLoadingProfile(false);
     };
 
-    void loadProfile();
+    void loadHome();
   }, []);
 
   return (
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
-        {/* Header */}
         <View style={styles.header}>
           <View>
             <Text style={styles.wordmark}>Godena</Text>
@@ -137,25 +260,38 @@ export default function HomeScreen() {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-
-          {/* Reveal Banner */}
           <TouchableOpacity
             style={styles.revealBanner}
             onPress={() => router.push('/reveal')}
             activeOpacity={0.88}
           >
             <View style={styles.revealLeft}>
-              <Text style={styles.revealEyebrow}>✨  New Connection</Text>
-              <Text style={styles.revealTitle}>You and Dawit might connect</Text>
-              <Text style={styles.revealSub}>via {mockReveal.groupName}</Text>
+              <Text style={styles.revealEyebrow}>
+                {revealSuggestion ? '✨  New Connection' : '🌱  Keep Showing Up'}
+              </Text>
+              <Text style={styles.revealTitle}>
+                {revealSuggestion
+                  ? `You and ${revealSuggestion.matchName} might connect`
+                  : 'No new introductions yet'}
+              </Text>
+              <Text style={styles.revealSub}>
+                {revealSuggestion
+                  ? `via ${revealSuggestion.groupName}`
+                  : 'Mutual introductions appear after real group activity'}
+              </Text>
             </View>
             <View style={styles.revealImgWrap}>
-              <Image source={{ uri: mockReveal.matchPhoto }} style={styles.revealImg} />
+              {revealSuggestion?.matchPhoto ? (
+                <Image source={{ uri: revealSuggestion.matchPhoto }} style={styles.revealImg} />
+              ) : (
+                <View style={[styles.revealImg, styles.revealImgFallback]}>
+                  <Ionicons name="people-outline" size={26} color={Colors.brownLight} />
+                </View>
+              )}
               <View style={styles.revealImgBorder} />
             </View>
           </TouchableOpacity>
 
-          {/* My Groups */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>My Groups</Text>
@@ -164,23 +300,29 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
-              {myGroups.map((g) => (
-                <TouchableOpacity
-                  key={g.id}
-                  style={[styles.groupCard, { backgroundColor: g.coverColor }]}
-                  onPress={() => router.push(`/group/${g.id}`)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.groupEmoji}>{g.emoji}</Text>
-                  <Text style={styles.groupCardName}>{g.name}</Text>
-                  <Text style={styles.groupCardMeta}>{g.memberCount} members</Text>
-                  {g.isOpenToConnect && (
-                    <View style={styles.openBadge}>
-                      <Text style={styles.openBadgeText}>🌱 Open</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              ))}
+              {myGroups.length > 0 ? (
+                myGroups.map((g) => (
+                  <TouchableOpacity
+                    key={g.id}
+                    style={[styles.groupCard, { backgroundColor: g.coverColor }]}
+                    onPress={() => router.push(`/group/${g.id}`)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.groupEmoji}>{g.emoji}</Text>
+                    <Text style={styles.groupCardName}>{g.name}</Text>
+                    <Text style={styles.groupCardMeta}>{g.memberCount} members</Text>
+                    {g.isOpenToConnect && (
+                      <View style={styles.openBadge}>
+                        <Text style={styles.openBadgeText}>🌱 Open</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={styles.inlineEmptyCard}>
+                  <Text style={styles.inlineEmptyText}>No groups yet</Text>
+                </View>
+              )}
               <TouchableOpacity
                 style={styles.addGroupCard}
                 onPress={() => router.push('/(tabs)/groups')}
@@ -191,7 +333,6 @@ export default function HomeScreen() {
             </ScrollView>
           </View>
 
-          {/* Upcoming Events */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Upcoming Events</Text>
@@ -199,38 +340,55 @@ export default function HomeScreen() {
                 <Text style={styles.seeAll}>See all</Text>
               </TouchableOpacity>
             </View>
-            {mockEvents.slice(0, 2).map((ev) => (
-              <TouchableOpacity key={ev.id} style={styles.eventCard} activeOpacity={0.85}>
-                <View style={styles.eventIconWrap}>
-                  <Text style={styles.eventIcon}>{ev.emoji}</Text>
-                </View>
-                <View style={styles.eventInfo}>
-                  <Text style={styles.eventTitle}>{ev.title}</Text>
-                  <Text style={styles.eventMeta}>
-                    {ev.date} · {ev.time}
-                  </Text>
-                  <Text style={styles.eventLocation} numberOfLines={1}>
-                    {ev.location}
-                  </Text>
-                </View>
-                <View style={styles.eventRight}>
-                  <View style={[styles.rsvpPill, ev.isRsvped && styles.rsvpPillActive]}>
-                    <Text style={[styles.rsvpText, ev.isRsvped && styles.rsvpTextActive]}>
-                      {ev.isRsvped ? 'Going' : 'RSVP'}
+            {upcomingEvents.length > 0 ? (
+              upcomingEvents.slice(0, 2).map((ev) => (
+                <TouchableOpacity
+                  key={ev.id}
+                  style={styles.eventCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/(tabs)/events')}
+                >
+                  <View style={styles.eventIconWrap}>
+                    <Text style={styles.eventIcon}>{ev.emoji}</Text>
+                  </View>
+                  <View style={styles.eventInfo}>
+                    <Text style={styles.eventTitle}>{ev.title}</Text>
+                    <Text style={styles.eventMeta}>
+                      {ev.date} · {ev.time}
+                    </Text>
+                    <Text style={styles.eventLocation} numberOfLines={1}>
+                      {ev.location}
                     </Text>
                   </View>
-                  <Text style={styles.attendeeCount}>{ev.attendeeCount} going</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
+                  <View style={styles.eventRight}>
+                    <View style={[styles.rsvpPill, ev.isRsvped && styles.rsvpPillActive]}>
+                      <Text style={[styles.rsvpText, ev.isRsvped && styles.rsvpTextActive]}>
+                        {ev.isRsvped ? 'Going' : 'RSVP'}
+                      </Text>
+                    </View>
+                    <Text style={styles.attendeeCount}>{ev.attendeeCount} going</Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            ) : (
+              <View style={styles.emptySectionCard}>
+                <Text style={styles.emptySectionText}>No upcoming events yet.</Text>
+              </View>
+            )}
           </View>
 
-          {/* Activity Hint */}
           <View style={styles.hintBox}>
             <Text style={styles.hintIcon}>🌱</Text>
             <Text style={styles.hintText}>
-              You're open to a connection in{' '}
-              <Text style={styles.hintBold}>Habesha Hikers</Text>. Keep showing up — it matters.
+              {openSignalGroupName ? (
+                <>
+                  You're open to a connection in <Text style={styles.hintBold}>{openSignalGroupName}</Text>. Keep showing up - it matters.
+                </>
+              ) : (
+                <>
+                  Toggle openness in a group when you're ready. Introductions stay private and mutual.
+                </>
+              )}
             </Text>
           </View>
 
@@ -279,7 +437,6 @@ const styles = StyleSheet.create({
   },
   scroll: { paddingTop: Spacing.md },
 
-  // Reveal banner
   revealBanner: {
     marginHorizontal: Spacing.lg,
     marginBottom: Spacing.lg,
@@ -319,6 +476,11 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 36,
   },
+  revealImgFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.paper,
+  },
   revealImgBorder: {
     position: 'absolute',
     top: -2,
@@ -330,7 +492,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.terraLight,
   },
 
-  // Sections
   section: { marginBottom: Spacing.lg },
   sectionHeader: {
     flexDirection: 'row',
@@ -350,7 +511,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Group cards (horizontal)
   hScroll: { paddingLeft: Spacing.lg },
   groupCard: {
     width: 140,
@@ -379,6 +539,18 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   openBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '600' },
+  inlineEmptyCard: {
+    width: 140,
+    height: 160,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  inlineEmptyText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
   addGroupCard: {
     width: 120,
     height: 160,
@@ -393,7 +565,6 @@ const styles = StyleSheet.create({
   },
   addGroupText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
 
-  // Event cards
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -435,8 +606,16 @@ const styles = StyleSheet.create({
   rsvpText: { fontSize: 11, fontWeight: '700', color: Colors.muted },
   rsvpTextActive: { color: Colors.white },
   attendeeCount: { fontSize: 10, color: Colors.muted },
+  emptySectionCard: {
+    marginHorizontal: Spacing.lg,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  emptySectionText: { color: Colors.muted, fontSize: 13 },
 
-  // Hint box
   hintBox: {
     marginHorizontal: Spacing.lg,
     backgroundColor: Colors.paper,
