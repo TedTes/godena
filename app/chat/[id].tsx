@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../../constants/theme';
 import {
+  blockUser,
   fetchConnection,
   fetchConnectionMessages,
   fetchGroup,
@@ -24,7 +26,9 @@ import {
   insertConnectionMessage,
   markConnectionRead,
   removeChannel,
+  reportUser,
   subscribeToConnectionMessages,
+  updateConnectionStatus,
   type ConnectionMessageRow,
   type ConnectionRow,
   type GroupRow,
@@ -68,6 +72,7 @@ export default function ConnectionChatScreen() {
   const [counterpart, setCounterpart] = useState<ProfileRow | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [draft, setDraft] = useState('');
+  const [safetyBusy, setSafetyBusy] = useState(false);
 
   const canChat = connection?.status === 'accepted';
 
@@ -190,6 +195,92 @@ export default function ConnectionChatScreen() {
     })();
   };
 
+  const handleUnmatch = () => {
+    void (async () => {
+      if (!id || safetyBusy) return;
+      setSafetyBusy(true);
+      const { error } = await updateConnectionStatus(id, 'unmatched');
+      setSafetyBusy(false);
+      if (error) {
+        Alert.alert('Could not unmatch', error.message);
+        return;
+      }
+      router.replace('/(tabs)/connections');
+    })();
+  };
+
+  const handleBlock = () => {
+    void (async () => {
+      if (!id || !userId || !counterpart?.user_id || safetyBusy) return;
+      setSafetyBusy(true);
+      const [blockRes, closeRes] = await Promise.all([
+        blockUser(userId, counterpart.user_id, 'Blocked from private connection chat'),
+        updateConnectionStatus(id, 'closed'),
+      ]);
+      setSafetyBusy(false);
+
+      if (blockRes.error || closeRes.error) {
+        Alert.alert(
+          'Could not complete block',
+          blockRes.error?.message || closeRes.error?.message || 'Unknown error'
+        );
+        return;
+      }
+      router.replace('/(tabs)/connections');
+    })();
+  };
+
+  const handleReport = () => {
+    void (async () => {
+      if (!id || !userId || !counterpart?.user_id || safetyBusy) return;
+      setSafetyBusy(true);
+      const { error } = await reportUser({
+        reporterId: userId,
+        reportedUserId: counterpart.user_id,
+        connectionId: id,
+        reason: 'Inappropriate behavior in private connection chat',
+        details: 'Submitted from 1:1 connection chat safety menu.',
+      });
+      setSafetyBusy(false);
+
+      if (error) {
+        Alert.alert('Could not submit report', error.message);
+        return;
+      }
+
+      Alert.alert('Report submitted', 'Thanks. Our team will review this report.');
+    })();
+  };
+
+  const openSafetyMenu = () => {
+    Alert.alert(
+      'Safety options',
+      'Choose an action for this connection.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Report', onPress: handleReport },
+        {
+          text: 'Unmatch',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert('Unmatch?', 'This will close this connection for both of you.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Unmatch', style: 'destructive', onPress: handleUnmatch },
+            ]),
+        },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert('Block this person?', 'This will block them and close this connection.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Block', style: 'destructive', onPress: handleBlock },
+            ]),
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.container}>
@@ -241,13 +332,25 @@ export default function ConnectionChatScreen() {
             </View>
           </View>
 
-          <View style={styles.headerIconSpacer} />
+          <TouchableOpacity
+            onPress={openSafetyMenu}
+            style={styles.headerIconBtn}
+            disabled={safetyBusy}
+          >
+            {safetyBusy ? (
+              <ActivityIndicator size="small" color={Colors.muted} />
+            ) : (
+              <Ionicons name="ellipsis-vertical" size={18} color={Colors.muted} />
+            )}
+          </TouchableOpacity>
         </View>
 
         {!canChat && (
           <View style={styles.waitingBanner}>
             <Text style={styles.waitingText}>
-              Chat opens once you've both accepted. No pressure — take your time.
+              {connection.status === 'pending'
+                ? "Chat opens once you've both accepted. No pressure - take your time."
+                : 'This connection is closed. You can return to Connections.'}
             </Text>
           </View>
         )}

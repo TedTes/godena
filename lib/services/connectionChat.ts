@@ -113,3 +113,47 @@ export function subscribeToConnectionMessages(
 export async function removeChannel(channel: ReturnType<typeof supabase.channel>) {
   return supabase.removeChannel(channel);
 }
+
+export async function updateConnectionStatus(
+  connectionId: string,
+  status: 'unmatched' | 'closed'
+) {
+  return supabase
+    .from('connections')
+    .update({ status })
+    .eq('id', connectionId)
+    .select('id, status')
+    .single();
+}
+
+export async function blockUser(blockerId: string, blockedId: string, reason?: string) {
+  return supabase
+    .from('blocked_users')
+    .upsert(
+      {
+        blocker_id: blockerId,
+        blocked_id: blockedId,
+        reason: reason ?? null,
+      },
+      { onConflict: 'blocker_id,blocked_id' }
+    );
+}
+
+export async function reportUser(params: {
+  reporterId: string;
+  reportedUserId: string;
+  connectionId: string;
+  reason: string;
+  details?: string;
+}) {
+  return supabase
+    .from('reports')
+    .insert({
+      reporter_id: params.reporterId,
+      reported_user_id: params.reportedUserId,
+      target_type: 'connection_message',
+      target_id: params.connectionId,
+      reason: params.reason,
+      details: params.details ?? null,
+    });
+}
