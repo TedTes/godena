@@ -28,6 +28,7 @@ import {
   removeChannel,
   reportUser,
   subscribeToConnectionMessages,
+  triggerConnectionMessagePush,
   updateConnectionStatus,
   type ConnectionMessageRow,
   type ConnectionRow,
@@ -186,6 +187,8 @@ export default function ConnectionChatScreen() {
             },
           ];
         });
+        // Best-effort push to the other participant.
+        void triggerConnectionMessagePush(id, row.id);
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
       } else {
         setDraft(content);

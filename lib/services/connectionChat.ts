@@ -78,6 +78,12 @@ export async function insertConnectionMessage(connectionId: string, senderId: st
     .single();
 }
 
+export async function triggerConnectionMessagePush(connectionId: string, messageId: string) {
+  return supabase.functions.invoke('connection-message-push', {
+    body: { connection_id: connectionId, message_id: messageId },
+  });
+}
+
 export async function markConnectionRead(connectionId: string, userId: string) {
   return supabase
     .from('connection_messages')
