@@ -202,7 +202,7 @@ export default function ConnectionChatScreen() {
       const { error } = await updateConnectionStatus(id, 'unmatched');
       setSafetyBusy(false);
       if (error) {
-        Alert.alert('Could not unmatch', error.message);
+        Alert.alert('Something went wrong', "We couldn't end this connection. Please try again.");
         return;
       }
       router.replace('/(tabs)/connections');
@@ -220,10 +220,7 @@ export default function ConnectionChatScreen() {
       setSafetyBusy(false);
 
       if (blockRes.error || closeRes.error) {
-        Alert.alert(
-          'Could not complete block',
-          blockRes.error?.message || closeRes.error?.message || 'Unknown error'
-        );
+        Alert.alert('Something went wrong', "We couldn't complete the block. Please try again.");
         return;
       }
       router.replace('/(tabs)/connections');
@@ -244,38 +241,61 @@ export default function ConnectionChatScreen() {
       setSafetyBusy(false);
 
       if (error) {
-        Alert.alert('Could not submit report', error.message);
+        Alert.alert('Something went wrong', "We couldn't submit your report. Please try again.");
         return;
       }
 
-      Alert.alert('Report submitted', 'Thanks. Our team will review this report.');
+      Alert.alert(
+        'Report received',
+        "Thank you — our team reviews every report carefully. You can also block this person if you feel unsafe."
+      );
     })();
   };
 
   const openSafetyMenu = () => {
+    const firstName = counterpart?.full_name?.split(' ')[0];
     Alert.alert(
-      'Safety options',
-      'Choose an action for this connection.',
+      firstName ? `Options for ${firstName}` : 'Options',
+      undefined,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Report', onPress: handleReport },
+        {
+          text: 'Report',
+          onPress: () =>
+            Alert.alert(
+              'Report this person?',
+              'Your report is confidential. Our team reviews every report and takes action when guidelines are violated.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Submit report', onPress: handleReport },
+              ]
+            ),
+        },
         {
           text: 'Unmatch',
           style: 'destructive',
           onPress: () =>
-            Alert.alert('Unmatch?', 'This will close this connection for both of you.', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Unmatch', style: 'destructive', onPress: handleUnmatch },
-            ]),
+            Alert.alert(
+              'End this connection?',
+              "You'll both lose access to this conversation. This can't be undone.",
+              [
+                { text: 'Keep connection', style: 'cancel' },
+                { text: 'End connection', style: 'destructive', onPress: handleUnmatch },
+              ]
+            ),
         },
         {
           text: 'Block',
           style: 'destructive',
           onPress: () =>
-            Alert.alert('Block this person?', 'This will block them and close this connection.', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Block', style: 'destructive', onPress: handleBlock },
-            ]),
+            Alert.alert(
+              'Block this person?',
+              "They won't be able to contact you and this conversation will close. You can unblock from your profile settings.",
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Block', style: 'destructive', onPress: handleBlock },
+              ]
+            ),
         },
       ]
     );
@@ -349,8 +369,8 @@ export default function ConnectionChatScreen() {
           <View style={styles.waitingBanner}>
             <Text style={styles.waitingText}>
               {connection.status === 'pending'
-                ? "Chat opens once you've both accepted. No pressure - take your time."
-                : 'This connection is closed. You can return to Connections.'}
+                ? "Chat opens once you've both accepted. No pressure — take your time."
+                : 'This conversation has ended.'}
             </Text>
           </View>
         )}

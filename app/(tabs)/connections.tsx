@@ -69,6 +69,15 @@ type RevealHistoryItem = {
   dateLabel: string;
 };
 
+function statusLabel(status: ConnectionRow['status']) {
+  switch (status) {
+    case 'passed': return 'Passed';
+    case 'unmatched': return 'Ended';
+    case 'closed': return 'Closed';
+    default: return status;
+  }
+}
+
 function groupEmoji(category?: string) {
   switch (category) {
     case 'outdoors': return '🥾';
@@ -226,20 +235,20 @@ export default function ConnectionsScreen() {
       <SafeAreaView edges={['top']} style={styles.safe}>
         <View style={styles.header}>
           <Text style={styles.title}>Connections</Text>
-          <Text style={styles.subtitle}>People you've been introduced to</Text>
+          <Text style={styles.subtitle}>Your introductions and conversations</Text>
         </View>
 
+        {loading ? (
+          <View style={styles.loadingCenter}>
+            <ActivityIndicator color={Colors.terracotta} />
+          </View>
+        ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
-          {loading && (
-            <View style={styles.loadingWrap}>
-              <ActivityIndicator color={Colors.terracotta} />
-            </View>
-          )}
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionLabel}>New Introduction</Text>
-              {pendingReveal && <View style={styles.newBadge}><Text style={styles.newBadgeText}>1 new</Text></View>}
+              {pendingReveal && <View style={styles.newBadge}><Text style={styles.newBadgeText}>New</Text></View>}
             </View>
 
             {pendingReveal ? (
@@ -255,12 +264,12 @@ export default function ConnectionsScreen() {
                 <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
                 <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
                 <TouchableOpacity style={styles.revealBtn} onPress={() => router.push('/reveal')} activeOpacity={0.85}>
-                  <Text style={styles.revealBtnText}>See Introduction →</Text>
+                  <Text style={styles.revealBtnText}>View Introduction</Text>
                 </TouchableOpacity>
               </TouchableOpacity>
             ) : (
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>No new introductions right now.</Text>
+                <Text style={styles.emptyText}>Nothing new yet — we'll let you know when we find a good fit.</Text>
               </View>
             )}
           </View>
@@ -284,13 +293,13 @@ export default function ConnectionsScreen() {
               ))
             ) : (
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>No active connections yet.</Text>
+                <Text style={styles.emptyText}>Accepted introductions will appear here as conversations.</Text>
               </View>
             )}
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Reveal History</Text>
+            <Text style={styles.sectionLabel}>Past Introductions</Text>
             {isPremium ? (
               revealHistory.length > 0 ? (
                 revealHistory.map((h) => (
@@ -300,20 +309,20 @@ export default function ConnectionsScreen() {
                       <Text style={styles.historyMeta}>{h.groupEmoji} {h.groupName}</Text>
                     </View>
                     <View style={styles.historyRight}>
-                      <Text style={styles.historyStatus}>{h.status}</Text>
+                      <Text style={styles.historyStatus}>{statusLabel(h.status)}</Text>
                       <Text style={styles.historyDate}>{h.dateLabel}</Text>
                     </View>
                   </View>
                 ))
               ) : (
                 <View style={styles.emptyCard}>
-                  <Text style={styles.emptyText}>No reveal history yet.</Text>
+                  <Text style={styles.emptyText}>No past introductions yet.</Text>
                 </View>
               )
             ) : (
               <TouchableOpacity style={styles.premiumGateCard} onPress={() => router.push('/premium')} activeOpacity={0.85}>
-                <Text style={styles.premiumGateTitle}>Premium feature</Text>
-                <Text style={styles.premiumGateText}>Upgrade to view your reveal history.</Text>
+                <Text style={styles.premiumGateTitle}>Introduction history</Text>
+                <Text style={styles.premiumGateText}>Upgrade to see all your past introductions.</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -327,7 +336,7 @@ export default function ConnectionsScreen() {
               </View>
               <View style={styles.howStep}>
                 <Text style={styles.howStepNum}>2</Text>
-                <Text style={styles.howStepText}>We watch for organic engagement between open members</Text>
+                <Text style={styles.howStepText}>We look for genuine, consistent activity between open members</Text>
               </View>
               <View style={styles.howStep}>
                 <Text style={styles.howStepNum}>3</Text>
@@ -338,6 +347,7 @@ export default function ConnectionsScreen() {
 
           <View style={{ height: 40 }} />
         </ScrollView>
+        )}
       </SafeAreaView>
     </View>
   );
@@ -347,6 +357,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   safe: { flex: 1 },
   loadingWrap: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+  loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.md },
   title: { fontSize: 28, fontWeight: '900', color: Colors.ink },
   subtitle: { fontSize: 13, color: Colors.muted, marginTop: 2 },
