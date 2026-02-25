@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { resolveProfilePhotoUrl } from './photoUrls';
 
 export type GroupChatGroup = {
   id: string;
@@ -40,10 +41,21 @@ export async function fetchGroupMessages(groupId: string) {
 
 export async function fetchProfiles(userIds: string[]) {
   if (userIds.length === 0) return { data: [], error: null };
-  return supabase
+  const res = await supabase
     .from('profiles')
     .select('user_id, full_name, avatar_url')
     .in('user_id', userIds);
+
+  if (res.error || !res.data) return res;
+
+  const mapped = await Promise.all(
+    res.data.map(async (row) => ({
+      ...row,
+      avatar_url: await resolveProfilePhotoUrl(row.avatar_url),
+    }))
+  );
+
+  return { data: mapped, error: null };
 }
 
 export function subscribeToGroupMessages(

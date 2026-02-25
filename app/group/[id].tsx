@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import {
   createGroupEvent,
   createGroupPost,
@@ -25,7 +26,6 @@ import {
   fetchMembers,
   fetchMembership,
   fetchPostReactions,
-  fetchProfilesByUserIds,
   fetchUpcomingEvents,
   getSessionUserId,
   insertPostReaction,
@@ -67,6 +67,8 @@ type Membership = {
 type Member = {
   user_id: string;
   role: 'member' | 'organizer' | 'moderator';
+  full_name?: string | null;
+  avatar_url?: string | null;
 };
 
 type Event = {
@@ -171,23 +173,18 @@ export default function GroupDetailScreen() {
     const { data: rsvpsData } = await fetchEventRsvps(eventIds);
     setEventRsvps((rsvpsData as EventRsvpRow[] | null) ?? []);
 
-    const authorIds = Array.from(new Set([
-      ...membersData.map((m) => m.user_id),
-      ...postsData.map((p) => p.author_id),
-    ]));
-
-    if (authorIds.length > 0) {
-      const { data: profilesData } = await fetchProfilesByUserIds(authorIds);
-
-      const map: Record<string, { name: string; avatar: string | null }> = {};
-      for (const p of profilesData ?? []) {
-        const row = p as { user_id: string; full_name: string | null; avatar_url: string | null };
-        map[row.user_id] = { name: row.full_name || 'Member', avatar: row.avatar_url || null };
-      }
-      setMemberNames(map);
-    } else {
-      setMemberNames({});
+    const map: Record<string, { name: string; avatar: string | null }> = {};
+    const resolved = await Promise.all(
+      membersData.map(async (m) => ({
+        user_id: m.user_id,
+        name: m.full_name || 'Member',
+        avatar: await resolveProfilePhotoUrl(m.avatar_url || null),
+      }))
+    );
+    for (const item of resolved) {
+      map[item.user_id] = { name: item.name, avatar: item.avatar };
     }
+    setMemberNames(map);
 
     setLoading(false);
   };
@@ -627,9 +624,15 @@ export default function GroupDetailScreen() {
         {/* ── Members ── */}
         {activeTab === 'members' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionLabel}>{members.length} members</Text>
+            <Text style={styles.sectionLabel}>
+              {members.length} {members.length === 1 ? 'member' : 'members'}
+            </Text>
             <View style={styles.membersCard}>
-              {members.map((m, i) => {
+              {members.length === 0 ? (
+                <View style={styles.membersEmpty}>
+                  <Text style={styles.membersEmptyText}>No members yet.</Text>
+                </View>
+              ) : members.map((m, i) => {
                 const info = memberNames[m.user_id];
                 const initial = (info?.name?.[0] || 'M').toUpperCase();
                 return (
@@ -643,13 +646,17 @@ export default function GroupDetailScreen() {
                     )}
                     <View style={styles.memberInfo}>
                       <Text style={styles.memberName}>{info?.name || 'Member'}</Text>
+                      {(m.role === 'organizer' || m.role === 'moderator') && (
+                        <Text
+                          style={[
+                            styles.memberRole,
+                            m.role === 'organizer' && styles.memberRoleOrganizer,
+                          ]}
+                        >
+                          {m.role === 'organizer' ? 'Organizer' : 'Moderator'}
+                        </Text>
+                      )}
                     </View>
-                    {m.role === 'organizer' && (
-                      <View style={styles.organizerBadge}>
-                        <Ionicons name="star" size={9} color={Colors.gold} />
-                        <Text style={styles.organizerText}>Organizer</Text>
-                      </View>
-                    )}
                   </View>
                 );
               })}
@@ -1203,31 +1210,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: Spacing.md,
   },
   memberRowDivider: { borderTopWidth: 1, borderTopColor: Colors.border },
-  memberAvatar: { width: 42, height: 42, borderRadius: 21 },
+  memberAvatar: { width: 46, height: 46, borderRadius: 23 },
   memberAvatarPlaceholder: {
     backgroundColor: Colors.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  memberInitial: { color: Colors.white, fontSize: 17, fontWeight: '700' },
+  memberInitial: { color: Colors.white, fontSize: 18, fontWeight: '700' },
   memberInfo: { flex: 1 },
-  memberName: { fontSize: 14, fontWeight: '600', color: Colors.ink },
-  organizerBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: 'rgba(201,168,76,0.12)',
-    borderRadius: Radius.full,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(201,168,76,0.3)',
-  },
-  organizerText: { fontSize: 10, color: Colors.gold, fontWeight: '700' },
+  memberName: { fontSize: 15, fontWeight: '600', color: Colors.ink },
+  memberRole: { fontSize: 12, fontWeight: '500', color: Colors.muted, marginTop: 2 },
+  memberRoleOrganizer: { color: Colors.gold },
+  membersEmpty: { paddingVertical: 28, alignItems: 'center' },
+  membersEmptyText: { fontSize: 13, color: Colors.muted, fontStyle: 'italic' },
 
   // ── Events ──
   eventsHeaderRow: {

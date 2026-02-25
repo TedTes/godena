@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { resolveProfilePhotoUrl } from './photoUrls';
 
 export async function getSessionUserId() {
   const { data } = await supabase.auth.getSession();
@@ -23,12 +24,7 @@ export async function fetchMembership(groupId: string, userId: string) {
 }
 
 export async function fetchMembers(groupId: string) {
-  return supabase
-    .from('group_memberships')
-    .select('user_id, role')
-    .eq('group_id', groupId)
-    .order('joined_at', { ascending: false })
-    .limit(30);
+  return supabase.rpc('get_group_members', { p_group_id: groupId });
 }
 
 export async function fetchUpcomingEvents(groupId: string) {
@@ -68,10 +64,21 @@ export async function fetchEventRsvps(eventIds: string[]) {
 
 export async function fetchProfilesByUserIds(userIds: string[]) {
   if (userIds.length === 0) return { data: [], error: null };
-  return supabase
+  const res = await supabase
     .from('profiles')
     .select('user_id, full_name, avatar_url')
     .in('user_id', userIds);
+
+  if (res.error || !res.data) return res;
+
+  const mapped = await Promise.all(
+    res.data.map(async (row) => ({
+      ...row,
+      avatar_url: await resolveProfilePhotoUrl(row.avatar_url),
+    }))
+  );
+
+  return { data: mapped, error: null };
 }
 
 export async function createGroupPost(groupId: string, userId: string, content: string) {
