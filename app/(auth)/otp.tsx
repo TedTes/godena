@@ -57,8 +57,12 @@ export default function OtpScreen() {
       router.replace('/');
       return;
     }
-    const route = await resolvePostAuthRoute(userId);
-    router.replace(route);
+    try {
+      const route = await resolvePostAuthRoute(userId);
+      router.replace(route);
+    } catch {
+      router.replace('/');
+    }
   };
 
   const handleChange = (val: string) => {

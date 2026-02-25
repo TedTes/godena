@@ -59,8 +59,12 @@ export default function EmailAuthScreen() {
           router.replace('/');
           return;
         }
-        const route = await resolvePostAuthRoute(userId);
-        router.replace(route);
+        try {
+          const route = await resolvePostAuthRoute(userId);
+          router.replace(route);
+        } catch {
+          router.replace('/');
+        }
         return;
       }
 
@@ -77,8 +81,12 @@ export default function EmailAuthScreen() {
 
       // If email confirmations are disabled, session is immediate.
       if (data.session) {
-        const route = await resolvePostAuthRoute(data.session.user.id);
-        router.replace(route);
+        try {
+          const route = await resolvePostAuthRoute(data.session.user.id);
+          router.replace(route);
+        } catch {
+          router.replace('/');
+        }
         return;
       }
 

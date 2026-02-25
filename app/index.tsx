@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '../constants/theme';
 import { supabase } from '../lib/supabase';
@@ -8,9 +8,13 @@ import { resolvePostAuthRoute } from '../lib/services/auth';
 export default function Index() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [routeError, setRouteError] = useState('');
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setLoading(true);
+    setRouteError('');
 
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -44,8 +48,15 @@ export default function Index() {
         return;
       }
 
-      const route = await resolvePostAuthRoute(session.user.id);
-      router.replace(route);
+      try {
+        const route = await resolvePostAuthRoute(session.user.id);
+        router.replace(route);
+      } catch (profileError) {
+        if (!mounted) return;
+        setRouteError('Could not load your profile. Check your connection and retry.');
+        setLoading(false);
+        return;
+      }
       setLoading(false);
     };
 
@@ -54,13 +65,33 @@ export default function Index() {
     return () => {
       mounted = false;
     };
-  }, [router]);
+  }, [router, retryNonce]);
 
-  return (
-    <View style={styles.container}>
-      <ActivityIndicator color={Colors.terracotta} />
-    </View>
-  );
+  if (routeError) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorTitle}>Unable to continue</Text>
+        <Text style={styles.errorText}>{routeError}</Text>
+        <TouchableOpacity
+          style={styles.retryBtn}
+          onPress={() => setRetryNonce((prev) => prev + 1)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.retryText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator color={Colors.terracotta} />
+      </View>
+    );
+  }
+
+  return <View style={styles.container} />;
 }
 
 const styles = StyleSheet.create({
@@ -69,5 +100,31 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.ink,
+    marginBottom: 8,
+  },
+  errorText: {
+    fontSize: 14,
+    color: Colors.muted,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryBtn: {
+    height: 46,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    backgroundColor: Colors.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryText: {
+    color: Colors.white,
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

@@ -80,7 +80,7 @@ export default function ProfileSetupScreen() {
       router.back();
       return;
     }
-    router.replace('/(auth)');
+    router.replace('/');
   };
 
   useEffect(() => {

@@ -67,8 +67,12 @@ export default function AuthChoiceScreen() {
       router.replace('/');
       return true;
     }
-    const route = await resolvePostAuthRoute(userId);
-    router.replace(route);
+    try {
+      const route = await resolvePostAuthRoute(userId);
+      router.replace(route);
+    } catch {
+      router.replace('/');
+    }
     return true;
   };
 
