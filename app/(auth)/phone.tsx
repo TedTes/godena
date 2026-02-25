@@ -56,6 +56,10 @@ export default function PhoneScreen() {
           style={styles.flex}
         >
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+            <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.75}>
+              <Text style={styles.backText}>← Back</Text>
+            </TouchableOpacity>
+
             <View style={styles.header}>
               <Text style={styles.wordmark}>Godena</Text>
               <Text style={styles.title}>What's your{'\n'}phone number?</Text>
@@ -110,6 +114,16 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: { padding: Spacing.lg, paddingTop: Spacing.xl, flexGrow: 1 },
+  backBtn: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+  backText: {
+    fontSize: 14,
+    color: Colors.muted,
+    fontWeight: '600',
+  },
   header: { marginBottom: 40 },
   wordmark: {
     fontSize: 14,

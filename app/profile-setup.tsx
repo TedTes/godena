@@ -181,7 +181,7 @@ export default function ProfileSetupScreen() {
     if (sessionError || !sessionData.session) {
       setSaving(false);
       setError('Session expired. Please sign in again.');
-      router.replace('/(auth)/phone');
+      router.replace('/(auth)');
       return;
     }
 

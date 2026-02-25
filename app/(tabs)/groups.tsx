@@ -101,7 +101,7 @@ export default function GroupsScreen() {
   const joinGroup = async (groupId: string) => {
     if (!userId) {
       Alert.alert('Sign in required', 'Please sign in again to join groups.');
-      router.replace('/(auth)/phone');
+      router.replace('/(auth)');
       return;
     }
     if (joinedIds.has(groupId) || joiningId) return;
@@ -142,7 +142,7 @@ export default function GroupsScreen() {
   const createGroup = async () => {
     if (!userId) {
       Alert.alert('Sign in required', 'Please sign in again to create groups.');
-      router.replace('/(auth)/phone');
+      router.replace('/(auth)');
       return;
     }
     if (creatingGroup) return;

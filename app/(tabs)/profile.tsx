@@ -152,7 +152,7 @@ export default function ProfileScreen() {
         const uid = sessionData.session?.user.id;
         if (!uid) {
           setLoadingProfile(false);
-          router.replace('/(auth)/phone');
+          router.replace('/(auth)');
           return;
         }
         setUserId(uid);

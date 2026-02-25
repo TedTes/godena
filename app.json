@@ -14,9 +14,11 @@
     },
     "scheme": "godena",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.godena.app"
     },
     "android": {
+      "package": "com.godena.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -29,7 +31,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      "expo-apple-authentication"
     ]
   }
 }

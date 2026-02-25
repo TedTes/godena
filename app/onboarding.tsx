@@ -59,12 +59,12 @@ export default function Onboarding() {
       flatListRef.current?.scrollToIndex({ index: activeIndex + 1 });
       setActiveIndex(activeIndex + 1);
     } else {
-      router.replace('/(auth)/phone');
+      router.replace('/(auth)');
     }
   };
 
   const handleSkip = () => {
-    router.replace('/(auth)/phone');
+    router.replace('/(auth)');
   };
 
   const currentSlide = slides[activeIndex];
