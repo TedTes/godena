@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -13,6 +13,7 @@ import * as Linking from 'expo-linking';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { resolvePostAuthRoute } from '../../lib/services/auth';
 
 type Provider = 'google' | 'apple';
 
@@ -20,14 +21,6 @@ export default function AuthChoiceScreen() {
   const router = useRouter();
   const [loadingProvider, setLoadingProvider] = useState<Provider | null>(null);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    const checkExistingSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) router.replace('/');
-    };
-    void checkExistingSession();
-  }, [router]);
 
   const continueWithAppleNative = async () => {
     // Use runtime require so app can still compile even before package install.
@@ -59,7 +52,7 @@ export default function AuthChoiceScreen() {
       return false;
     }
 
-    const { error: idTokenError } = await supabase.auth.signInWithIdToken({
+    const { data: idTokenData, error: idTokenError } = await supabase.auth.signInWithIdToken({
       provider: 'apple',
       token: credential.identityToken,
     });
@@ -69,7 +62,13 @@ export default function AuthChoiceScreen() {
       return false;
     }
 
-    router.replace('/');
+    const userId = idTokenData.user?.id;
+    if (!userId) {
+      router.replace('/');
+      return true;
+    }
+    const route = await resolvePostAuthRoute(userId);
+    router.replace(route);
     return true;
   };
 

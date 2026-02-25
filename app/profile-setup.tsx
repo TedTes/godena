@@ -13,10 +13,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 
@@ -44,6 +43,7 @@ type SelectedPhoto = {
 
 export default function ProfileSetupScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [fullName, setFullName] = useState('');
@@ -61,17 +61,27 @@ export default function ProfileSetupScreen() {
   const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [step, setStep] = useState<1 | 2>(1);
 
   const canSubmit =
     fullName.trim().length >= 2 &&
     city.trim().length >= 2 &&
     ethnicity.trim().length >= 2 &&
     !saving;
+  const canProceedStep1 = fullName.trim().length >= 2 && city.trim().length >= 2;
 
   const parsedLanguages = languagesInput
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(auth)');
+  };
 
   useEffect(() => {
     const loadExistingProfile = async () => {
@@ -266,7 +276,7 @@ export default function ProfileSetupScreen() {
   if (initialLoading) {
     return (
       <View style={styles.container}>
-        <SafeAreaView style={styles.safe}>
+        <SafeAreaView edges={['top']} style={styles.safe}>
           <View style={styles.loadingWrap}>
             <ActivityIndicator color={Colors.terracotta} />
           </View>
@@ -277,273 +287,321 @@ export default function ProfileSetupScreen() {
 
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+
+      {/* ── Fixed header (never scrolls) ─────────────────── */}
+      <SafeAreaView edges={['top', 'left', 'right']} style={styles.fixedHeaderSafe}>
+        <View style={styles.fixedHeader}>
+          <Text style={styles.wordmark}>Godena</Text>
+          <Text style={styles.title}>
+            {isEditMode ? 'Edit your profile' : 'Set up your profile'}
+          </Text>
+          <Text style={styles.subtitle}>
+            {isEditMode
+              ? 'Update your details. Avatar and gallery are managed on Profile.'
+              : 'This is your private foundation. You can edit everything later.'}
+          </Text>
+          <View style={styles.stepRow}>
+            <View style={[styles.stepPill, step === 1 && styles.stepPillActive]}>
+              <Text style={[styles.stepPillText, step === 1 && styles.stepPillTextActive]}>
+                Step 1 · Basics
+              </Text>
+            </View>
+            <View style={[styles.stepPill, step === 2 && styles.stepPillActive]}>
+              <Text style={[styles.stepPillText, step === 2 && styles.stepPillTextActive]}>
+                Step 2 · Preferences
+              </Text>
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
+
+      {/* ── Keyboard-aware body: scroll + pinned bottom bar ── */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.flex}
+      >
+        <ScrollView
           style={styles.flex}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
         >
-          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <View style={styles.topRow}>
-              <TouchableOpacity
-                style={styles.backBtn}
-                onPress={() => router.back()}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="arrow-back" size={18} color={Colors.brown} />
-                <Text style={styles.backText}>Back</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.wordmark}>Godena</Text>
-            <Text style={styles.title}>{isEditMode ? 'Edit your profile' : 'Set up your profile'}</Text>
-            <Text style={styles.subtitle}>
-              {isEditMode
-                ? 'Update your details. Your avatar and gallery are managed separately on Profile.'
-                : 'This is your private foundation. You can edit everything later.'}
-            </Text>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Full name</Text>
-              <TextInput
-                style={styles.input}
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="Tigist Haile"
-                placeholderTextColor={Colors.muted}
-                autoCapitalize="words"
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>City</Text>
-              <TextInput
-                style={styles.input}
-                value={city}
-                onChangeText={setCity}
-                placeholder="Washington, DC"
-                placeholderTextColor={Colors.muted}
-                autoCapitalize="words"
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Bio (optional)</Text>
-              <TextInput
-                style={[styles.input, styles.inputMultiline]}
-                value={bio}
-                onChangeText={setBio}
-                placeholder="Tell people a little about yourself..."
-                placeholderTextColor={Colors.muted}
-                multiline
-                maxLength={300}
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Ethnicity</Text>
-              <TextInput
-                style={styles.input}
-                value={ethnicity}
-                onChangeText={setEthnicity}
-                placeholder="Ethiopian, Eritrean, Habesha..."
-                placeholderTextColor={Colors.muted}
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Religion (optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={religion}
-                onChangeText={setReligion}
-                placeholder="Orthodox Christian, Muslim..."
-                placeholderTextColor={Colors.muted}
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Languages (comma separated)</Text>
-              <TextInput
-                style={styles.input}
-                value={languagesInput}
-                onChangeText={setLanguagesInput}
-                placeholder="Amharic, English, Tigrinya"
-                placeholderTextColor={Colors.muted}
-                autoCapitalize="words"
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Intent</Text>
-              <View style={styles.intentRow}>
-                {INTENT_OPTIONS.map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.intentChip,
-                      intent === option.value && styles.intentChipActive,
-                    ]}
-                    onPress={() => setIntent(option.value)}
-                    activeOpacity={0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.intentChipText,
-                        intent === option.value && styles.intentChipTextActive,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+          {step === 1 ? (
+            <>
+              <View style={styles.field}>
+                <Text style={styles.label}>Full name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={fullName}
+                  onChangeText={setFullName}
+                  placeholder="Tigist Haile"
+                  placeholderTextColor={Colors.muted}
+                  autoCapitalize="words"
+                />
               </View>
-            </View>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Gender</Text>
-              <View style={styles.intentRow}>
-                {GENDER_OPTIONS.map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.intentChip,
-                      gender === option.value && styles.intentChipActive,
-                    ]}
-                    onPress={() => setGender(option.value)}
-                    activeOpacity={0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.intentChipText,
-                        gender === option.value && styles.intentChipTextActive,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.field}>
+                <Text style={styles.label}>City</Text>
+                <TextInput
+                  style={styles.input}
+                  value={city}
+                  onChangeText={setCity}
+                  placeholder="Washington, DC"
+                  placeholderTextColor={Colors.muted}
+                  autoCapitalize="words"
+                />
               </View>
-            </View>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Preferred genders</Text>
-              <View style={styles.intentRow}>
-                {GENDER_OPTIONS.filter((option) => option.value !== 'prefer_not_to_say').map((option) => {
-                  const selected = preferredGenders.includes(option.value);
-                  return (
+              <View style={styles.field}>
+                <Text style={styles.label}>Bio (optional)</Text>
+                <TextInput
+                  style={[styles.input, styles.inputMultiline]}
+                  value={bio}
+                  onChangeText={setBio}
+                  placeholder="Tell people a little about yourself..."
+                  placeholderTextColor={Colors.muted}
+                  multiline
+                  maxLength={300}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Ethnicity</Text>
+                <TextInput
+                  style={styles.input}
+                  value={ethnicity}
+                  onChangeText={setEthnicity}
+                  placeholder="Ethiopian, Eritrean, Habesha..."
+                  placeholderTextColor={Colors.muted}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Religion (optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={religion}
+                  onChangeText={setReligion}
+                  placeholder="Orthodox Christian, Muslim..."
+                  placeholderTextColor={Colors.muted}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Languages (comma separated)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={languagesInput}
+                  onChangeText={setLanguagesInput}
+                  placeholder="Amharic, English, Tigrinya"
+                  placeholderTextColor={Colors.muted}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Intent</Text>
+                <View style={styles.intentRow}>
+                  {INTENT_OPTIONS.map((option) => (
                     <TouchableOpacity
                       key={option.value}
                       style={[
                         styles.intentChip,
-                        selected && styles.intentChipActive,
+                        intent === option.value && styles.intentChipActive,
                       ]}
-                      onPress={() =>
-                        setPreferredGenders((prev) =>
-                          selected
-                            ? prev.filter((g) => g !== option.value)
-                            : [...prev, option.value]
-                        )
-                      }
+                      onPress={() => setIntent(option.value)}
                       activeOpacity={0.85}
                     >
                       <Text
                         style={[
                           styles.intentChipText,
-                          selected && styles.intentChipTextActive,
+                          intent === option.value && styles.intentChipTextActive,
                         ]}
                       >
                         {option.label}
                       </Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Preferred age range</Text>
-              <View style={styles.ageRow}>
-                <TextInput
-                  style={[styles.input, styles.ageInput]}
-                  value={preferredAgeMin}
-                  onChangeText={setPreferredAgeMin}
-                  keyboardType="number-pad"
-                  placeholder="Min"
-                  placeholderTextColor={Colors.muted}
-                  maxLength={2}
-                />
-                <Text style={styles.ageDash}>—</Text>
-                <TextInput
-                  style={[styles.input, styles.ageInput]}
-                  value={preferredAgeMax}
-                  onChangeText={setPreferredAgeMax}
-                  keyboardType="number-pad"
-                  placeholder="Max"
-                  placeholderTextColor={Colors.muted}
-                  maxLength={2}
-                />
-              </View>
-            </View>
-
-            <View style={styles.switchRow}>
-              <View style={styles.switchInfo}>
-                <Text style={styles.switchTitle}>Open to connections</Text>
-                <Text style={styles.switchSub}>
-                  Global default. Group-level signals still apply.
-                </Text>
-              </View>
-              <Switch
-                value={isOpenToConnections}
-                onValueChange={setIsOpenToConnections}
-                trackColor={{ false: Colors.border, true: Colors.olive }}
-                thumbColor={Colors.white}
-              />
-            </View>
-
-            {!isEditMode ? (
-              <View style={styles.field}>
-                <View style={styles.photoHeader}>
-                  <Text style={styles.label}>Photos</Text>
-                  <Text style={styles.photoCount}>{photos.length}/4</Text>
-                </View>
-                <View style={styles.photoRow}>
-                  {photos.map((photo) => (
-                    <View key={photo.uri} style={styles.photoWrap}>
-                      <Image source={{ uri: photo.uri }} style={styles.photo} />
-                      <TouchableOpacity
-                        style={styles.removePhotoBtn}
-                        onPress={() => removePhoto(photo.uri)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.removePhotoText}>×</Text>
-                      </TouchableOpacity>
-                    </View>
                   ))}
-                  {photos.length < 4 ? (
-                    <TouchableOpacity style={styles.addPhotoBtn} onPress={addPhoto} activeOpacity={0.85}>
-                      <Text style={styles.addPhotoText}>+ Add</Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
               </View>
-            ) : null}
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              <View style={styles.field}>
+                <Text style={styles.label}>Gender</Text>
+                <View style={styles.intentRow}>
+                  {GENDER_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.intentChip,
+                        gender === option.value && styles.intentChipActive,
+                      ]}
+                      onPress={() => setGender(option.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.intentChipText,
+                          gender === option.value && styles.intentChipTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.field}>
+                <Text style={styles.label}>Preferred genders</Text>
+                <View style={styles.intentRow}>
+                  {GENDER_OPTIONS.filter((option) => option.value !== 'prefer_not_to_say').map((option) => {
+                    const selected = preferredGenders.includes(option.value);
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.intentChip,
+                          selected && styles.intentChipActive,
+                        ]}
+                        onPress={() =>
+                          setPreferredGenders((prev) =>
+                            selected
+                              ? prev.filter((g) => g !== option.value)
+                              : [...prev, option.value]
+                          )
+                        }
+                        activeOpacity={0.85}
+                      >
+                        <Text
+                          style={[
+                            styles.intentChipText,
+                            selected && styles.intentChipTextActive,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
 
+              <View style={styles.field}>
+                <Text style={styles.label}>Preferred age range</Text>
+                <View style={styles.ageRow}>
+                  <TextInput
+                    style={[styles.input, styles.ageInput]}
+                    value={preferredAgeMin}
+                    onChangeText={setPreferredAgeMin}
+                    keyboardType="number-pad"
+                    placeholder="Min"
+                    placeholderTextColor={Colors.muted}
+                    maxLength={2}
+                  />
+                  <Text style={styles.ageDash}>—</Text>
+                  <TextInput
+                    style={[styles.input, styles.ageInput]}
+                    value={preferredAgeMax}
+                    onChangeText={setPreferredAgeMax}
+                    keyboardType="number-pad"
+                    placeholder="Max"
+                    placeholderTextColor={Colors.muted}
+                    maxLength={2}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.switchRow}>
+                <View style={styles.switchInfo}>
+                  <Text style={styles.switchTitle}>Open to connections</Text>
+                  <Text style={styles.switchSub}>
+                    Global default. Group-level signals still apply.
+                  </Text>
+                </View>
+                <Switch
+                  value={isOpenToConnections}
+                  onValueChange={setIsOpenToConnections}
+                  trackColor={{ false: Colors.border, true: Colors.olive }}
+                  thumbColor={Colors.white}
+                />
+              </View>
+
+              {!isEditMode ? (
+                <View style={styles.field}>
+                  <View style={styles.photoHeader}>
+                    <Text style={styles.label}>Photos</Text>
+                    <Text style={styles.photoCount}>{photos.length}/4</Text>
+                  </View>
+                  <View style={styles.photoRow}>
+                    {photos.map((photo) => (
+                      <View key={photo.uri} style={styles.photoWrap}>
+                        <Image source={{ uri: photo.uri }} style={styles.photo} />
+                        <TouchableOpacity
+                          style={styles.removePhotoBtn}
+                          onPress={() => removePhoto(photo.uri)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.removePhotoText}>×</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {photos.length < 4 ? (
+                      <TouchableOpacity style={styles.addPhotoBtn} onPress={addPhoto} activeOpacity={0.85}>
+                        <Text style={styles.addPhotoText}>+ Add</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            </>
+          )}
+        </ScrollView>
+
+        {/* ── Pinned bottom action bar (always above keyboard) ── */}
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 8 }]}>
+          <View style={styles.actionsRow}>
             <TouchableOpacity
-              style={[styles.btn, !canSubmit && styles.btnDisabled]}
-              onPress={saveProfile}
-              disabled={!canSubmit}
+              style={[styles.secondaryBtn, styles.actionFlex1]}
+              onPress={step === 1 ? handleBack : () => setStep(1)}
               activeOpacity={0.85}
             >
-              {saving ? (
-                <ActivityIndicator color={Colors.white} />
-              ) : (
-                <Text style={styles.btnText}>{isEditMode ? 'Save Changes' : 'Save & Continue'}</Text>
-              )}
+              <Text style={styles.secondaryBtnText}>
+                {step === 1 ? 'Back' : 'Step 1'}
+              </Text>
             </TouchableOpacity>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+
+            {step === 1 ? (
+              <TouchableOpacity
+                style={[styles.btn, styles.actionFlex2, !canProceedStep1 && styles.btnDisabled]}
+                onPress={() => setStep(2)}
+                disabled={!canProceedStep1}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.btnText}>Continue</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.btn, styles.actionFlex2, !canSubmit && styles.btnDisabled]}
+                onPress={saveProfile}
+                disabled={!canSubmit}
+                activeOpacity={0.85}
+              >
+                {saving ? (
+                  <ActivityIndicator color={Colors.white} />
+                ) : (
+                  <Text style={styles.btnText}>{isEditMode ? 'Save Changes' : 'Save & Continue'}</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+
     </View>
   );
 }
@@ -552,51 +610,68 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   safe: { flex: 1 },
   flex: { flex: 1 },
-  scroll: { padding: Spacing.lg, paddingTop: Spacing.xl, flexGrow: 1 },
-  loadingWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topRow: {
-    marginBottom: 16,
-  },
-  backBtn: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.paper,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  backText: {
-    fontSize: 13,
-    color: Colors.brownMid,
-    fontWeight: '600',
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  // Fixed header
+  fixedHeaderSafe: { backgroundColor: Colors.cream },
+  fixedHeader: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   wordmark: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.terracotta,
     letterSpacing: 2,
     textTransform: 'uppercase',
-    marginBottom: 24,
+    marginBottom: 6,
   },
   title: {
-    fontSize: 34,
+    fontSize: 24,
     fontWeight: '900',
     color: Colors.ink,
-    marginBottom: 10,
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 13,
     color: Colors.muted,
-    lineHeight: 22,
-    marginBottom: 28,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  stepPill: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.warmWhite,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  stepPillActive: {
+    borderColor: Colors.terracotta,
+    backgroundColor: Colors.terracotta,
+  },
+  stepPillText: {
+    fontSize: 11,
+    color: Colors.brownMid,
+    fontWeight: '700',
+  },
+  stepPillTextActive: {
+    color: Colors.white,
+  },
+
+  // Scrollable form area
+  scrollContent: {
+    padding: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xl,
+    flexGrow: 1,
   },
   field: { marginBottom: 14 },
   label: { fontSize: 12, color: Colors.brownMid, fontWeight: '600', marginBottom: 6 },
@@ -646,9 +721,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  ageInput: {
-    flex: 1,
-  },
+  ageInput: { flex: 1 },
   ageDash: {
     color: Colors.muted,
     fontSize: 20,
@@ -667,9 +740,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  switchInfo: {
-    flex: 1,
-  },
+  switchInfo: { flex: 1 },
   switchTitle: {
     fontSize: 13,
     color: Colors.ink,
@@ -704,10 +775,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  photo: {
-    width: '100%',
-    height: '100%',
-  },
+  photo: { width: '100%', height: '100%' },
   removePhotoBtn: {
     position: 'absolute',
     top: 4,
@@ -746,14 +814,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 12,
   },
+
+  // Pinned bottom action bar
+  bottomBar: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.cream,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionFlex1: { flex: 1 },
+  actionFlex2: { flex: 2 },
   btn: {
-    marginTop: 8,
-    height: 56,
+    height: 52,
     backgroundColor: Colors.terracotta,
     borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   btnDisabled: { backgroundColor: Colors.border },
-  btnText: { fontSize: 16, fontWeight: '700', color: Colors.white },
+  btnText: { fontSize: 15, fontWeight: '700', color: Colors.white },
+  secondaryBtn: {
+    height: 52,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.brownMid,
+  },
 });

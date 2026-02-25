@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '../constants/theme';
 import { supabase } from '../lib/supabase';
+import { resolvePostAuthRoute } from '../lib/services/auth';
 
 export default function Index() {
   const router = useRouter();
@@ -11,32 +12,40 @@ export default function Index() {
   useEffect(() => {
     let mounted = true;
 
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const getStableSession = async () => {
+      for (let i = 0; i < 6; i += 1) {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) return { session: null, error };
+        if (data.session) return { session: data.session, error: null };
+        // Fresh login can take a moment to hydrate persisted session on native.
+        await wait(250);
+      }
+      return { session: null, error: null };
+    };
+
     const bootstrap = async () => {
-      const { data, error } = await supabase.auth.getSession();
+      const { session, error } = await getStableSession();
 
       if (!mounted) {
         return;
       }
 
       if (error) {
-        router.replace('/onboarding');
+        router.replace('/(auth)');
         setLoading(false);
         return;
       }
 
-      if (!data.session) {
-        router.replace('/onboarding');
+      if (!session) {
+        router.replace('/(auth)');
         setLoading(false);
         return;
       }
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('user_id')
-        .eq('user_id', data.session.user.id)
-        .maybeSingle();
-
-      router.replace(profile ? '/(tabs)/home' : '/profile-setup');
+      const route = await resolvePostAuthRoute(session.user.id);
+      router.replace(route);
       setLoading(false);
     };
 
