@@ -624,42 +624,87 @@ export default function GroupDetailScreen() {
         {/* ── Members ── */}
         {activeTab === 'members' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionLabel}>
-              {members.length} {members.length === 1 ? 'member' : 'members'}
-            </Text>
-            <View style={styles.membersCard}>
-              {members.length === 0 ? (
-                <View style={styles.membersEmpty}>
-                  <Text style={styles.membersEmptyText}>No members yet.</Text>
+            <View style={styles.membersLabelRow}>
+              {!membership && (
+                <View style={styles.membersAvatarStack}>
+                  <View style={styles.memberAvatarPreview} />
+                  <View style={[styles.memberAvatarPreview, styles.memberAvatarPreviewOffset]} />
                 </View>
-              ) : members.map((m, i) => {
-                const info = memberNames[m.user_id];
-                const initial = (info?.name?.[0] || 'M').toUpperCase();
-                return (
-                  <View key={m.user_id} style={[styles.memberRow, i > 0 && styles.memberRowDivider]}>
-                    {info?.avatar ? (
-                      <Image source={{ uri: info.avatar }} style={styles.memberAvatar} />
-                    ) : (
-                      <View style={[styles.memberAvatar, styles.memberAvatarPlaceholder]}>
-                        <Text style={styles.memberInitial}>{initial}</Text>
+              )}
+              <Text style={[styles.sectionLabel, styles.membersLabelText]}>
+                {(membership ? members.length : group.member_count)}{' '}
+                {(membership ? members.length : group.member_count) === 1 ? 'member' : 'members'}
+              </Text>
+            </View>
+            <View style={styles.membersCard}>
+              {!membership ? (
+                /* ── Locked preview: ghost rows + overlay CTA ── */
+                <View style={styles.membersLockedWrap}>
+                  {Array.from({ length: Math.min(Math.max(group.member_count, 3), 5) }).map((_, i) => (
+                    <View
+                      key={i}
+                      style={[styles.memberRow, i > 0 && styles.memberRowDivider, styles.memberRowGhost]}
+                    >
+                      <View style={[styles.memberAvatar, styles.memberAvatarGhost]} />
+                      <View style={styles.memberInfo}>
+                        <View style={[styles.memberGhostBar, { width: [88, 116, 72, 104, 92][i % 5] }]} />
                       </View>
-                    )}
-                    <View style={styles.memberInfo}>
-                      <Text style={styles.memberName}>{info?.name || 'Member'}</Text>
-                      {(m.role === 'organizer' || m.role === 'moderator') && (
-                        <Text
-                          style={[
-                            styles.memberRole,
-                            m.role === 'organizer' && styles.memberRoleOrganizer,
-                          ]}
-                        >
-                          {m.role === 'organizer' ? 'Organizer' : 'Moderator'}
-                        </Text>
-                      )}
                     </View>
+                  ))}
+                  <View style={styles.membersLockedOverlay}>
+                    <View style={styles.membersLockedIconWrap}>
+                      <Ionicons name="lock-closed" size={20} color={Colors.terracotta} />
+                    </View>
+                    <Text style={styles.membersLockedCount}>
+                      {group.member_count} {group.member_count === 1 ? 'member' : 'members'}
+                    </Text>
+                    <Text style={styles.membersLockedHint}>Join to see who's here</Text>
+                    <TouchableOpacity
+                      style={[styles.membersLockedBtn, joining && { opacity: 0.6 }]}
+                      onPress={() => void joinGroup()}
+                      disabled={joining}
+                    >
+                      {joining
+                        ? <ActivityIndicator size="small" color={Colors.white} />
+                        : <Text style={styles.membersLockedBtnText}>Join Group</Text>
+                      }
+                    </TouchableOpacity>
                   </View>
-                );
-              })}
+                </View>
+              ) : members.length === 0 ? (
+                <View style={styles.membersEmpty}>
+                  <Text style={styles.membersEmptyText}>Could not load members right now.</Text>
+                </View>
+              ) : (
+                members.map((m, i) => {
+                  const info = memberNames[m.user_id];
+                  const initial = (info?.name?.[0] || 'M').toUpperCase();
+                  return (
+                    <View key={m.user_id} style={[styles.memberRow, i > 0 && styles.memberRowDivider]}>
+                      {info?.avatar ? (
+                        <Image source={{ uri: info.avatar }} style={styles.memberAvatar} />
+                      ) : (
+                        <View style={[styles.memberAvatar, styles.memberAvatarPlaceholder]}>
+                          <Text style={styles.memberInitial}>{initial}</Text>
+                        </View>
+                      )}
+                      <View style={styles.memberInfo}>
+                        <Text style={styles.memberName}>{info?.name || 'Member'}</Text>
+                        {(m.role === 'organizer' || m.role === 'moderator') && (
+                          <Text
+                            style={[
+                              styles.memberRole,
+                              m.role === 'organizer' && styles.memberRoleOrganizer,
+                            ]}
+                          >
+                            {m.role === 'organizer' ? 'Organizer' : 'Moderator'}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
             </View>
           </View>
         )}
@@ -1227,6 +1272,69 @@ const styles = StyleSheet.create({
   memberRoleOrganizer: { color: Colors.gold },
   membersEmpty: { paddingVertical: 28, alignItems: 'center' },
   membersEmptyText: { fontSize: 13, color: Colors.muted, fontStyle: 'italic' },
+  membersLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  membersLabelText: { marginBottom: 0, marginTop: 0 },
+  membersAvatarStack: { flexDirection: 'row' },
+  memberAvatarPreview: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.borderDark,
+    borderWidth: 2,
+    borderColor: Colors.cream,
+    opacity: 0.45,
+  },
+  memberAvatarPreviewOffset: { marginLeft: -10 },
+
+  // ── Members locked (non-member preview) ──
+  membersLockedWrap: { overflow: 'hidden' },
+  memberRowGhost: { opacity: 0.3 },
+  memberAvatarGhost: { backgroundColor: Colors.borderDark },
+  memberGhostBar: { height: 11, borderRadius: 6, backgroundColor: Colors.borderDark },
+  membersLockedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,250,245,0.88)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+    gap: 6,
+  },
+  membersLockedIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(196,98,45,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  membersLockedCount: { fontSize: 16, fontWeight: '800', color: Colors.ink },
+  membersLockedHint: {
+    fontSize: 13,
+    color: Colors.muted,
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 4,
+  },
+  membersLockedBtn: {
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 28,
+    paddingVertical: 11,
+    minWidth: 140,
+    alignItems: 'center',
+  },
+  membersLockedBtnText: { fontSize: 14, fontWeight: '700', color: Colors.white },
 
   // ── Events ──
   eventsHeaderRow: {

@@ -4,6 +4,7 @@ import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   FlatList,
   TouchableOpacity,
   TextInput,
@@ -26,18 +27,18 @@ import {
 } from '../../lib/services/groups';
 import { canUserJoinAnotherGroup } from '../../lib/services/billing';
 
-const CATEGORIES = ['All', 'Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
+const CATEGORIES = ['Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
 const ALL_CITIES_LABEL = 'All Cities';
 const VIRTUAL_CITY_LABEL = 'Virtual';
+const USER_CITY = 'Washington, DC';
 const DB_CATEGORY_BY_LABEL: Record<string, string | null> = {
-  All: null,
   Outdoors: 'outdoors',
   'Food & Drink': 'food_drink',
   Professional: 'professional',
   Language: 'language',
   Faith: 'faith',
 };
-const CREATE_CATEGORY_OPTIONS = CATEGORIES.filter((c) => c !== 'All');
+const CREATE_CATEGORY_OPTIONS = CATEGORIES;
 
 const CATEGORY_EMOJIS: Record<string, string | undefined> = {
   Outdoors: '🏕️',
@@ -74,7 +75,7 @@ function getGroupVisuals(category: string) {
 export default function GroupsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
-  const [activeCategory, setActiveCategory] = useState('All');
+  const [activeCategory, setActiveCategory] = useState('');
   const [activeCity, setActiveCity] = useState(ALL_CITIES_LABEL);
   const [tab, setTab] = useState<'mine' | 'discover'>('mine');
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -274,14 +275,13 @@ export default function GroupsScreen() {
   );
 
   const cityOptions = useMemo(() => {
-    const cities = Array.from(
+    return Array.from(
       new Set(
         groups
           .map((g) => (g.city ?? '').trim())
-          .filter((c) => c.length > 0)
+          .filter((c) => c.length > 0 && c !== USER_CITY)
       )
     ).sort((a, b) => a.localeCompare(b));
-    return [ALL_CITIES_LABEL, VIRTUAL_CITY_LABEL, ...cities];
   }, [groups]);
 
   const filtered = useMemo(() => groups.filter((g) => {
@@ -336,6 +336,13 @@ export default function GroupsScreen() {
             <Text style={styles.title}>Groups</Text>
             <Text style={styles.subtitle}>Washington, DC</Text>
           </View>
+          <TouchableOpacity
+            style={[styles.headerCreateBtn, showCreateForm && styles.headerCreateBtnActive]}
+            onPress={() => setShowCreateForm((v) => !v)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name={showCreateForm ? 'close' : 'add'} size={20} color={Colors.white} />
+          </TouchableOpacity>
         </View>
 
         {/* ── Tab Toggle ── */}
@@ -362,10 +369,30 @@ export default function GroupsScreen() {
           ))}
         </View>
 
-        {/* ── Search + Create ── */}
+        {/* ── Search ── */}
         <View style={styles.searchRow}>
           <View style={styles.searchBox}>
             <Ionicons name="search" size={16} color={Colors.muted} />
+            {activeCategory !== '' && (
+              <TouchableOpacity
+                style={styles.searchChip}
+                onPress={() => setActiveCategory('')}
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              >
+                <Text style={styles.searchChipText}>{CATEGORY_EMOJIS[activeCategory]} {activeCategory}</Text>
+                <Ionicons name="close" size={10} color={Colors.white} />
+              </TouchableOpacity>
+            )}
+            {tab === 'discover' && activeCity !== ALL_CITIES_LABEL && (
+              <TouchableOpacity
+                style={[styles.searchChip, styles.searchChipCity]}
+                onPress={() => setActiveCity(ALL_CITIES_LABEL)}
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              >
+                <Text style={styles.searchChipText}>📍 {activeCity}</Text>
+                <Ionicons name="close" size={10} color={Colors.white} />
+              </TouchableOpacity>
+            )}
             <TextInput
               style={styles.searchInput}
               placeholder="Search groups..."
@@ -379,13 +406,6 @@ export default function GroupsScreen() {
               </TouchableOpacity>
             )}
           </View>
-          <TouchableOpacity
-            style={[styles.createFab, showCreateForm && styles.createFabActive]}
-            onPress={() => setShowCreateForm((v) => !v)}
-            activeOpacity={0.85}
-          >
-            <Ionicons name={showCreateForm ? 'close' : 'add'} size={22} color={Colors.white} />
-          </TouchableOpacity>
         </View>
 
         {/* ── Create Form ── */}
@@ -449,83 +469,51 @@ export default function GroupsScreen() {
           </View>
         )}
 
-        {/* ── Category Chips ── */}
-        <FlatList
+        {/* ── Filters: category + city in one scroll row ── */}
+        <ScrollView
           horizontal
-          data={CATEGORIES}
-          keyExtractor={(c) => c}
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-          style={styles.chipsScroll}
-          renderItem={({ item: cat }) => {
+          contentContainerStyle={styles.filterBar}
+          style={styles.filterBarScroll}
+        >
+          <TouchableOpacity
+            style={[styles.chip, activeCategory === '' && styles.chipActive]}
+            onPress={() => { setActiveCategory(''); setActiveCity(ALL_CITIES_LABEL); }}
+          >
+            <Text style={[styles.chipText, activeCategory === '' && styles.chipTextActive]}>All</Text>
+          </TouchableOpacity>
+          {CATEGORIES.map((cat) => {
             const emoji = CATEGORY_EMOJIS[cat];
             const active = activeCategory === cat;
             return (
               <TouchableOpacity
+                key={cat}
                 style={[styles.chip, active && styles.chipActive]}
-                onPress={() => setActiveCategory(cat)}
+                onPress={() => setActiveCategory(active ? '' : cat)}
               >
                 {emoji ? <Text style={styles.chipEmoji}>{emoji}</Text> : null}
                 <Text style={[styles.chipText, active && styles.chipTextActive]}>{cat}</Text>
               </TouchableOpacity>
             );
-          }}
-        />
-
-        {/* ── City Chips (Discover tab only) ── */}
-        {tab === 'discover' && (
-          <FlatList
-            horizontal
-            data={cityOptions}
-            keyExtractor={(city) => city}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.cityChips}
-            style={styles.cityChipsScroll}
-            renderItem={({ item: city }) => (
-              <TouchableOpacity
-                style={[styles.cityChip, activeCity === city && styles.cityChipActive]}
-                onPress={() => setActiveCity(city)}
-              >
-                <Text style={[styles.cityChipText, activeCity === city && styles.cityChipTextActive]}>
-                  {city === ALL_CITIES_LABEL ? '📍 All' : city === VIRTUAL_CITY_LABEL ? '🌐 Virtual' : city}
-                </Text>
-              </TouchableOpacity>
-            )}
-          />
-        )}
-
-        {/* ── Active Filters Summary ── */}
-        {(activeCategory !== 'All' || (tab === 'discover' && activeCity !== ALL_CITIES_LABEL)) && (
-          <View style={styles.activeFiltersRow}>
-            {activeCategory !== 'All' && (
-              <TouchableOpacity
-                style={styles.activeFilterPill}
-                onPress={() => setActiveCategory('All')}
-              >
-                <Text style={styles.activeFilterPillText}>{CATEGORY_EMOJIS[activeCategory]} {activeCategory}</Text>
-                <Ionicons name="close-circle" size={12} color={Colors.terracotta} />
-              </TouchableOpacity>
-            )}
-            {tab === 'discover' && activeCity !== ALL_CITIES_LABEL && (
-              <TouchableOpacity
-                style={styles.activeFilterPill}
-                onPress={() => setActiveCity(ALL_CITIES_LABEL)}
-              >
-                <Text style={styles.activeFilterPillText}>
-                  {activeCity === VIRTUAL_CITY_LABEL ? '🌐' : '📍'} {activeCity}
-                </Text>
-                <Ionicons name="close-circle" size={12} color={Colors.terracotta} />
-              </TouchableOpacity>
-            )}
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity
-              onPress={() => { setActiveCategory('All'); setActiveCity(ALL_CITIES_LABEL); }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={styles.clearAllText}>Clear all</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+          })}
+          {tab === 'discover' && cityOptions.length > 0 && (
+            <>
+              <View style={styles.filterDivider} />
+              {cityOptions.map((city) => {
+                const active = activeCity === city;
+                return (
+                  <TouchableOpacity
+                    key={city}
+                    style={[styles.cityChip, active && styles.cityChipActive]}
+                    onPress={() => setActiveCity(active ? ALL_CITIES_LABEL : city)}
+                  >
+                    <Text style={[styles.cityChipText, active && styles.cityChipTextActive]}>📍 {city}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </>
+          )}
+        </ScrollView>
 
         {/* ── List ── */}
         {loading ? (
@@ -553,7 +541,7 @@ export default function GroupsScreen() {
                 <Text style={styles.emptySubtext}>
                   {loadError || (tab === 'mine'
                     ? 'Discover and join a group to get started'
-                    : (activeCategory !== 'All' || activeCity !== ALL_CITIES_LABEL)
+                    : (activeCategory !== '' || activeCity !== ALL_CITIES_LABEL)
                       ? 'Try clearing some filters'
                       : 'Try a different search or category')}
                 </Text>
@@ -698,16 +686,23 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 13, fontWeight: '600', color: Colors.muted },
   tabTextActive: { color: Colors.terracotta },
 
-  // ── Search + Create ──
-  searchRow: {
-    flexDirection: 'row',
+  // ── Header create button ──
+  headerCreateBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.terracotta,
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
+  },
+  headerCreateBtnActive: { backgroundColor: Colors.brownMid },
+
+  // ── Search ──
+  searchRow: {
     marginHorizontal: Spacing.lg,
     marginBottom: Spacing.sm,
   },
   searchBox: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -718,16 +713,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     height: 44,
   },
-  searchInput: { flex: 1, fontSize: 14, color: Colors.ink },
-  createFab: {
-    width: 44,
-    height: 44,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.terracotta,
+  searchInput: { flex: 1, fontSize: 14, color: Colors.ink, minWidth: 40 },
+  searchChip: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  createFabActive: { backgroundColor: Colors.brownMid },
+  searchChipCity: { backgroundColor: Colors.brownMid },
+  searchChipText: { fontSize: 11, fontWeight: '700', color: Colors.white },
 
   // ── Create Form ──
   createCard: {
@@ -776,41 +773,38 @@ const styles = StyleSheet.create({
   createSubmitDisabled: { opacity: 0.6 },
   createSubmitText: { color: Colors.white, fontSize: 14, fontWeight: '700' },
 
-  // ── Category Chips ──
-  chipsScroll: { flexGrow: 0 },
-  chips: {
+  // ── Combined filter bar (category + city in one row) ──
+  filterBarScroll: { flexGrow: 0 },
+  filterBar: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.sm,
-    gap: 8,
+    gap: 7,
     alignItems: 'center',
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    height: 34,
+    gap: 4,
+    paddingHorizontal: 11,
+    height: 32,
     borderRadius: Radius.full,
     backgroundColor: Colors.paper,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   chipActive: { backgroundColor: Colors.terracotta, borderColor: Colors.terracotta },
-  chipEmoji: { fontSize: 13 },
+  chipEmoji: { fontSize: 12 },
   chipText: { fontSize: 12, fontWeight: '600', color: Colors.muted },
   chipTextActive: { color: Colors.white },
-
-  // ── City Chips (secondary / Discover only) ──
-  cityChipsScroll: { flexGrow: 0 },
-  cityChips: {
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.sm,
-    gap: 6,
-    alignItems: 'center',
+  filterDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: Colors.border,
+    marginHorizontal: 2,
   },
   cityChip: {
-    paddingHorizontal: 11,
-    height: 27,
+    paddingHorizontal: 10,
+    height: 28,
     borderRadius: Radius.full,
     backgroundColor: Colors.warmWhite,
     borderWidth: 1,
@@ -821,34 +815,6 @@ const styles = StyleSheet.create({
   cityChipActive: { backgroundColor: Colors.brownLight, borderColor: Colors.brownLight },
   cityChipText: { fontSize: 11, fontWeight: '600', color: Colors.muted },
   cityChipTextActive: { color: Colors.white },
-
-  // ── Active Filters Summary ──
-  activeFiltersRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    backgroundColor: 'rgba(196,98,45,0.05)',
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: 'rgba(196,98,45,0.15)',
-  },
-  activeFilterPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.full,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(196,98,45,0.25)',
-  },
-  activeFilterPillText: { fontSize: 11, fontWeight: '700', color: Colors.terracotta },
-  clearAllText: { fontSize: 11, fontWeight: '600', color: Colors.muted, textDecorationLine: 'underline' },
 
   // ── Loading ──
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
