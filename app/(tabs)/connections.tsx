@@ -283,7 +283,12 @@ export default function ConnectionsScreen() {
                   <View style={styles.connInfo}>
                     <Text style={styles.connName}>{c.name}</Text>
                     <Text style={styles.connGroup}>{c.groupEmoji} {c.groupName}</Text>
-                    <Text style={styles.connLast} numberOfLines={1}>{c.lastMessage}</Text>
+                    <Text
+                      style={[styles.connLast, c.lastAt ? styles.connLastMsg : styles.connLastEmpty]}
+                      numberOfLines={1}
+                    >
+                      {c.lastAt ? c.lastMessage : 'Start the conversation'}
+                    </Text>
                   </View>
                   <View style={styles.connRight}>
                     <Text style={styles.connDate}>{c.lastAt}</Text>
@@ -456,6 +461,8 @@ const styles = StyleSheet.create({
   connName: { fontSize: 15, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
   connGroup: { fontSize: 11, color: Colors.terracotta, fontWeight: '600', marginBottom: 3 },
   connLast: { fontSize: 12, color: Colors.muted },
+  connLastMsg: { color: Colors.brownMid, fontWeight: '500' },
+  connLastEmpty: { fontStyle: 'italic' },
   connRight: { alignItems: 'flex-end', gap: 4 },
   connDate: { fontSize: 11, color: Colors.muted },
 

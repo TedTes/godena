@@ -401,6 +401,15 @@ export default function ConnectionChatScreen() {
                 </View>
               </View>
             )}
+            ListHeaderComponent={
+              messages.length > 0 && group ? (
+                <View style={styles.convoOriginBar}>
+                  <Text style={styles.convoOriginText}>
+                    {groupEmoji(group.category)} Connected through {group.name}
+                  </Text>
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyEmoji}>👋</Text>
@@ -593,4 +602,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   quietBtnText: { color: Colors.muted, fontWeight: '600', fontSize: 14 },
+
+  convoOriginBar: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.sm },
+  convoOriginText: { fontSize: 11, color: Colors.muted, textAlign: 'center' },
 });
