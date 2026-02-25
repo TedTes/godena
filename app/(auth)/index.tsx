@@ -21,6 +21,56 @@ export default function AuthChoiceScreen() {
   const router = useRouter();
   const [loadingProvider, setLoadingProvider] = useState<Provider | null>(null);
   const [error, setError] = useState('');
+  const oauthRedirectTo = 'godena://auth/callback';
+
+  const routeSignedInUser = async () => {
+    const { data } = await supabase.auth.getSession();
+    const userId = data.session?.user.id;
+    if (!userId) return;
+    try {
+      const route = await resolvePostAuthRoute(userId);
+      router.replace(route);
+    } catch {
+      router.replace('/');
+    }
+  };
+
+  const exchangeCodeFromUrl = async (url: string) => {
+    const parsed = Linking.parse(url);
+    const code = typeof parsed.queryParams?.code === 'string' ? parsed.queryParams.code : null;
+    if (!code) return;
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    if (exchangeError) {
+      setError(exchangeError.message);
+      return;
+    }
+    await routeSignedInUser();
+  };
+
+  const openOAuthSession = async (url: string) => {
+    // Prefer in-app auth session when available.
+    try {
+      const WebBrowser = require('expo-web-browser');
+      if (typeof WebBrowser?.maybeCompleteAuthSession === 'function') {
+        WebBrowser.maybeCompleteAuthSession();
+      }
+      if (typeof WebBrowser?.openAuthSessionAsync === 'function') {
+        const result = await WebBrowser.openAuthSessionAsync(url, oauthRedirectTo);
+        if (result?.type === 'success' && typeof result?.url === 'string') {
+          await exchangeCodeFromUrl(result.url);
+          return true;
+        }
+        if (result?.type === 'cancel' || result?.type === 'dismiss') {
+          return false;
+        }
+      }
+    } catch {
+      // Fallback below to deep-link browser open.
+    }
+
+    const opened = await Linking.openURL(url).catch(() => false);
+    return !!opened;
+  };
 
   const continueWithAppleNative = async () => {
     // Use runtime require so app can still compile even before package install.
@@ -99,23 +149,27 @@ export default function AuthChoiceScreen() {
         }
       }
 
-      const redirectTo = 'godena://';
       const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo,
+          redirectTo: oauthRedirectTo,
           skipBrowserRedirect: true,
         },
       });
 
-      setLoadingProvider(null);
-
       if (oauthError || !data?.url) {
-        setError(oauthError?.message || `Could not continue with ${provider}.`);
+        const msg = oauthError?.message ?? '';
+        if (msg.toLowerCase().includes('provider is not enabled')) {
+          setError(`${provider[0].toUpperCase()}${provider.slice(1)} sign-in is not enabled in Supabase yet.`);
+        } else {
+          setError(oauthError?.message || `Could not continue with ${provider}.`);
+        }
+        setLoadingProvider(null);
         return;
       }
 
-      const opened = await Linking.openURL(data.url).catch(() => false);
+      const opened = await openOAuthSession(data.url);
+      setLoadingProvider(null);
       if (!opened) {
         setError(`Could not open ${provider} sign in.`);
       }

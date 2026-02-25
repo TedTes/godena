@@ -21,6 +21,7 @@ type Mode = 'signin' | 'signup';
 export default function EmailAuthScreen() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('signin');
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -43,6 +44,9 @@ export default function EmailAuthScreen() {
       setLoading(true);
       setError('');
       setInfo('');
+      if (mode === 'signup') {
+        setPendingVerificationEmail(null);
+      }
 
       if (mode === 'signin') {
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
@@ -51,7 +55,12 @@ export default function EmailAuthScreen() {
         });
         setLoading(false);
         if (signInError) {
-          setError(signInError.message);
+          const msg = signInError.message.toLowerCase();
+          if (msg.includes('email not confirmed') || msg.includes('email_not_confirmed')) {
+            setError('Please verify your email first, then sign in.');
+          } else {
+            setError(signInError.message);
+          }
           return;
         }
         const userId = signInData.session?.user.id;
@@ -79,19 +88,23 @@ export default function EmailAuthScreen() {
         return;
       }
 
-      // If email confirmations are disabled, session is immediate.
-      if (data.session) {
-        try {
-          const route = await resolvePostAuthRoute(data.session.user.id);
-          router.replace(route);
-        } catch {
-          router.replace('/');
-        }
+      const identitiesCount = data.user?.identities?.length ?? 0;
+      // Supabase can return user + no error for existing accounts when confirmations are enabled.
+      if (identitiesCount === 0) {
+        setInfo('This email is already registered. Check your inbox for verification, or sign in.');
+        setPassword('');
+        setConfirmPassword('');
         return;
       }
 
-      setInfo('Account created. Check your email to confirm, then sign in.');
-      setMode('signin');
+      // Keep flow explicit: verify email first, then sign in.
+      // If project settings auto-create a session, clear it so user still verifies first.
+      if (data.session) {
+        await supabase.auth.signOut();
+      }
+
+      setPendingVerificationEmail(normalizedEmail);
+      setInfo('');
       setPassword('');
       setConfirmPassword('');
     })();
@@ -118,69 +131,96 @@ export default function EmailAuthScreen() {
               </Text>
             </View>
 
-            <View style={styles.modeRow}>
-              <TouchableOpacity
-                style={[styles.modeBtn, mode === 'signin' && styles.modeBtnActive]}
-                onPress={() => setMode('signin')}
-              >
-                <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modeBtn, mode === 'signup' && styles.modeBtnActive]}
-                onPress={() => setMode('signup')}
-              >
-                <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>Create Account</Text>
-              </TouchableOpacity>
-            </View>
+            {mode === 'signup' && pendingVerificationEmail ? (
+              <View style={styles.verifyCard}>
+                <Text style={styles.verifyTitle}>Check your email</Text>
+                <Text style={styles.verifyBody}>
+                  We sent a verification link to{'\n'}
+                  <Text style={styles.verifyEmail}>{pendingVerificationEmail}</Text>
+                </Text>
+                <Text style={styles.verifyHint}>
+                  Verify your email, then continue to sign in.
+                </Text>
+                <TouchableOpacity
+                  style={styles.btn}
+                  onPress={() => {
+                    setMode('signin');
+                    setPendingVerificationEmail(null);
+                    setInfo('');
+                    setError('');
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.btnText}>Go to Sign In</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <View style={styles.modeRow}>
+                  <TouchableOpacity
+                    style={[styles.modeBtn, mode === 'signin' && styles.modeBtnActive]}
+                    onPress={() => setMode('signin')}
+                  >
+                    <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modeBtn, mode === 'signup' && styles.modeBtnActive]}
+                    onPress={() => setMode('signup')}
+                  >
+                    <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>Create Account</Text>
+                  </TouchableOpacity>
+                </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor={Colors.muted}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
-              autoCorrect={false}
-            />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Email"
+                  placeholderTextColor={Colors.muted}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCorrect={false}
+                />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Password (min 8 chars)"
-              placeholderTextColor={Colors.muted}
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-              autoCapitalize="none"
-            />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password (min 8 chars)"
+                  placeholderTextColor={Colors.muted}
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                  autoCapitalize="none"
+                />
 
-            {mode === 'signup' ? (
-              <TextInput
-                style={styles.input}
-                placeholder="Confirm password"
-                placeholderTextColor={Colors.muted}
-                secureTextEntry
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                autoCapitalize="none"
-              />
-            ) : null}
+                {mode === 'signup' ? (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Confirm password"
+                    placeholderTextColor={Colors.muted}
+                    secureTextEntry
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    autoCapitalize="none"
+                  />
+                ) : null}
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            {info ? <Text style={styles.infoText}>{info}</Text> : null}
+                {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                {info ? <Text style={styles.infoText}>{info}</Text> : null}
 
-            <TouchableOpacity
-              style={[styles.btn, !canSubmit && styles.btnDisabled]}
-              onPress={submit}
-              disabled={!canSubmit}
-              activeOpacity={0.85}
-            >
-              {loading ? (
-                <ActivityIndicator color={Colors.white} />
-              ) : (
-                <Text style={styles.btnText}>{mode === 'signin' ? 'Sign In' : 'Create Account'}</Text>
-              )}
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, !canSubmit && styles.btnDisabled]}
+                  onPress={submit}
+                  disabled={!canSubmit}
+                  activeOpacity={0.85}
+                >
+                  {loading ? (
+                    <ActivityIndicator color={Colors.white} />
+                  ) : (
+                    <Text style={styles.btnText}>{mode === 'signin' ? 'Sign In' : 'Create Account'}</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -273,6 +313,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     marginBottom: 8,
+  },
+  verifyCard: {
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    gap: 10,
+  },
+  verifyTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  verifyBody: {
+    fontSize: 14,
+    color: Colors.brownMid,
+    lineHeight: 22,
+  },
+  verifyEmail: {
+    color: Colors.terracotta,
+    fontWeight: '700',
+  },
+  verifyHint: {
+    fontSize: 13,
+    color: Colors.muted,
+    lineHeight: 20,
   },
   btn: {
     marginTop: 8,
