@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { resolvePostAuthRoute } from '../../lib/services/auth';
 
 const CODE_LENGTH = 6;
 
@@ -39,7 +40,7 @@ export default function OtpScreen() {
     setLoading(true);
     setError('');
 
-    const { error: verifyError } = await supabase.auth.verifyOtp({
+    const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
       phone,
       token,
       type: 'sms',
@@ -51,7 +52,13 @@ export default function OtpScreen() {
       return;
     }
 
-    router.replace('/');
+    const userId = verifyData.session?.user.id;
+    if (!userId) {
+      router.replace('/');
+      return;
+    }
+    const route = await resolvePostAuthRoute(userId);
+    router.replace(route);
   };
 
   const handleChange = (val: string) => {

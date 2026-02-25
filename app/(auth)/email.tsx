@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { resolvePostAuthRoute } from '../../lib/services/auth';
 
 type Mode = 'signin' | 'signup';
 
@@ -44,7 +45,7 @@ export default function EmailAuthScreen() {
       setInfo('');
 
       if (mode === 'signin') {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email: normalizedEmail,
           password,
         });
@@ -53,7 +54,13 @@ export default function EmailAuthScreen() {
           setError(signInError.message);
           return;
         }
-        router.replace('/');
+        const userId = signInData.session?.user.id;
+        if (!userId) {
+          router.replace('/');
+          return;
+        }
+        const route = await resolvePostAuthRoute(userId);
+        router.replace(route);
         return;
       }
 
@@ -70,7 +77,8 @@ export default function EmailAuthScreen() {
 
       // If email confirmations are disabled, session is immediate.
       if (data.session) {
-        router.replace('/');
+        const route = await resolvePostAuthRoute(data.session.user.id);
+        router.replace(route);
         return;
       }
 
