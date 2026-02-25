@@ -30,7 +30,6 @@ const GENDER_OPTIONS = [
   { value: 'woman', label: 'Woman' },
   { value: 'man', label: 'Man' },
   { value: 'non_binary', label: 'Non-binary' },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
 ] as const;
 
 type GenderValue = (typeof GENDER_OPTIONS)[number]['value'];
@@ -53,12 +52,13 @@ export default function ProfileSetupScreen() {
   const [religion, setReligion] = useState('');
   const [languagesInput, setLanguagesInput] = useState('');
   const [intent, setIntent] = useState<(typeof INTENT_OPTIONS)[number]['value']>('dating');
-  const [gender, setGender] = useState<GenderValue>('prefer_not_to_say');
+  const [gender, setGender] = useState<GenderValue | null>(null);
   const [preferredGenders, setPreferredGenders] = useState<GenderValue[]>([]);
   const [preferredAgeMin, setPreferredAgeMin] = useState('');
   const [preferredAgeMax, setPreferredAgeMax] = useState('');
   const [isOpenToConnections, setIsOpenToConnections] = useState(true);
   const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
+  const [pickingPhoto, setPickingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [step, setStep] = useState<1 | 2>(1);
@@ -68,7 +68,7 @@ export default function ProfileSetupScreen() {
     city.trim().length >= 2 &&
     ethnicity.trim().length >= 2 &&
     !saving;
-  const canProceedStep1 = fullName.trim().length >= 2 && city.trim().length >= 2;
+  const canProceedStep1 = fullName.trim().length >= 2 && city.trim().length >= 2 && !!gender;
 
   const parsedLanguages = languagesInput
     .split(',')
@@ -112,7 +112,8 @@ export default function ProfileSetupScreen() {
       setReligion(existingProfile.religion ?? '');
       setLanguagesInput((existingProfile.languages ?? []).join(', '));
       setIntent((existingProfile.intent as typeof intent) ?? 'dating');
-      setGender((existingProfile.gender as GenderValue) ?? 'prefer_not_to_say');
+      const existingGender = existingProfile.gender as GenderValue | null;
+      setGender(existingGender && GENDER_OPTIONS.some((g) => g.value === existingGender) ? existingGender : null);
       setPreferredGenders((existingProfile.preferred_genders as GenderValue[] | null) ?? []);
       setPreferredAgeMin(existingProfile.preferred_age_min?.toString() ?? '');
       setPreferredAgeMax(existingProfile.preferred_age_max?.toString() ?? '');
@@ -124,6 +125,7 @@ export default function ProfileSetupScreen() {
   }, []);
 
   const addPhoto = async () => {
+    if (pickingPhoto) return;
     setError('');
     if (photos.length >= 4) {
       Alert.alert('Photo limit reached', 'You can upload up to 4 photos.');
@@ -131,7 +133,12 @@ export default function ProfileSetupScreen() {
     }
 
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      setPickingPhoto(true);
+
+      const existingPermission = await ImagePicker.getMediaLibraryPermissionsAsync();
+      const permission = existingPermission.granted
+        ? existingPermission
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         setError('Photo library permission is required to add profile photos.');
         return;
@@ -158,6 +165,8 @@ export default function ProfileSetupScreen() {
     }
     } catch (pickerError: any) {
       setError(pickerError?.message ?? 'Could not open photo library.');
+    } finally {
+      setPickingPhoto(false);
     }
   };
 
@@ -199,7 +208,7 @@ export default function ProfileSetupScreen() {
 
     const { data: existingProfile } = await supabase
       .from('profiles')
-      .select('photo_urls')
+      .select('photo_urls, avatar_url')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -244,6 +253,10 @@ export default function ProfileSetupScreen() {
       uploadedPhotoPaths.length > 0
         ? uploadedPhotoPaths
         : (existingProfile?.photo_urls ?? []);
+    const nextAvatarUrl =
+      uploadedPhotoPaths.length > 0
+        ? uploadedPhotoPaths[0]
+        : (existingProfile?.avatar_url ?? null);
 
     const { error: upsertError } = await supabase.from('profiles').upsert({
       user_id: user.id,
@@ -259,6 +272,7 @@ export default function ProfileSetupScreen() {
       preferred_age_min: minAge,
       preferred_age_max: maxAge,
       is_open_to_connections: isOpenToConnections,
+      avatar_url: nextAvatarUrl,
       photo_urls: nextPhotoUrls,
       last_active_at: new Date().toISOString(),
     });
@@ -457,7 +471,7 @@ export default function ProfileSetupScreen() {
               <View style={styles.field}>
                 <Text style={styles.label}>Preferred genders</Text>
                 <View style={styles.intentRow}>
-                  {GENDER_OPTIONS.filter((option) => option.value !== 'prefer_not_to_say').map((option) => {
+                  {GENDER_OPTIONS.map((option) => {
                     const selected = preferredGenders.includes(option.value);
                     return (
                       <TouchableOpacity
@@ -549,8 +563,17 @@ export default function ProfileSetupScreen() {
                       </View>
                     ))}
                     {photos.length < 4 ? (
-                      <TouchableOpacity style={styles.addPhotoBtn} onPress={addPhoto} activeOpacity={0.85}>
-                        <Text style={styles.addPhotoText}>+ Add</Text>
+                      <TouchableOpacity
+                        style={[styles.addPhotoBtn, pickingPhoto && styles.addPhotoBtnDisabled]}
+                        onPress={addPhoto}
+                        activeOpacity={0.85}
+                        disabled={pickingPhoto}
+                      >
+                        {pickingPhoto ? (
+                          <ActivityIndicator size="small" color={Colors.terracotta} />
+                        ) : (
+                          <Text style={styles.addPhotoText}>+ Add</Text>
+                        )}
                       </TouchableOpacity>
                     ) : null}
                   </View>
@@ -803,6 +826,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.warmWhite,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  addPhotoBtnDisabled: {
+    opacity: 0.6,
   },
   addPhotoText: {
     fontSize: 12,
