@@ -65,6 +65,7 @@ export default function ProfileScreen() {
 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [updatingPhoto, setUpdatingPhoto] = useState(false);
+  const [updatingGlobalOpen, setUpdatingGlobalOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -210,6 +211,30 @@ export default function ProfileScreen() {
 
   const toggleGroup = (id: string, val: boolean) =>
     setOpenGroups((prev) => ({ ...prev, [id]: val }));
+
+  const toggleGlobalOpen = async (value: boolean) => {
+    if (!userId || updatingGlobalOpen) return;
+    const prevValue = profile?.is_open_to_connections ?? true;
+
+    setUpdatingGlobalOpen(true);
+    setProfile((prev) => (prev ? { ...prev, is_open_to_connections: value } : prev));
+    if (!value) {
+      setOpenGroups((prev) =>
+        Object.fromEntries(Object.keys(prev).map((groupId) => [groupId, false]))
+      );
+    }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ is_open_to_connections: value })
+      .eq('user_id', userId);
+
+    if (error) {
+      setProfile((prev) => (prev ? { ...prev, is_open_to_connections: prevValue } : prev));
+      Alert.alert('Update failed', error.message);
+    }
+    setUpdatingGlobalOpen(false);
+  };
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -523,6 +548,26 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          {/* ── Open to Connections Quick Toggle ── */}
+          {profile && (
+            <View style={styles.openQuickRow}>
+              <View style={styles.openQuickLeft}>
+                <Text style={styles.openQuickEmoji}>🌱</Text>
+                <View>
+                  <Text style={styles.openQuickTitle}>Open to connections</Text>
+                  <Text style={styles.openQuickSub}>Across all groups · private</Text>
+                </View>
+              </View>
+              <Switch
+                value={profile.is_open_to_connections ?? true}
+                onValueChange={(val) => { void toggleGlobalOpen(val); }}
+                disabled={updatingGlobalOpen}
+                trackColor={{ false: Colors.border, true: Colors.olive }}
+                thumbColor={Colors.white}
+              />
+            </View>
+          )}
+
           {/* ── Completeness Banner ── */}
           {!isProfileComplete && (
             <TouchableOpacity
@@ -669,6 +714,23 @@ export default function ProfileScreen() {
             <Text style={styles.sectionSubtext}>
               Only visible to you. A reveal fires only when it's mutual.
             </Text>
+
+            <View style={[styles.card, styles.globalOpenCard]}>
+              <View style={styles.globalOpenLeft}>
+                <Text style={styles.globalOpenTitle}>Open to connections</Text>
+                <Text style={styles.globalOpenText}>
+                  Controls your availability across all groups.
+                </Text>
+              </View>
+              <Switch
+                value={profile?.is_open_to_connections ?? true}
+                onValueChange={(val) => { void toggleGlobalOpen(val); }}
+                disabled={updatingGlobalOpen}
+                trackColor={{ false: Colors.border, true: Colors.olive }}
+                thumbColor={Colors.white}
+              />
+            </View>
+
             <View style={styles.card}>
               {myGroups.map((g, i) => (
                 <View key={g.id} style={[styles.infoRow, i > 0 && styles.infoRowDivider]}>
@@ -851,6 +913,25 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   editBtnText: { fontSize: 13, color: Colors.brown, fontWeight: '700' },
+
+  // ── Open quick row ──
+  openQuickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: Spacing.lg,
+    marginTop: 16,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  openQuickLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  openQuickEmoji: { fontSize: 20 },
+  openQuickTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 1 },
+  openQuickSub: { fontSize: 11, color: Colors.muted },
 
   // ── Completeness banner ──
   completenessBanner: {
@@ -1064,6 +1145,16 @@ const styles = StyleSheet.create({
   signalName: { fontSize: 13, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
   signalState: { fontSize: 11, color: Colors.muted },
   signalStateOn: { color: Colors.olive, fontWeight: '600' },
+  globalOpenCard: {
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  globalOpenLeft: { flex: 1 },
+  globalOpenTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
+  globalOpenText: { fontSize: 12, color: Colors.muted, lineHeight: 17 },
 
   // ── Settings ──
   settingsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },

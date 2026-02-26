@@ -1,8 +1,10 @@
 import { Tabs } from 'expo-router';
-import { View, Text, StyleSheet } from 'react-native';
+import { Animated, View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useRef, useState } from 'react';
 import { Colors } from '../../constants/theme';
+import { supabase } from '../../lib/supabase';
 
 type TabIconProps = {
   name: React.ComponentProps<typeof Ionicons>['name'];
@@ -11,8 +13,19 @@ type TabIconProps = {
 };
 
 function TabIcon({ name, focused, badge }: TabIconProps) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: focused ? 1.2 : 1,
+      tension: 300,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [focused]);
+
   return (
-    <View style={styles.iconWrap}>
+    <Animated.View style={[styles.iconWrap, { transform: [{ scale }] }]}>
       <Ionicons
         name={name}
         size={24}
@@ -23,12 +36,52 @@ function TabIcon({ name, focused, badge }: TabIconProps) {
           <Text style={styles.badgeText}>{badge}</Text>
         </View>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const [pendingConnectionsCount, setPendingConnectionsCount] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadPendingCount = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData.session?.user.id;
+      if (!uid) {
+        if (mounted) setPendingConnectionsCount(0);
+        return;
+      }
+
+      const { count } = await supabase
+        .from('connections')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+        .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`);
+
+      if (mounted) setPendingConnectionsCount(count ?? 0);
+    };
+
+    void loadPendingCount();
+
+    const channel = supabase
+      .channel('tabs-connections-count')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'connections' },
+        () => {
+          void loadPendingCount();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      void supabase.removeChannel(channel);
+    };
+  }, []);
 
   return (
     <Tabs
@@ -86,7 +139,11 @@ export default function TabLayout() {
         options={{
           title: 'Connections',
           tabBarIcon: ({ focused }) => (
-            <TabIcon name={focused ? 'heart' : 'heart-outline'} focused={focused} badge={1} />
+            <TabIcon
+              name={focused ? 'heart' : 'heart-outline'}
+              focused={focused}
+              badge={pendingConnectionsCount > 0 ? pendingConnectionsCount : undefined}
+            />
           ),
         }}
       />

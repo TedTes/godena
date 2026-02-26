@@ -95,7 +95,6 @@ function groupEmoji(category?: string) {
 export default function ConnectionsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [isPremium, setIsPremium] = useState(false);
   const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [revealHistory, setRevealHistory] = useState<RevealHistoryItem[]>([]);
@@ -113,7 +112,6 @@ export default function ConnectionsScreen() {
         const { data: sessionData } = await supabase.auth.getSession();
         const uid = sessionData.session?.user.id ?? null;
         if (!uid) {
-          setIsPremium(false);
           setPendingReveal(null);
           setActiveConnections([]);
           setRevealHistory([]);
@@ -121,19 +119,13 @@ export default function ConnectionsScreen() {
           return;
         }
 
-        const [profileRes, connectionsRes] = await Promise.all([
-          supabase.from('profiles').select('is_premium').eq('user_id', uid).maybeSingle(),
-          supabase
-            .from('connections')
-            .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
-            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
-            .order('revealed_at', { ascending: false }),
-        ]);
+        const { data: connectionsData } = await supabase
+          .from('connections')
+          .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
+          .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
+          .order('revealed_at', { ascending: false });
 
-        const premium = !!profileRes.data?.is_premium;
-        setIsPremium(premium);
-
-        const rows = (connectionsRes.data ?? []) as ConnectionRow[];
+        const rows = (connectionsData ?? []) as ConnectionRow[];
         if (rows.length === 0) {
           setPendingReveal(null);
           setActiveConnections([]);
@@ -217,25 +209,21 @@ export default function ConnectionsScreen() {
           })
         );
 
-        if (premium) {
-          setRevealHistory(
-            historyRows.slice(0, 20).map((c) => {
-              const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
-              const p = profileByUser.get(otherId);
-              const g = groupById.get(c.group_id);
-              return {
-                id: c.id,
-                name: p?.full_name || 'Connection',
-                groupName: g?.name || 'Group',
-                groupEmoji: groupEmoji(g?.category),
-                status: c.status,
-                dateLabel: new Date(c.revealed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-              };
-            })
-          );
-        } else {
-          setRevealHistory([]);
-        }
+        setRevealHistory(
+          historyRows.slice(0, 20).map((c) => {
+            const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
+            const p = profileByUser.get(otherId);
+            const g = groupById.get(c.group_id);
+            return {
+              id: c.id,
+              name: p?.full_name || 'Connection',
+              groupName: g?.name || 'Group',
+              groupEmoji: groupEmoji(g?.category),
+              status: c.status,
+              dateLabel: new Date(c.revealed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            };
+          })
+        );
 
         setLoading(false);
       };
@@ -355,25 +343,33 @@ export default function ConnectionsScreen() {
                         </View>
                         <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
                           <View style={styles.revealGlow} />
-                          <View style={styles.revealTop}>
-                            <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
-                            <View style={styles.revealBadge}>
-                              <Text style={styles.revealBadgeText}>✨</Text>
+                          <View style={styles.revealRow}>
+                            <View style={styles.revealLeftCol}>
+                              <View style={styles.revealTop}>
+                                <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
+                                <View style={styles.revealBadge}>
+                                  <Text style={styles.revealBadgeText}>✨</Text>
+                                </View>
+                              </View>
+                            </View>
+                            <View style={styles.revealContent}>
+                              <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
+                              <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
+                              <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
+                            </View>
+                            <View style={styles.revealChevronWrap}>
+                              <Ionicons name="chevron-forward" size={20} color="rgba(245,240,232,0.85)" />
                             </View>
                           </View>
-                          <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
-                          <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
-                          <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
-                          <TouchableOpacity style={styles.revealBtn} onPress={() => router.push('/reveal')} activeOpacity={0.85}>
-                            <Text style={styles.revealBtnText}>View Introduction</Text>
-                          </TouchableOpacity>
                         </TouchableOpacity>
                       </View>
                     )}
 
                     {/* Active connections */}
                     <View style={styles.section}>
-                      <Text style={styles.sectionLabel}>Active Connections</Text>
+                      <View style={styles.sectionHeader}>
+                        <Text style={styles.sectionLabel}>Active Connections</Text>
+                      </View>
                       {activeConnections.length > 0 ? (
                         activeConnections.map((c) => (
                           <TouchableOpacity
@@ -384,7 +380,13 @@ export default function ConnectionsScreen() {
                           >
                             <Image source={{ uri: c.photo }} style={styles.connPhoto} />
                             <View style={styles.connInfo}>
-                              <Text style={styles.connName}>{c.name}</Text>
+                              <View style={styles.connTopRow}>
+                                <Text style={styles.connName} numberOfLines={1}>{c.name}</Text>
+                                <View style={styles.connTopRight}>
+                                  <Text style={styles.connDate}>{c.lastAt}</Text>
+                                  <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+                                </View>
+                              </View>
                               <Text style={styles.connGroup}>{c.groupEmoji} {c.groupName}</Text>
                               <Text
                                 style={[styles.connLast, c.lastAt ? styles.connLastMsg : styles.connLastEmpty]}
@@ -393,15 +395,17 @@ export default function ConnectionsScreen() {
                                 {c.lastAt ? c.lastMessage : 'Start the conversation'}
                               </Text>
                             </View>
-                            <View style={styles.connRight}>
-                              <Text style={styles.connDate}>{c.lastAt}</Text>
-                              <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
-                            </View>
                           </TouchableOpacity>
                         ))
                       ) : (
-                        <View style={styles.emptyCard}>
-                          <Text style={styles.emptyCardText}>Accepted introductions will appear here as conversations.</Text>
+                        <View style={styles.activeEmptyWrap}>
+                          <View style={styles.activeEmptyIconBox}>
+                            <Ionicons name="chatbubbles-outline" size={22} color={Colors.brownLight} />
+                          </View>
+                          <Text style={styles.activeEmptyTitle}>No active connections yet</Text>
+                          <Text style={styles.activeEmptyText}>
+                            Accepted introductions will appear here as conversations.
+                          </Text>
                         </View>
                       )}
                     </View>
@@ -409,31 +413,26 @@ export default function ConnectionsScreen() {
                 ) : (
                   /* History tab */
                   <View style={styles.section}>
-                    <Text style={styles.sectionLabel}>Past Introductions</Text>
-                    {isPremium ? (
-                      revealHistory.length > 0 ? (
-                        revealHistory.map((h) => (
-                          <View key={h.id} style={styles.historyCard}>
-                            <View>
-                              <Text style={styles.historyName}>{h.name}</Text>
-                              <Text style={styles.historyMeta}>{h.groupEmoji} {h.groupName}</Text>
-                            </View>
-                            <View style={styles.historyRight}>
-                              <Text style={styles.historyStatus}>{statusLabel(h.status)}</Text>
-                              <Text style={styles.historyDate}>{h.dateLabel}</Text>
-                            </View>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionLabel}>Past Introductions</Text>
+                    </View>
+                    {revealHistory.length > 0 ? (
+                      revealHistory.map((h) => (
+                        <View key={h.id} style={styles.historyCard}>
+                          <View>
+                            <Text style={styles.historyName}>{h.name}</Text>
+                            <Text style={styles.historyMeta}>{h.groupEmoji} {h.groupName}</Text>
                           </View>
-                        ))
-                      ) : (
-                        <View style={styles.emptyCard}>
-                          <Text style={styles.emptyCardText}>No past introductions yet.</Text>
+                          <View style={styles.historyRight}>
+                            <Text style={styles.historyStatus}>{statusLabel(h.status)}</Text>
+                            <Text style={styles.historyDate}>{h.dateLabel}</Text>
+                          </View>
                         </View>
-                      )
+                      ))
                     ) : (
-                      <TouchableOpacity style={styles.premiumGateCard} onPress={() => router.push('/premium')} activeOpacity={0.85}>
-                        <Text style={styles.premiumGateTitle}>Introduction history</Text>
-                        <Text style={styles.premiumGateText}>Upgrade to see all your past introductions.</Text>
-                      </TouchableOpacity>
+                      <View style={styles.emptyCard}>
+                        <Text style={styles.emptyCardText}>No past introductions yet.</Text>
+                      </View>
                     )}
                   </View>
                 )}
@@ -537,7 +536,6 @@ const styles = StyleSheet.create({
     color: Colors.muted,
     textTransform: 'uppercase',
     letterSpacing: 1,
-    marginBottom: 12,
   },
   newBadge: {
     backgroundColor: Colors.terracotta,
@@ -555,61 +553,86 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   emptyCardText: { fontSize: 13, color: Colors.muted },
-
-  premiumGateCard: {
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.gold,
-    padding: Spacing.md,
+  activeEmptyWrap: {
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    gap: 6,
   },
-  premiumGateTitle: { fontSize: 13, fontWeight: '800', color: Colors.ink },
-  premiumGateText: { fontSize: 12, color: Colors.muted, marginTop: 4 },
+  activeEmptyIconBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: Colors.paper,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  activeEmptyTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink },
+  activeEmptyText: {
+    fontSize: 13,
+    color: Colors.muted,
+    textAlign: 'center',
+    lineHeight: 19,
+    maxWidth: 240,
+  },
 
   // ── Reveal card ──
   revealCard: {
     backgroundColor: Colors.brown,
     borderRadius: Radius.lg,
-    padding: Spacing.lg,
+    padding: 14,
     overflow: 'hidden',
     position: 'relative',
+  },
+  revealRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  revealLeftCol: {
+    width: 68,
+  },
+  revealContent: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+    paddingRight: 4,
   },
   revealGlow: {
     position: 'absolute',
     right: -40,
     top: -40,
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: 'rgba(196,98,45,0.2)',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(196,98,45,0.18)',
   },
-  revealTop: { position: 'relative', width: 80, height: 80, marginBottom: 14 },
-  revealPhoto: { width: 80, height: 80, borderRadius: 40, borderWidth: 2, borderColor: Colors.terraLight },
+  revealTop: { position: 'relative', width: 68, height: 68 },
+  revealPhoto: { width: 68, height: 68, borderRadius: 34, borderWidth: 2, borderColor: Colors.terraLight },
   revealBadge: {
     position: 'absolute',
     bottom: -2,
     right: -2,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: Colors.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: Colors.brown,
   },
-  revealBadgeText: { fontSize: 12 },
-  revealName: { fontSize: 22, fontWeight: '900', color: Colors.cream, marginBottom: 4 },
-  revealGroup: { fontSize: 13, color: Colors.brownLight, marginBottom: 12 },
-  revealMsg: { fontSize: 13, color: 'rgba(245,240,232,0.7)', lineHeight: 20, marginBottom: 18 },
-  revealBtn: {
-    backgroundColor: Colors.terraLight,
-    borderRadius: Radius.full,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 10,
-    alignSelf: 'flex-start',
+  revealBadgeText: { fontSize: 11 },
+  revealName: { fontSize: 17, fontWeight: '800', color: Colors.cream, marginBottom: 2 },
+  revealGroup: { fontSize: 11, color: Colors.brownLight, marginBottom: 8 },
+  revealMsg: { fontSize: 13, color: 'rgba(245,240,232,0.72)', lineHeight: 19 },
+  revealChevronWrap: {
+    alignSelf: 'center',
+    paddingLeft: 4,
   },
-  revealBtnText: { fontSize: 13, fontWeight: '700', color: Colors.brown },
 
   // ── Connection cards ──
   connectionCard: {
@@ -625,12 +648,23 @@ const styles = StyleSheet.create({
   },
   connPhoto: { width: 52, height: 52, borderRadius: 26 },
   connInfo: { flex: 1 },
-  connName: { fontSize: 15, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
-  connGroup: { fontSize: 11, color: Colors.terracotta, fontWeight: '600', marginBottom: 3 },
+  connTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  connTopRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 8,
+  },
+  connName: { flex: 1, fontSize: 15, fontWeight: '700', color: Colors.ink, marginRight: 8 },
+  connGroup: { fontSize: 11, color: Colors.terracotta, fontWeight: '600', marginBottom: 4 },
   connLast: { fontSize: 12, color: Colors.muted },
   connLastMsg: { color: Colors.brownMid, fontWeight: '500' },
   connLastEmpty: { fontStyle: 'italic' },
-  connRight: { alignItems: 'flex-end', gap: 4 },
   connDate: { fontSize: 11, color: Colors.muted },
 
   // ── History cards ──
