@@ -35,6 +35,7 @@ export default function RootLayout() {
         <Stack.Screen name="premium" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="group/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="group/chat/[id]" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="event/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="reveal" options={{ animation: 'fade' }} />
       </Stack>
