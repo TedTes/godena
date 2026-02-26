@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
+  Modal,
   View,
   Text,
   StyleSheet,
@@ -150,6 +151,7 @@ export default function GroupDetailScreen() {
   };
 
   const isOpen = membership?.is_open_to_connect ?? false;
+  const canEditGroupIcon = membership?.role === 'organizer' || membership?.role === 'moderator';
   const displayMemberCount = membership ? members.length : group?.member_count ?? 0;
   const lockedPreviewCount = group?.member_count ?? 0;
 
@@ -470,17 +472,34 @@ export default function GroupDetailScreen() {
     void logInteraction('same_event_attendance', targetId, undefined, eventId);
   };
 
-  const cycleGroupIcon = async () => {
-    if (!group || membership?.role !== 'organizer') return;
-    const current = group.icon_emoji || visuals.emoji;
-    const index = GROUP_ICON_CHOICES.indexOf(current as any);
-    const nextIcon = GROUP_ICON_CHOICES[(index + 1 + GROUP_ICON_CHOICES.length) % GROUP_ICON_CHOICES.length];
+  const setGroupIcon = async (nextIcon: string) => {
+    if (!group || !canEditGroupIcon) return;
+    if (nextIcon === group.icon_emoji) return;
     const { error } = await updateGroupIcon(group.id, nextIcon);
     if (error) {
       Alert.alert('Could not update icon', error.message);
       return;
     }
     setGroup((prev) => (prev ? { ...prev, icon_emoji: nextIcon } : prev));
+  };
+
+  const openGroupIconPicker = () => {
+    if (!group || !canEditGroupIcon) return;
+    const current = group.icon_emoji || visuals.emoji;
+    const choices = GROUP_ICON_CHOICES.slice(0, 8);
+    Alert.alert(
+      'Choose group icon',
+      `Current: ${current}`,
+      [
+        ...choices.map((icon) => ({
+          text: icon,
+          onPress: () => {
+            void setGroupIcon(icon);
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]
+    );
   };
 
   if (loading || !group) {
@@ -512,12 +531,15 @@ export default function GroupDetailScreen() {
         <View style={styles.heroContent}>
           <TouchableOpacity
             style={styles.heroEmojiWrap}
-            onPress={() => void cycleGroupIcon()}
-            activeOpacity={membership?.role === 'organizer' ? 0.8 : 1}
-            disabled={membership?.role !== 'organizer'}
+            onPress={openGroupIconPicker}
+            activeOpacity={canEditGroupIcon ? 0.8 : 1}
+            disabled={!canEditGroupIcon}
           >
             <Text style={styles.heroEmoji}>{visuals.emoji}</Text>
           </TouchableOpacity>
+          {canEditGroupIcon ? (
+            <Text style={styles.iconEditHint}>Tap icon to change</Text>
+          ) : null}
           <View style={styles.heroMeta}>
             <View style={styles.heroMetaItem}>
               <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.75)" />
@@ -763,97 +785,14 @@ export default function GroupDetailScreen() {
               </Text>
               {membership && (
                 <TouchableOpacity
-                  style={[styles.eventCreateToggle, showEventForm && styles.eventCreateToggleActive]}
-                  onPress={() => setShowEventForm((v) => !v)}
+                  style={styles.eventCreateToggle}
+                  onPress={() => setShowEventForm(true)}
                 >
-                  <Ionicons
-                    name={showEventForm ? 'close' : 'add'}
-                    size={13}
-                    color={showEventForm ? Colors.muted : Colors.terracotta}
-                  />
-                  <Text style={[styles.eventCreateToggleText, showEventForm && styles.eventCreateToggleTextCancel]}>
-                    {showEventForm ? 'Cancel' : 'New Event'}
-                  </Text>
+                  <Ionicons name="add" size={13} color={Colors.terracotta} />
+                  <Text style={styles.eventCreateToggleText}>New Event</Text>
                 </TouchableOpacity>
               )}
             </View>
-
-            {/* Create Event form */}
-            {membership && showEventForm && (
-              <View style={styles.eventCreateCard}>
-                <Text style={styles.eventFormTitle}>📅 Create an Event</Text>
-
-                <View style={styles.eventFieldGroup}>
-                  <Text style={styles.eventFieldLabel}>Title</Text>
-                  <TextInput
-                    style={styles.eventInput}
-                    value={eventTitleDraft}
-                    onChangeText={setEventTitleDraft}
-                    placeholder="e.g. Coffee & Catch-up"
-                    placeholderTextColor={Colors.muted}
-                  />
-                </View>
-
-                <View style={styles.eventInputRow}>
-                  <View style={[styles.eventFieldGroup, { flex: 1 }]}>
-                    <Text style={styles.eventFieldLabel}>Date</Text>
-                    <TextInput
-                      style={styles.eventInput}
-                      value={eventDateDraft}
-                      onChangeText={setEventDateDraft}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor={Colors.muted}
-                      autoCapitalize="none"
-                    />
-                  </View>
-                  <View style={[styles.eventFieldGroup, { flex: 1 }]}>
-                    <Text style={styles.eventFieldLabel}>Time</Text>
-                    <TextInput
-                      style={styles.eventInput}
-                      value={eventTimeDraft}
-                      onChangeText={setEventTimeDraft}
-                      placeholder="HH:mm"
-                      placeholderTextColor={Colors.muted}
-                      autoCapitalize="none"
-                    />
-                  </View>
-                </View>
-
-                {!eventVirtualDraft && (
-                  <View style={styles.eventFieldGroup}>
-                    <Text style={styles.eventFieldLabel}>Location</Text>
-                    <TextInput
-                      style={styles.eventInput}
-                      value={eventLocationDraft}
-                      onChangeText={setEventLocationDraft}
-                      placeholder="Where will it happen?"
-                      placeholderTextColor={Colors.muted}
-                    />
-                  </View>
-                )}
-
-                <View style={styles.eventVirtualRow}>
-                  <Text style={styles.eventVirtualLabel}>Virtual event</Text>
-                  <Switch
-                    value={eventVirtualDraft}
-                    onValueChange={setEventVirtualDraft}
-                    trackColor={{ false: Colors.border, true: Colors.olive }}
-                    thumbColor={Colors.white}
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.eventSaveBtn, creatingEvent && styles.eventSaveBtnDisabled]}
-                  onPress={() => void handleCreateEvent()}
-                  disabled={creatingEvent}
-                >
-                  {creatingEvent
-                    ? <ActivityIndicator size="small" color={Colors.white} />
-                    : <Text style={styles.eventSaveBtnText}>Save Event</Text>
-                  }
-                </TouchableOpacity>
-              </View>
-            )}
 
             {/* Events list or empty state */}
             {groupEvents.length > 0 ? (
@@ -900,50 +839,76 @@ export default function GroupDetailScreen() {
 
                       {membership ? (
                         <View style={styles.rsvpRow}>
-                          {(['going', 'interested', 'not_going'] as const).map((status) => {
-                            const active = myRsvp?.status === status;
-                            const isPending = pendingRsvps.has(ev.id);
-                            const label = status === 'going' ? '✅ Going' : status === 'interested' ? '👀 Interested' : '✗ Not going';
-                            return (
-                              <TouchableOpacity
-                                key={`${ev.id}-${status}`}
-                                style={[
-                                  styles.rsvpPill,
-                                  active && (status === 'going' ? styles.rsvpPillGoing : status === 'interested' ? styles.rsvpPillInterested : styles.rsvpPillNotGoing),
-                                  isPending && styles.rsvpPillPending,
-                                ]}
-                                onPress={() => void handleRsvp(ev.id, status)}
-                                disabled={isPending}
-                              >
-                                <Text style={[
-                                  styles.rsvpPillText,
-                                  active && (status === 'going' ? styles.rsvpPillTextGoing : status === 'interested' ? styles.rsvpPillTextInterested : styles.rsvpPillTextNotGoing),
-                                ]}>
-                                  {label}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
                           {myRsvp?.attended_at ? (
-                            <View style={styles.attendedChip}>
+                            <TouchableOpacity
+                              style={styles.attendedChip}
+                              onPress={() => {
+                                setEventRsvps((prev) =>
+                                  prev.map((r) =>
+                                    r.event_id === ev.id && r.user_id === userId
+                                      ? { ...r, attended_at: null }
+                                      : r
+                                  )
+                                );
+                              }}
+                            >
                               <Ionicons name="checkmark-circle" size={11} color={Colors.success} />
                               <Text style={styles.attendedChipText}>Attended</Text>
-                            </View>
-                          ) : myRsvp?.status === 'going' ? (
-                            <TouchableOpacity
-                              style={[styles.attendedBtn, pendingAttendance.has(ev.id) && { opacity: 0.55 }]}
-                              onPress={() => void handleMarkAttended(ev.id)}
-                              disabled={pendingAttendance.has(ev.id)}
-                            >
-                              {pendingAttendance.has(ev.id)
-                                ? <ActivityIndicator size="small" color={Colors.brownMid} style={{ marginHorizontal: 4 }} />
-                                : <Text style={styles.attendedBtnText}>Mark attended</Text>
-                              }
+                              <Ionicons name="close" size={10} color={Colors.success} style={{ opacity: 0.6 }} />
                             </TouchableOpacity>
-                          ) : null}
+                          ) : (
+                            <>
+                              <TouchableOpacity
+                                style={[
+                                  styles.rsvpChip,
+                                  myRsvp?.status === 'going' && styles.rsvpChipGoing,
+                                  myRsvp?.status === 'interested' && styles.rsvpChipInterested,
+                                  myRsvp?.status === 'not_going' && styles.rsvpChipNotGoing,
+                                  pendingRsvps.has(ev.id) && styles.rsvpChipPending,
+                                ]}
+                                disabled={pendingRsvps.has(ev.id)}
+                                onPress={() => {
+                                  Alert.alert('RSVP', undefined, [
+                                    { text: '✅ Going', onPress: () => void handleRsvp(ev.id, 'going') },
+                                    { text: '👀 Interested', onPress: () => void handleRsvp(ev.id, 'interested') },
+                                    { text: '✗ Not going', onPress: () => void handleRsvp(ev.id, 'not_going') },
+                                    { text: 'Cancel', style: 'cancel' },
+                                  ]);
+                                }}
+                              >
+                                {pendingRsvps.has(ev.id) ? (
+                                  <ActivityIndicator size="small" color={Colors.muted} />
+                                ) : (
+                                  <Text style={[
+                                    styles.rsvpChipText,
+                                    myRsvp?.status === 'going' && styles.rsvpChipTextGoing,
+                                    myRsvp?.status === 'interested' && styles.rsvpChipTextInterested,
+                                    myRsvp?.status === 'not_going' && styles.rsvpChipTextMuted,
+                                  ]}>
+                                    {myRsvp?.status === 'going' ? '✅ Going'
+                                      : myRsvp?.status === 'interested' ? '👀 Maybe'
+                                      : myRsvp?.status === 'not_going' ? '✗ Declined'
+                                      : '+ RSVP'}
+                                  </Text>
+                                )}
+                              </TouchableOpacity>
+                              {myRsvp?.status === 'going' && (
+                                <TouchableOpacity
+                                  style={[styles.attendedBtn, pendingAttendance.has(ev.id) && { opacity: 0.55 }]}
+                                  onPress={() => void handleMarkAttended(ev.id)}
+                                  disabled={pendingAttendance.has(ev.id)}
+                                >
+                                  {pendingAttendance.has(ev.id)
+                                    ? <ActivityIndicator size="small" color={Colors.brownMid} />
+                                    : <Text style={styles.attendedBtnText}>Mark attended</Text>
+                                  }
+                                </TouchableOpacity>
+                              )}
+                            </>
+                          )}
                         </View>
                       ) : (
-                        <Text style={styles.eventsJoinHint}>Join to RSVP and track attendance.</Text>
+                        <Text style={styles.eventsJoinHint}>Join to RSVP.</Text>
                       )}
                     </View>
                   );
@@ -1088,6 +1053,101 @@ export default function GroupDetailScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ── Create Event Modal ── */}
+      <Modal
+        visible={showEventForm}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowEventForm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowEventForm(false)}
+          />
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.eventFormTitle}>New Event</Text>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalScrollContent}
+            >
+              <View style={styles.eventFieldGroup}>
+                <Text style={styles.eventFieldLabel}>Title</Text>
+                <TextInput
+                  style={styles.eventInput}
+                  value={eventTitleDraft}
+                  onChangeText={setEventTitleDraft}
+                  placeholder="e.g. Coffee & Catch-up"
+                  placeholderTextColor={Colors.muted}
+                />
+              </View>
+
+              <View style={styles.eventInputRow}>
+                <View style={[styles.eventFieldGroup, { flex: 1 }]}>
+                  <Text style={styles.eventFieldLabel}>Date</Text>
+                  <TextInput
+                    style={styles.eventInput}
+                    value={eventDateDraft}
+                    onChangeText={setEventDateDraft}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor={Colors.muted}
+                    autoCapitalize="none"
+                  />
+                </View>
+                <View style={[styles.eventFieldGroup, { flex: 1 }]}>
+                  <Text style={styles.eventFieldLabel}>Time</Text>
+                  <TextInput
+                    style={styles.eventInput}
+                    value={eventTimeDraft}
+                    onChangeText={setEventTimeDraft}
+                    placeholder="HH:mm"
+                    placeholderTextColor={Colors.muted}
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+
+              {!eventVirtualDraft && (
+                <View style={styles.eventFieldGroup}>
+                  <Text style={styles.eventFieldLabel}>Location</Text>
+                  <TextInput
+                    style={styles.eventInput}
+                    value={eventLocationDraft}
+                    onChangeText={setEventLocationDraft}
+                    placeholder="Where will it happen?"
+                    placeholderTextColor={Colors.muted}
+                  />
+                </View>
+              )}
+
+              <View style={styles.eventVirtualRow}>
+                <Text style={styles.eventVirtualLabel}>Virtual event</Text>
+                <Switch
+                  value={eventVirtualDraft}
+                  onValueChange={setEventVirtualDraft}
+                  trackColor={{ false: Colors.border, true: Colors.olive }}
+                  thumbColor={Colors.white}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.eventSaveBtn, creatingEvent && styles.eventSaveBtnDisabled]}
+                onPress={() => void handleCreateEvent()}
+                disabled={creatingEvent}
+              >
+                {creatingEvent
+                  ? <ActivityIndicator size="small" color={Colors.white} />
+                  : <Text style={styles.eventSaveBtnText}>Save Event</Text>
+                }
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1136,6 +1196,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   heroEmoji: { fontSize: 28 },
+  iconEditHint: {
+    marginTop: 6,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.8)',
+    fontWeight: '600',
+  },
   heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
   heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   heroMetaText: { fontSize: 12, color: 'rgba(255,255,255,0.75)' },
@@ -1411,19 +1477,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
-  eventCreateToggleActive: { backgroundColor: Colors.paper, borderColor: Colors.borderDark },
   eventCreateToggleText: { fontSize: 12, color: Colors.terracotta, fontWeight: '700' },
-  eventCreateToggleTextCancel: { color: Colors.muted },
-  eventCreateCard: {
-    backgroundColor: Colors.warmWhite,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    gap: 10,
-    marginBottom: Spacing.md,
+  eventFormTitle: { fontSize: 15, fontWeight: '800', color: Colors.ink, marginBottom: 4 },
+
+  // ── Event Modal ──
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
   },
-  eventFormTitle: { fontSize: 14, fontWeight: '800', color: Colors.ink },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  modalSheet: {
+    backgroundColor: Colors.warmWhite,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: 12,
+    paddingBottom: 32,
+    maxHeight: '85%',
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  modalScrollContent: { gap: 10, paddingBottom: 8 },
   eventFieldGroup: { gap: 5 },
   eventFieldLabel: {
     fontSize: 10,
@@ -1518,27 +1605,29 @@ const styles = StyleSheet.create({
   rsvpText: { fontSize: 11, fontWeight: '700', color: Colors.terracotta },
   rsvpRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
+    gap: 8,
     paddingHorizontal: Spacing.md,
     paddingBottom: 12,
     alignItems: 'center',
   },
-  rsvpPill: {
+  rsvpChip: {
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.paper,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minWidth: 64,
+    alignItems: 'center',
   },
-  rsvpPillGoing: { borderColor: Colors.olive, backgroundColor: 'rgba(122,140,92,0.1)' },
-  rsvpPillInterested: { borderColor: Colors.gold, backgroundColor: 'rgba(201,168,76,0.1)' },
-  rsvpPillNotGoing: { borderColor: Colors.borderDark, backgroundColor: Colors.paper },
-  rsvpPillText: { fontSize: 11, color: Colors.brownMid, fontWeight: '600' },
-  rsvpPillTextGoing: { color: Colors.olive },
-  rsvpPillTextInterested: { color: Colors.gold },
-  rsvpPillTextNotGoing: { color: Colors.muted },
+  rsvpChipGoing: { borderColor: Colors.olive, backgroundColor: 'rgba(122,140,92,0.1)' },
+  rsvpChipInterested: { borderColor: Colors.gold, backgroundColor: 'rgba(201,168,76,0.1)' },
+  rsvpChipNotGoing: { borderColor: Colors.borderDark },
+  rsvpChipPending: { opacity: 0.55 },
+  rsvpChipText: { fontSize: 12, fontWeight: '700', color: Colors.muted },
+  rsvpChipTextGoing: { color: Colors.olive },
+  rsvpChipTextInterested: { color: Colors.gold },
+  rsvpChipTextMuted: { color: Colors.muted },
   attendedBtn: {
     borderRadius: Radius.full,
     borderWidth: 1,
@@ -1645,5 +1734,4 @@ const styles = StyleSheet.create({
   reactionChipPending: { opacity: 0.5 },
   reactionText: { fontSize: 11, fontWeight: '600', color: Colors.brownMid },
   reactionTextActive: { color: Colors.terracotta },
-  rsvpPillPending: { opacity: 0.55 },
 });

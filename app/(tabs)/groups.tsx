@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
+  Modal,
   View,
   Text,
   StyleSheet,
@@ -104,6 +106,18 @@ export default function GroupsScreen() {
   // Refs for stable access inside useFocusEffect (avoids stale closure issues)
   const userIdRef = useRef<string | null>(null);
   const joinedIdsRef = useRef<Set<string>>(new Set());
+
+  // Animation refs
+  const screenFade = useRef(new Animated.Value(0)).current;
+  const tabFade = useRef(new Animated.Value(1)).current;
+
+  const switchTab = (t: 'mine' | 'discover') => {
+    if (t === tab) return;
+    Animated.timing(tabFade, { toValue: 0, duration: 80, useNativeDriver: true }).start(() => {
+      setTab(t);
+      Animated.timing(tabFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    });
+  };
 
   const joinGroup = async (groupId: string) => {
     if (!userId) {
@@ -326,6 +340,12 @@ export default function GroupsScreen() {
     }, []) // empty deps — reads live values from refs
   );
 
+  useEffect(() => {
+    if (!loading) {
+      Animated.timing(screenFade, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+    }
+  }, [loading]);
+
   const cityOptions = useMemo(() => {
     return Array.from(
       new Set(
@@ -403,7 +423,7 @@ export default function GroupsScreen() {
             <TouchableOpacity
               key={t}
               style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
-              onPress={() => setTab(t)}
+              onPress={() => switchTab(t)}
             >
               {t === 'mine' && totalUnread > 0 ? (
                 <View style={styles.tabBtnLabelRow}>
@@ -425,26 +445,6 @@ export default function GroupsScreen() {
         <View style={styles.searchRow}>
           <View style={styles.searchBox}>
             <Ionicons name="search" size={16} color={Colors.muted} />
-            {activeCategory !== '' && (
-              <TouchableOpacity
-                style={styles.searchChip}
-                onPress={() => setActiveCategory('')}
-                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-              >
-                <Text style={styles.searchChipText}>{CATEGORY_EMOJIS[activeCategory]} {activeCategory}</Text>
-                <Ionicons name="close" size={10} color={Colors.white} />
-              </TouchableOpacity>
-            )}
-            {tab === 'discover' && activeCity !== ALL_CITIES_LABEL && (
-              <TouchableOpacity
-                style={[styles.searchChip, styles.searchChipCity]}
-                onPress={() => setActiveCity(ALL_CITIES_LABEL)}
-                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-              >
-                <Text style={styles.searchChipText}>📍 {activeCity}</Text>
-                <Ionicons name="close" size={10} color={Colors.white} />
-              </TouchableOpacity>
-            )}
             <TextInput
               style={styles.searchInput}
               placeholder="Search groups..."
@@ -459,82 +459,6 @@ export default function GroupsScreen() {
             )}
           </View>
         </View>
-
-        {/* ── Create Form ── */}
-        {showCreateForm && (
-          <View style={styles.createCard}>
-            <Text style={styles.createTitle}>Start a new group</Text>
-            <TextInput
-              style={styles.createInput}
-              value={newGroupName}
-              onChangeText={setNewGroupName}
-              placeholder="Group name *"
-              placeholderTextColor={Colors.muted}
-            />
-            <TextInput
-              style={styles.createInput}
-              value={newGroupDescription}
-              onChangeText={setNewGroupDescription}
-              placeholder="Short description"
-              placeholderTextColor={Colors.muted}
-            />
-            <TextInput
-              style={[styles.createInput, newGroupIsVirtual && styles.createInputDisabled]}
-              value={newGroupCity}
-              onChangeText={setNewGroupCity}
-              editable={!newGroupIsVirtual}
-              placeholder={newGroupIsVirtual ? 'Virtual — no city needed' : 'City'}
-              placeholderTextColor={Colors.muted}
-            />
-            <View style={styles.virtualRow}>
-              <Text style={styles.virtualRowLabel}>Virtual group</Text>
-              <Switch
-                value={newGroupIsVirtual}
-                onValueChange={setNewGroupIsVirtual}
-                trackColor={{ false: Colors.border, true: Colors.olive }}
-                thumbColor={Colors.white}
-              />
-            </View>
-            <View style={styles.createCats}>
-              {CREATE_CATEGORY_OPTIONS.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[styles.createChip, newGroupCategory === cat && styles.createChipActive]}
-                  onPress={() => {
-                    setNewGroupCategory(cat);
-                  }}
-                >
-                  <Text style={[styles.createChipText, newGroupCategory === cat && styles.createChipTextActive]}>
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <Text style={styles.iconLabel}>Group icon</Text>
-            <View style={styles.iconPickerRow}>
-              {GROUP_ICON_CHOICES.map((icon) => (
-                <TouchableOpacity
-                  key={icon}
-                  style={[styles.iconChip, newGroupIcon === icon && styles.iconChipActive]}
-                  onPress={() => { setNewGroupIcon(icon); setNewGroupIconTouched(true); }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.iconChipText}>{icon}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity
-              style={[styles.createSubmit, creatingGroup && styles.createSubmitDisabled]}
-              onPress={() => void createGroup()}
-              disabled={creatingGroup}
-            >
-              {creatingGroup
-                ? <ActivityIndicator size="small" color={Colors.white} />
-                : <Text style={styles.createSubmitText}>Create Group</Text>
-              }
-            </TouchableOpacity>
-          </View>
-        )}
 
         {/* ── Filters: category + city in one scroll row ── */}
         <ScrollView
@@ -588,6 +512,8 @@ export default function GroupsScreen() {
             <ActivityIndicator color={Colors.terracotta} />
           </View>
         ) : (
+          <Animated.View style={[{ flex: 1 }, { opacity: screenFade }]}>
+          <Animated.View style={{ flex: 1, opacity: tabFade }}>
           <FlatList
             data={filtered}
             keyExtractor={(g) => g.id}
@@ -711,8 +637,111 @@ export default function GroupsScreen() {
               );
             }}
           />
+          </Animated.View>
+          </Animated.View>
         )}
       </SafeAreaView>
+
+      {/* ── Create Group Modal ── */}
+      <Modal
+        visible={showCreateForm}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCreateForm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowCreateForm(false)}
+          />
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.createTitle}>New Group</Text>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalScrollContent}
+            >
+              <TextInput
+                style={styles.createInput}
+                placeholder="Group name *"
+                placeholderTextColor={Colors.muted}
+                value={newGroupName}
+                onChangeText={setNewGroupName}
+                returnKeyType="next"
+              />
+              <TextInput
+                style={styles.createInput}
+                placeholder="Short description (optional)"
+                placeholderTextColor={Colors.muted}
+                value={newGroupDescription}
+                onChangeText={setNewGroupDescription}
+              />
+
+              <Text style={styles.iconLabel}>Category</Text>
+              <View style={styles.createCats}>
+                {CREATE_CATEGORY_OPTIONS.map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.createChip, newGroupCategory === cat && styles.createChipActive]}
+                    onPress={() => setNewGroupCategory(cat)}
+                  >
+                    <Text style={[styles.createChipText, newGroupCategory === cat && styles.createChipTextActive]}>
+                      {CATEGORY_EMOJIS[cat]} {cat}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.iconLabel}>Icon</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.iconPickerRow}>
+                  {GROUP_ICON_CHOICES.map((emoji) => (
+                    <TouchableOpacity
+                      key={emoji}
+                      style={[styles.iconChip, newGroupIcon === emoji && styles.iconChipActive]}
+                      onPress={() => { setNewGroupIcon(emoji); setNewGroupIconTouched(true); }}
+                    >
+                      <Text style={styles.iconChipText}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+
+              <TextInput
+                style={[styles.createInput, newGroupIsVirtual && styles.createInputDisabled]}
+                placeholder="City (leave blank if virtual)"
+                placeholderTextColor={Colors.muted}
+                value={newGroupCity}
+                onChangeText={setNewGroupCity}
+                editable={!newGroupIsVirtual}
+              />
+
+              <View style={styles.virtualRow}>
+                <Text style={styles.virtualRowLabel}>Virtual group</Text>
+                <Switch
+                  value={newGroupIsVirtual}
+                  onValueChange={(v) => { setNewGroupIsVirtual(v); if (v) setNewGroupCity(''); }}
+                  trackColor={{ false: Colors.border, true: Colors.olive }}
+                  thumbColor={Colors.white}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.createSubmit, creatingGroup && styles.createSubmitDisabled]}
+                onPress={() => void createGroup()}
+                disabled={creatingGroup}
+              >
+                {creatingGroup
+                  ? <ActivityIndicator color={Colors.white} />
+                  : <Text style={styles.createSubmitText}>Create Group</Text>
+                }
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1022,4 +1051,36 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(90,158,111,0.3)',
   },
   joinTextSuccess: { fontSize: 12, fontWeight: '700', color: Colors.success },
+
+  // ── Create Group Modal ──
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  modalSheet: {
+    backgroundColor: Colors.warmWhite,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: 12,
+    paddingBottom: 32,
+    maxHeight: '88%',
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  modalScrollContent: { gap: 10, paddingBottom: 8 },
 });

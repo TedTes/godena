@@ -37,11 +37,13 @@ export async function fetchMembers(groupId: string) {
 }
 
 export async function fetchUpcomingEvents(groupId: string) {
+  // Keep a small grace window to avoid timezone/input edge-cases hiding newly created events.
+  const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   return supabase
     .from('group_events')
     .select('id, title, starts_at, location_name, is_virtual, created_by')
     .eq('group_id', groupId)
-    .gte('starts_at', new Date().toISOString())
+    .gte('starts_at', cutoffIso)
     .order('starts_at', { ascending: true })
     .limit(20);
 }
