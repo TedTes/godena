@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
@@ -19,6 +20,7 @@ type HomeGroup = {
   memberCount: number;
   coverColor: string;
   emoji: string;
+  iconEmoji?: string | null;
   isMember: boolean;
   isOpenToConnect: boolean;
 };
@@ -41,16 +43,18 @@ type RevealSuggestion = {
   groupName: string;
 };
 
-function getGroupVisuals(category: string) {
+function getGroupVisuals(category: string, iconEmoji?: string | null): { emoji: string; coverColor: string } {
+  let base: { emoji: string; coverColor: string };
   switch (category) {
-    case 'outdoors': return { emoji: '🥾', coverColor: '#7a8c5c' };
-    case 'food_drink': return { emoji: '☕', coverColor: '#c4622d' };
-    case 'professional': return { emoji: '💼', coverColor: '#3d2b1f' };
-    case 'language': return { emoji: '🗣️', coverColor: '#c9a84c' };
-    case 'faith': return { emoji: '✝️', coverColor: '#8b4220' };
-    case 'culture': return { emoji: '🎉', coverColor: '#a07820' };
-    default: return { emoji: '👥', coverColor: '#6b4c3b' };
+    case 'outdoors': base = { emoji: '🥾', coverColor: '#7a8c5c' }; break;
+    case 'food_drink': base = { emoji: '☕', coverColor: '#c4622d' }; break;
+    case 'professional': base = { emoji: '💼', coverColor: '#3d2b1f' }; break;
+    case 'language': base = { emoji: '🗣️', coverColor: '#c9a84c' }; break;
+    case 'faith': base = { emoji: '✝️', coverColor: '#8b4220' }; break;
+    case 'culture': base = { emoji: '🎉', coverColor: '#a07820' }; break;
+    default: base = { emoji: '👥', coverColor: '#6b4c3b' }; break;
   }
+  return { ...base, emoji: iconEmoji || base.emoji };
 }
 
 function formatEventDate(iso: string) {
@@ -72,8 +76,7 @@ export default function HomeScreen() {
   const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
   const [openSignalGroupName, setOpenSignalGroupName] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadHome = async () => {
+  const loadHome = useCallback(async () => {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
       if (!userId) {
@@ -104,7 +107,7 @@ export default function HomeScreen() {
         const [groupsRes, eventsRes] = await Promise.all([
           supabase
             .from('groups')
-            .select('id, name, member_count, category')
+            .select('id, name, member_count, category, icon_emoji')
             .in('id', groupIds),
           supabase
             .from('group_events')
@@ -116,19 +119,25 @@ export default function HomeScreen() {
         ]);
 
         const groups =
-          (groupsRes.data as Array<{ id: string; name: string; member_count: number; category: string }> | null) ?? [];
+          (groupsRes.data as Array<{ id: string; name: string; member_count: number; category: string; icon_emoji: string | null }> | null) ?? [];
         const groupById = new Map(groups.map((g) => [g.id, g]));
         const openByGroup = new Map(memberships.map((m) => [m.group_id, !!m.is_open_to_connect]));
+        const liveCounts: Record<string, number> = {};
+        const { data: countsData } = await supabase.rpc('get_group_member_counts', { p_group_ids: groupIds });
+        for (const row of (countsData as Array<{ group_id: string; member_count: number }> | null) ?? []) {
+          liveCounts[row.group_id] = row.member_count;
+        }
 
         setMyGroups(
           groups.map((g) => {
-            const visuals = getGroupVisuals(g.category);
+            const visuals = getGroupVisuals(g.category, g.icon_emoji);
             return {
               id: g.id,
               name: g.name,
-              memberCount: g.member_count ?? 0,
+              memberCount: liveCounts[g.id] ?? g.member_count ?? 0,
               coverColor: visuals.coverColor,
               emoji: visuals.emoji,
+              iconEmoji: g.icon_emoji,
               isMember: true,
               isOpenToConnect: openByGroup.get(g.id) ?? false,
             };
@@ -177,7 +186,7 @@ export default function HomeScreen() {
           setUpcomingEvents(
             events.map((ev) => {
               const sourceGroup = groupById.get(ev.group_id);
-              const visuals = getGroupVisuals(sourceGroup?.category ?? 'other');
+              const visuals = getGroupVisuals(sourceGroup?.category ?? 'other', sourceGroup?.icon_emoji);
               return {
                 id: ev.id,
                 title: ev.title,
@@ -238,10 +247,17 @@ export default function HomeScreen() {
       }
 
       setLoadingProfile(false);
-    };
+    }, []);
 
+  useEffect(() => {
     void loadHome();
-  }, []);
+  }, [loadHome]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadHome();
+    }, [loadHome])
+  );
 
   return (
     <View style={styles.container}>

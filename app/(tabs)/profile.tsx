@@ -33,6 +33,7 @@ const settingsRows = [
   { icon: 'shield-outline', label: 'Privacy & Safety' },
   { icon: 'star-outline', label: 'Upgrade to Premium', accent: true },
   { icon: 'help-circle-outline', label: 'Help & Feedback' },
+  { icon: 'trash-outline', label: 'Delete Account', danger: true },
   { icon: 'log-out-outline', label: 'Sign Out', danger: true },
 ] as const;
 
@@ -64,6 +65,7 @@ export default function ProfileScreen() {
 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [updatingPhoto, setUpdatingPhoto] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [galleryPhotos, setGalleryPhotos] = useState<
@@ -214,7 +216,51 @@ export default function ProfileScreen() {
     router.replace('/onboarding');
   };
 
+  const deleteAccount = async () => {
+    if (deletingAccount) return;
+    setDeletingAccount(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-account', {
+        body: {},
+      });
+      if (error || (data as any)?.ok === false) {
+        Alert.alert('Could not delete account', error?.message || (data as any)?.error || 'Unknown error');
+        setDeletingAccount(false);
+        return;
+      }
+      await supabase.auth.signOut();
+      Alert.alert('Account deleted', 'Your account was permanently deleted.');
+      router.replace('/onboarding');
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const onPressSettingRow = (label: string) => {
+    if (label === 'Delete Account') {
+      Alert.alert(
+        'Delete account?',
+        'This permanently deletes your account and cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert(
+                'Final confirmation',
+                'Are you sure you want to permanently delete your account?',
+                [
+                  { text: 'No', style: 'cancel' },
+                  { text: 'Yes, delete', style: 'destructive', onPress: () => void deleteAccount() },
+                ]
+              );
+            },
+          },
+        ]
+      );
+      return;
+    }
     if (label === 'Sign Out') {
       void signOut();
       return;
@@ -660,6 +706,7 @@ export default function ProfileScreen() {
                   ]}
                   onPress={() => onPressSettingRow(row.label)}
                   activeOpacity={0.7}
+                  disabled={deletingAccount && row.label === 'Delete Account'}
                 >
                   <View style={[
                     styles.settingsIcon,
@@ -687,6 +734,8 @@ export default function ProfileScreen() {
                     <View style={styles.premiumBadge}>
                       <Text style={styles.premiumBadgeText}>PRO</Text>
                     </View>
+                  ) : row.label === 'Delete Account' && deletingAccount ? (
+                    <ActivityIndicator size="small" color={Colors.error} />
                   ) : (
                     <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
                   )}

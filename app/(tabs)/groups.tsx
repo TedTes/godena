@@ -15,8 +15,11 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { supabase } from '../../lib/supabase';
 import {
   createGroup as createGroupRecord,
+  fetchGroupMembershipCount,
+  fetchGroupMemberCounts,
   fetchGroups,
   fetchRecentMessagesForGroups,
   fetchUserMemberships,
@@ -26,6 +29,7 @@ import {
   type GroupRow,
 } from '../../lib/services/groups';
 import { canUserJoinAnotherGroup } from '../../lib/services/billing';
+import { deriveGroupIcon, GROUP_ICON_CHOICES } from '../../lib/services/groupIcons';
 
 const CATEGORIES = ['Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
 const ALL_CITIES_LABEL = 'All Cities';
@@ -90,6 +94,8 @@ export default function GroupsScreen() {
   const [newGroupDescription, setNewGroupDescription] = useState('');
   const [newGroupCity, setNewGroupCity] = useState('');
   const [newGroupCategory, setNewGroupCategory] = useState('Outdoors');
+  const [newGroupIcon, setNewGroupIcon] = useState('🏕️');
+  const [newGroupIconTouched, setNewGroupIconTouched] = useState(false);
   const [newGroupIsVirtual, setNewGroupIsVirtual] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [unreadByGroup, setUnreadByGroup] = useState<Record<string, number>>({});
@@ -160,6 +166,7 @@ export default function GroupsScreen() {
       name,
       description: newGroupDescription.trim() || null,
       category,
+      iconEmoji: newGroupIcon,
       city: newGroupCity.trim() || null,
       isVirtual: newGroupIsVirtual,
     });
@@ -175,7 +182,12 @@ export default function GroupsScreen() {
 
     if (membershipRes.error) Alert.alert('Group created with warning', membershipRes.error.message);
 
-    setGroups((prev) => [data as GroupRow, ...prev]);
+    const countRes = await fetchGroupMembershipCount(data.id);
+    const createdGroup: GroupRow = {
+      ...(data as GroupRow),
+      member_count: countRes.count ?? (data as GroupRow).member_count ?? 1,
+    };
+    setGroups((prev) => [createdGroup, ...prev]);
     setJoinedIds((prev) => new Set([...prev, data.id]));
     setTab('mine');
     setShowCreateForm(false);
@@ -183,8 +195,34 @@ export default function GroupsScreen() {
     setNewGroupDescription('');
     setNewGroupCity('');
     setNewGroupCategory('Outdoors');
+    setNewGroupIcon('🏕️');
+    setNewGroupIconTouched(false);
     setNewGroupIsVirtual(false);
   };
+
+  useEffect(() => {
+    if (newGroupIconTouched) return;
+    const category = DB_CATEGORY_BY_LABEL[newGroupCategory];
+    setNewGroupIcon(deriveGroupIcon(newGroupName, category));
+  }, [newGroupName, newGroupCategory, newGroupIconTouched]);
+
+  const applyLiveMembershipCounts = useCallback(async (
+    groupsData: GroupRow[],
+    membershipRows: Array<{ group_id: string; last_seen_at: string | null }>
+  ): Promise<GroupRow[]> => {
+    const joinedGroupIds = Array.from(new Set(membershipRows.map((m) => m.group_id)));
+    if (joinedGroupIds.length === 0) return groupsData;
+
+    const countByGroup: Record<string, number> = {};
+    const { data: countsData } = await fetchGroupMemberCounts(joinedGroupIds);
+    for (const row of (countsData as Array<{ group_id: string; member_count: number }> | null) ?? []) {
+      countByGroup[row.group_id] = row.member_count;
+    }
+
+    return groupsData.map((g) => (
+      countByGroup[g.id] !== undefined ? { ...g, member_count: countByGroup[g.id] } : g
+    ));
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -201,8 +239,9 @@ export default function GroupsScreen() {
 
       if (groupsError) { setLoadError(groupsError.message); setLoading(false); return; }
 
-      setGroups((groupsData ?? []) as GroupRow[]);
       const membershipRows = (membershipsResponse?.data ?? []) as Array<{ group_id: string; last_seen_at: string | null }>;
+      const mergedGroups = await applyLiveMembershipCounts((groupsData ?? []) as GroupRow[], membershipRows);
+      setGroups(mergedGroups);
       const ids = new Set<string>(membershipRows.map((m) => m.group_id));
       setJoinedIds(ids);
       userIdRef.current = uid;
@@ -235,7 +274,7 @@ export default function GroupsScreen() {
       setLoading(false);
     };
     void load();
-  }, []);
+  }, [applyLiveMembershipCounts]);
 
   // Silently refresh unread counts whenever the screen regains focus
   // (e.g. after returning from a group chat). Reads from refs so the
@@ -248,12 +287,25 @@ export default function GroupsScreen() {
 
       void (async () => {
         const groupIds = Array.from(ids);
-        const [membershipsRes, { data: recentMessages }] = await Promise.all([
+        const [membershipsRes, { data: recentMessages }, { data: freshGroups }, { data: countsData }] = await Promise.all([
           fetchUserMemberships(uid),
           fetchRecentMessagesForGroups(groupIds),
+          fetchGroups(),
+          fetchGroupMemberCounts(groupIds),
         ]);
         const membershipRows = (membershipsRes?.data ?? []) as Array<{ group_id: string; last_seen_at: string | null }>;
         const seenMap = new Map(membershipRows.map((m) => [m.group_id, m.last_seen_at]));
+        const countByGroup: Record<string, number> = {};
+        for (const row of (countsData as Array<{ group_id: string; member_count: number }> | null) ?? []) {
+          countByGroup[row.group_id] = row.member_count;
+        }
+        if (freshGroups) {
+          setGroups(
+            (freshGroups as GroupRow[]).map((g) => (
+              countByGroup[g.id] !== undefined ? { ...g, member_count: countByGroup[g.id] } : g
+            ))
+          );
+        }
 
         const unread: Record<string, number> = {};
         const lastMsg: Record<string, { content: string; sentAt: string; isOwn: boolean }> = {};
@@ -448,11 +500,26 @@ export default function GroupsScreen() {
                 <TouchableOpacity
                   key={cat}
                   style={[styles.createChip, newGroupCategory === cat && styles.createChipActive]}
-                  onPress={() => setNewGroupCategory(cat)}
+                  onPress={() => {
+                    setNewGroupCategory(cat);
+                  }}
                 >
                   <Text style={[styles.createChipText, newGroupCategory === cat && styles.createChipTextActive]}>
                     {cat}
                   </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.iconLabel}>Group icon</Text>
+            <View style={styles.iconPickerRow}>
+              {GROUP_ICON_CHOICES.map((icon) => (
+                <TouchableOpacity
+                  key={icon}
+                  style={[styles.iconChip, newGroupIcon === icon && styles.iconChipActive]}
+                  onPress={() => { setNewGroupIcon(icon); setNewGroupIconTouched(true); }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.iconChipText}>{icon}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -550,6 +617,7 @@ export default function GroupsScreen() {
             renderItem={({ item: g }) => {
               const isJoined = joinedIds.has(g.id);
               const visuals = getGroupVisuals(g.category);
+              const displayEmoji = g.icon_emoji || visuals.emoji;
               const nextEvent = formatNextEvent(g.next_event_at);
               const unreadCount = unreadByGroup[g.id] ?? 0;
               const hasUnread = tab === 'mine' && unreadCount > 0;
@@ -567,7 +635,7 @@ export default function GroupsScreen() {
                 >
                   {/* Colored accent */}
                   <View style={[styles.cardAccent, { backgroundColor: visuals.coverColor }]}>
-                    <Text style={styles.cardEmoji}>{visuals.emoji}</Text>
+                    <Text style={styles.cardEmoji}>{displayEmoji}</Text>
                   </View>
 
                   {/* Body */}
@@ -752,6 +820,23 @@ const styles = StyleSheet.create({
   virtualRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   virtualRowLabel: { fontSize: 13, color: Colors.brownMid, fontWeight: '600' },
   createCats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  iconLabel: { fontSize: 12, color: Colors.brownMid, fontWeight: '600', marginTop: 2 },
+  iconPickerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  iconChip: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconChipActive: {
+    borderColor: Colors.terracotta,
+    backgroundColor: Colors.paper,
+  },
+  iconChipText: { fontSize: 16 },
   createChip: {
     borderWidth: 1,
     borderColor: Colors.border,
