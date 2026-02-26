@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   View,
   Text,
@@ -15,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { GROUP_ICON_CHOICES } from '../../lib/services/groupIcons';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import {
   createGroupEvent,
@@ -33,20 +35,23 @@ import {
   logInteractionEvent,
   markEventAttended,
   setOpenSignal,
+  updateGroupIcon,
   upsertEventRsvp,
 } from '../../lib/services/groupDetail';
 import { canUserJoinAnotherGroup } from '../../lib/services/billing';
 
-function getGroupVisuals(category: string) {
+function getGroupVisuals(category: string, iconEmoji?: string | null): { emoji: string; coverColor: string; label: string } {
+  let base: { emoji: string; coverColor: string; label: string };
   switch (category) {
-    case 'outdoors':     return { emoji: '🏕️', coverColor: '#7a8c5c', label: 'Outdoors' };
-    case 'food_drink':   return { emoji: '☕',  coverColor: '#c4622d', label: 'Food & Drink' };
-    case 'professional': return { emoji: '💼',  coverColor: '#3d2b1f', label: 'Professional' };
-    case 'language':     return { emoji: '🗣️', coverColor: '#c9a84c', label: 'Language' };
-    case 'faith':        return { emoji: '✝️',  coverColor: '#8b4220', label: 'Faith' };
-    case 'culture':      return { emoji: '🎉',  coverColor: '#a07820', label: 'Culture' };
-    default:             return { emoji: '👥',  coverColor: '#6b4c3b', label: 'Other' };
+    case 'outdoors':     base = { emoji: '🏕️', coverColor: '#7a8c5c', label: 'Outdoors' }; break;
+    case 'food_drink':   base = { emoji: '☕',  coverColor: '#c4622d', label: 'Food & Drink' }; break;
+    case 'professional': base = { emoji: '💼',  coverColor: '#3d2b1f', label: 'Professional' }; break;
+    case 'language':     base = { emoji: '🗣️', coverColor: '#c9a84c', label: 'Language' }; break;
+    case 'faith':        base = { emoji: '✝️',  coverColor: '#8b4220', label: 'Faith' }; break;
+    case 'culture':      base = { emoji: '🎉',  coverColor: '#a07820', label: 'Culture' }; break;
+    default:             base = { emoji: '👥',  coverColor: '#6b4c3b', label: 'Other' }; break;
   }
+  return { ...base, emoji: iconEmoji || base.emoji };
 }
 
 type Group = {
@@ -54,6 +59,7 @@ type Group = {
   name: string;
   description: string | null;
   category: string;
+  icon_emoji: string | null;
   city: string | null;
   is_virtual: boolean;
   member_count: number;
@@ -130,11 +136,22 @@ export default function GroupDetailScreen() {
   const [pendingAttendance, setPendingAttendance] = useState<Set<string>>(new Set());
 
   const visuals = useMemo(
-    () => getGroupVisuals(group?.category ?? 'other'),
-    [group?.category]
+    () => getGroupVisuals(group?.category ?? 'other', group?.icon_emoji),
+    [group?.category, group?.icon_emoji]
   );
 
+  const tabFade = useRef(new Animated.Value(1)).current;
+  const switchTab = (t: typeof activeTab) => {
+    if (t === activeTab) return;
+    Animated.timing(tabFade, { toValue: 0, duration: 80, useNativeDriver: true }).start(() => {
+      setActiveTab(t);
+      Animated.timing(tabFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    });
+  };
+
   const isOpen = membership?.is_open_to_connect ?? false;
+  const displayMemberCount = membership ? members.length : group?.member_count ?? 0;
+  const lockedPreviewCount = group?.member_count ?? 0;
 
   const load = async () => {
     if (!id) return;
@@ -453,6 +470,19 @@ export default function GroupDetailScreen() {
     void logInteraction('same_event_attendance', targetId, undefined, eventId);
   };
 
+  const cycleGroupIcon = async () => {
+    if (!group || membership?.role !== 'organizer') return;
+    const current = group.icon_emoji || visuals.emoji;
+    const index = GROUP_ICON_CHOICES.indexOf(current as any);
+    const nextIcon = GROUP_ICON_CHOICES[(index + 1 + GROUP_ICON_CHOICES.length) % GROUP_ICON_CHOICES.length];
+    const { error } = await updateGroupIcon(group.id, nextIcon);
+    if (error) {
+      Alert.alert('Could not update icon', error.message);
+      return;
+    }
+    setGroup((prev) => (prev ? { ...prev, icon_emoji: nextIcon } : prev));
+  };
+
   if (loading || !group) {
     return (
       <View style={styles.loadingWrap}>
@@ -467,19 +497,31 @@ export default function GroupDetailScreen() {
       {/* ── Hero ── */}
       <View style={[styles.hero, { backgroundColor: visuals.coverColor }]}>
         <SafeAreaView edges={['top']}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={20} color={Colors.white} />
-          </TouchableOpacity>
+          <View style={styles.heroNavRow}>
+            <TouchableOpacity
+              style={styles.heroBackBtn}
+              onPress={() => router.back()}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="arrow-back" size={20} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.heroNavTitle} numberOfLines={1}>{group.name}</Text>
+            <View style={styles.heroNavSpacer} />
+          </View>
         </SafeAreaView>
         <View style={styles.heroContent}>
-          <View style={styles.heroEmojiWrap}>
+          <TouchableOpacity
+            style={styles.heroEmojiWrap}
+            onPress={() => void cycleGroupIcon()}
+            activeOpacity={membership?.role === 'organizer' ? 0.8 : 1}
+            disabled={membership?.role !== 'organizer'}
+          >
             <Text style={styles.heroEmoji}>{visuals.emoji}</Text>
-          </View>
-          <Text style={styles.heroTitle}>{group.name}</Text>
+          </TouchableOpacity>
           <View style={styles.heroMeta}>
             <View style={styles.heroMetaItem}>
               <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.75)" />
-              <Text style={styles.heroMetaText}>{group.member_count} members</Text>
+              <Text style={styles.heroMetaText}>{displayMemberCount} members</Text>
             </View>
             <View style={styles.heroDot} />
             <View style={styles.heroMetaItem}>
@@ -575,7 +617,7 @@ export default function GroupDetailScreen() {
             <TouchableOpacity
               key={t}
               style={[styles.tab, activeTab === t && styles.tabActive]}
-              onPress={() => setActiveTab(t)}
+              onPress={() => switchTab(t)}
             >
               <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
                 {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -583,6 +625,8 @@ export default function GroupDetailScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        <Animated.View style={{ opacity: tabFade }}>
 
         {/* ── About ── */}
         {activeTab === 'about' && (
@@ -632,15 +676,14 @@ export default function GroupDetailScreen() {
                 </View>
               )}
               <Text style={[styles.sectionLabel, styles.membersLabelText]}>
-                {(membership ? members.length : group.member_count)}{' '}
-                {(membership ? members.length : group.member_count) === 1 ? 'member' : 'members'}
+                {displayMemberCount} {displayMemberCount === 1 ? 'member' : 'members'}
               </Text>
             </View>
             <View style={styles.membersCard}>
               {!membership ? (
                 /* ── Locked preview: ghost rows + overlay CTA ── */
                 <View style={styles.membersLockedWrap}>
-                  {Array.from({ length: Math.min(Math.max(group.member_count, 3), 5) }).map((_, i) => (
+                  {Array.from({ length: Math.min(Math.max(lockedPreviewCount, 3), 5) }).map((_, i) => (
                     <View
                       key={i}
                       style={[styles.memberRow, i > 0 && styles.memberRowDivider, styles.memberRowGhost]}
@@ -656,7 +699,7 @@ export default function GroupDetailScreen() {
                       <Ionicons name="lock-closed" size={20} color={Colors.terracotta} />
                     </View>
                     <Text style={styles.membersLockedCount}>
-                      {group.member_count} {group.member_count === 1 ? 'member' : 'members'}
+                      {lockedPreviewCount} {lockedPreviewCount === 1 ? 'member' : 'members'}
                     </Text>
                     <Text style={styles.membersLockedHint}>Join to see who's here</Text>
                     <TouchableOpacity
@@ -1041,6 +1084,8 @@ export default function GroupDetailScreen() {
           </View>
         )}
 
+        </Animated.View>
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </View>
@@ -1053,16 +1098,34 @@ const styles = StyleSheet.create({
 
   // ── Hero ──
   hero: { paddingBottom: Spacing.xl },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.22)',
+  heroNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  heroBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    margin: Spacing.md,
   },
-  heroContent: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
+  heroNavTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.white,
+    marginHorizontal: 8,
+  },
+  heroNavSpacer: { width: 36 },
+  heroContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.md,
+    alignItems: 'center',
+  },
   heroEmojiWrap: {
     width: 56,
     height: 56,
@@ -1073,14 +1136,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   heroEmoji: { fontSize: 28 },
-  heroTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: Colors.white,
-    marginBottom: 10,
-    lineHeight: 32,
-  },
-  heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
   heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   heroMetaText: { fontSize: 12, color: 'rgba(255,255,255,0.75)' },
   heroDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.35)' },

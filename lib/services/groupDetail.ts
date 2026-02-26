@@ -9,9 +9,18 @@ export async function getSessionUserId() {
 export async function fetchGroup(groupId: string) {
   return supabase
     .from('groups')
-    .select('id, name, description, category, city, is_virtual, member_count')
+    .select('id, name, description, category, icon_emoji, city, is_virtual, member_count')
     .eq('id', groupId)
     .maybeSingle();
+}
+
+export async function updateGroupIcon(groupId: string, iconEmoji: string) {
+  return supabase
+    .from('groups')
+    .update({ icon_emoji: iconEmoji })
+    .eq('id', groupId)
+    .select('id, icon_emoji')
+    .single();
 }
 
 export async function fetchMembership(groupId: string, userId: string) {
