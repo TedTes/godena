@@ -1,11 +1,13 @@
 // @ts-nocheck
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
 
-async function callFunction(name: string, internalSecret?: string) {
+async function callFunction(name: string, internalSecret?: string, authHeader?: string | null) {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...(authHeader ? { "Authorization": authHeader } : (SUPABASE_ANON_KEY ? { "Authorization": `Bearer ${SUPABASE_ANON_KEY}` } : {})),
       ...(internalSecret ? { "x-internal-secret": internalSecret } : {}),
     },
     body: JSON.stringify({}),
@@ -29,7 +31,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    const mutual = await callFunction("mutual-detection", internalSecret);
+    const authHeader = req.headers.get("authorization");
+
+    const mutual = await callFunction("mutual-detection", internalSecret, authHeader);
     if (!mutual.ok) {
       return new Response(
         JSON.stringify({
@@ -42,7 +46,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const trigger = await callFunction("reveal-trigger", internalSecret);
+    const trigger = await callFunction("reveal-trigger", internalSecret, authHeader);
     if (!trigger.ok) {
       return new Response(
         JSON.stringify({
