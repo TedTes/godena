@@ -170,14 +170,28 @@ export default function ConnectionChatScreen() {
 
       setSending(true);
       setDraft('');
+      const optimisticId = `local-${Date.now()}`;
+      const optimisticSentAt = new Date().toISOString();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: optimisticId,
+          senderId: userId,
+          content,
+          sentAt: optimisticSentAt,
+          isOwn: true,
+        },
+      ]);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 20);
 
       const { data } = await insertConnectionMessage(id, userId, content);
       if (data) {
         const row = data as ConnectionMessageRow;
         setMessages((prev) => {
-          if (prev.some((m) => m.id === row.id)) return prev;
+          const withoutOptimistic = prev.filter((m) => m.id !== optimisticId);
+          if (withoutOptimistic.some((m) => m.id === row.id)) return withoutOptimistic;
           return [
-            ...prev,
+            ...withoutOptimistic,
             {
               id: row.id,
               senderId: row.sender_id,
@@ -191,6 +205,7 @@ export default function ConnectionChatScreen() {
         void triggerConnectionMessagePush(id, row.id);
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
       } else {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
         setDraft(content);
       }
 

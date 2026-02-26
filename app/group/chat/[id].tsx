@@ -92,6 +92,7 @@ export default function GroupChatScreen() {
     name: string;
     member_count: number;
     category: string;
+    icon_emoji: string | null;
   } | null>(null);
   const [messages, setMessages] = useState<RawMsg[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,16 +105,17 @@ export default function GroupChatScreen() {
   const pillAnim = useRef(new Animated.Value(0)).current;
 
   const groupVisuals = useMemo(() => {
+    const icon = group?.icon_emoji;
     switch (group?.category) {
-      case 'outdoors':     return { emoji: '🏕️', coverColor: '#7a8c5c' };
-      case 'food_drink':   return { emoji: '☕',  coverColor: '#c4622d' };
-      case 'professional': return { emoji: '💼',  coverColor: '#3d2b1f' };
-      case 'language':     return { emoji: '🗣️', coverColor: '#c9a84c' };
-      case 'faith':        return { emoji: '✝️',  coverColor: '#8b4220' };
-      case 'culture':      return { emoji: '🎉',  coverColor: '#a07820' };
-      default:             return { emoji: '👥',  coverColor: Colors.terracotta };
+      case 'outdoors':     return { emoji: icon || '🏕️', coverColor: '#7a8c5c' };
+      case 'food_drink':   return { emoji: icon || '☕',  coverColor: '#c4622d' };
+      case 'professional': return { emoji: icon || '💼',  coverColor: '#3d2b1f' };
+      case 'language':     return { emoji: icon || '🗣️', coverColor: '#c9a84c' };
+      case 'faith':        return { emoji: icon || '✝️',  coverColor: '#8b4220' };
+      case 'culture':      return { emoji: icon || '🎉',  coverColor: '#a07820' };
+      default:             return { emoji: icon || '👥',  coverColor: Colors.terracotta };
     }
-  }, [group?.category]);
+  }, [group?.category, group?.icon_emoji]);
 
   // Preprocess: inject date dividers + compute per-message group position
   const chatItems = useMemo<ChatItem[]>(() => {
@@ -259,16 +261,51 @@ export default function GroupChatScreen() {
       const text = input.trim();
       if (!text) return;
 
+      const optimisticId = `local-${Date.now()}`;
+      const optimisticSentAt = new Date().toISOString();
+      setInput('');
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: optimisticId,
+          groupId: id,
+          senderId: userId,
+          senderName: 'You',
+          senderPhoto: '',
+          content: text,
+          sentAt: optimisticSentAt,
+          isOwn: true,
+        },
+      ]);
+      setPendingCount(0);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 20);
+
       const { data: insertedMessage, error } = await insertGroupMessage(id, userId, text);
-      if (error) return;
+      if (error || !insertedMessage) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setInput(text);
+        return;
+      }
+
+      const normalizedInsertedRow: GroupChatMessageRow = {
+        id: (insertedMessage as any).id,
+        group_id: (insertedMessage as any).group_id ?? id,
+        sender_id: (insertedMessage as any).sender_id ?? userId,
+        content: (insertedMessage as any).content ?? text,
+        sent_at: (insertedMessage as any).sent_at ?? optimisticSentAt,
+      };
+      const mapped = mapDbMessages([normalizedInsertedRow], userId)[0];
+      setMessages((prev) => {
+        const withoutOptimistic = prev.filter((m) => m.id !== optimisticId);
+        if (withoutOptimistic.some((m) => m.id === mapped.id)) return withoutOptimistic;
+        return [...withoutOptimistic, mapped];
+      });
 
       // Fire-and-forget push fan-out for other group members.
       if (insertedMessage?.id) {
         void triggerGroupMessagePush(id, insertedMessage.id);
       }
 
-      setInput('');
-      setPendingCount(0);
       void markGroupSeen();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     })();
