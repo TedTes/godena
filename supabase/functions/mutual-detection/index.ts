@@ -69,8 +69,6 @@ function acceptsAge(minAge: number | null, maxAge: number | null, targetAge: num
 }
 
 function preferencesMatch(a: ProfileRow, b: ProfileRow) {
-  if (!a.is_open_to_connections || !b.is_open_to_connections) return false;
-
   const ageA = ageFromBirthDate(a.birth_date);
   const ageB = ageFromBirthDate(b.birth_date);
 

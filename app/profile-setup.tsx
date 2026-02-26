@@ -316,6 +316,21 @@ export default function ProfileSetupScreen() {
       return;
     }
 
+    // Keep global openness and per-group signals consistent:
+    // when global is turned off, clear all group-level open signals.
+    if (!isOpenToConnections) {
+      const { error: clearSignalsError } = await supabase
+        .from('group_memberships')
+        .update({ is_open_to_connect: false, openness_set_at: null })
+        .eq('user_id', user.id)
+        .eq('is_open_to_connect', true);
+
+      if (clearSignalsError) {
+        setError(clearSignalsError.message);
+        return;
+      }
+    }
+
     router.replace('/(tabs)/home');
   };
 
