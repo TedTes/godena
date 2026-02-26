@@ -389,7 +389,7 @@ export default function HomeScreen() {
                   key={ev.id}
                   style={styles.eventCard}
                   activeOpacity={0.85}
-                  onPress={() => router.push('/(tabs)/events')}
+                  onPress={() => router.push(`/event/${ev.id}`)}
                 >
                   <View style={styles.eventIconWrap}>
                     <Text style={styles.eventIcon}>{ev.emoji}</Text>
