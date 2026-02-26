@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 
 type HomeGroup = {
   id: string;
@@ -237,23 +238,22 @@ export default function HomeScreen() {
             ? pendingConnection.user_b_id
             : pendingConnection.user_a_id;
 
-        const [{ data: counterpart }, { data: group }] = await Promise.all([
+        const [{ data: counterpartRows }, { data: group }] = await Promise.all([
           supabase
-            .from('profiles')
-            .select('full_name, avatar_url')
-            .eq('user_id', counterpartId)
-            .maybeSingle(),
+            .rpc('get_connection_profiles', { p_user_ids: [counterpartId] }),
           supabase
             .from('groups')
             .select('name')
             .eq('id', pendingConnection.group_id)
             .maybeSingle(),
         ]);
+        const counterpart = ((counterpartRows as Array<{ full_name: string | null; avatar_url: string | null }> | null) ?? [])[0] ?? null;
+        const matchPhoto = counterpart?.avatar_url ? await resolveProfilePhotoUrl(counterpart.avatar_url) : null;
 
         setRevealSuggestion({
           connectionId: pendingConnection.id,
           matchName: counterpart?.full_name || 'Someone',
-          matchPhoto: counterpart?.avatar_url || null,
+          matchPhoto,
           groupName: group?.name || 'your group',
         });
       } else {

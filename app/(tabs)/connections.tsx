@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 
 type ConnectionRow = {
   id: string;
@@ -148,7 +149,7 @@ export default function ConnectionsScreen() {
         const connectionIds = rows.map((c) => c.id);
 
         const [profilesRes, groupsRes, messagesRes] = await Promise.all([
-          supabase.from('profiles').select('user_id, full_name, avatar_url').in('user_id', counterpartIds),
+          supabase.rpc('get_connection_profiles', { p_user_ids: counterpartIds }),
           supabase.from('groups').select('id, name, category').in('id', groupIds),
           supabase
             .from('connection_messages')
@@ -158,7 +159,13 @@ export default function ConnectionsScreen() {
             .order('sent_at', { ascending: false }),
         ]);
 
-        const profiles = (profilesRes.data ?? []) as ProfileRow[];
+        const profileRows = (profilesRes.data ?? []) as ProfileRow[];
+        const profiles = await Promise.all(
+          profileRows.map(async (p) => ({
+            ...p,
+            avatar_url: await resolveProfilePhotoUrl(p.avatar_url),
+          }))
+        );
         const groups = (groupsRes.data ?? []) as GroupRow[];
         const messages = (messagesRes.data ?? []) as MessageRow[];
 

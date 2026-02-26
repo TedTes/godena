@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { resolveProfilePhotoUrl } from './photoUrls';
 
 export type PendingConnection = {
   id: string;
@@ -42,10 +43,17 @@ export async function fetchPendingConnections(userId: string) {
 
 export async function fetchProfiles(userIds: string[]) {
   if (userIds.length === 0) return { data: [], error: null };
-  return supabase
-    .from('profiles')
-    .select('user_id, full_name, avatar_url, birth_date')
-    .in('user_id', userIds);
+  const res = await supabase.rpc('get_connection_profiles', { p_user_ids: userIds });
+  if (res.error || !res.data) return res;
+
+  const mapped = await Promise.all(
+    (res.data as ProfileMini[]).map(async (row) => ({
+      ...row,
+      avatar_url: await resolveProfilePhotoUrl(row.avatar_url),
+    }))
+  );
+
+  return { data: mapped, error: null };
 }
 
 export async function fetchGroups(groupIds: string[]) {
