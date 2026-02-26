@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../../constants/theme';
 import {
   fetchGroup,
+  fetchGroupMemberCount,
   fetchGroupMessages,
   fetchProfiles,
   getSessionUserId,
@@ -94,6 +95,7 @@ export default function GroupChatScreen() {
     category: string;
     icon_emoji: string | null;
   } | null>(null);
+  const [liveMemberCount, setLiveMemberCount] = useState<number | null>(null);
   const [messages, setMessages] = useState<RawMsg[]>([]);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
@@ -181,14 +183,16 @@ export default function GroupChatScreen() {
       if (!id) return;
       setLoading(true);
 
-      const [uid, groupRes, messageRes] = await Promise.all([
+      const [uid, groupRes, messageRes, countRes] = await Promise.all([
         getSessionUserId(),
         fetchGroup(id),
         fetchGroupMessages(id),
+        fetchGroupMemberCount(id),
       ]);
 
       setUserId(uid);
       setGroup((groupRes.data as any) ?? null);
+      setLiveMemberCount(countRes.data ?? null);
 
       const messageRows =
         (messageRes.data as Array<{ id: string; group_id: string; sender_id: string; content: string; sent_at: string }> | null) ?? [];
@@ -325,7 +329,7 @@ export default function GroupChatScreen() {
             {group?.name ?? 'Group Chat'}
           </Text>
           <Text style={styles.headerSub}>
-            {loading ? 'Loading…' : `${group?.member_count ?? ''} members`}
+            {loading ? 'Loading…' : `${liveMemberCount ?? group?.member_count ?? ''} members`}
           </Text>
         </View>
       </View>

@@ -30,6 +30,14 @@ export async function fetchGroup(groupId: string) {
     .maybeSingle();
 }
 
+export async function fetchGroupMemberCount(groupId: string) {
+  const { data, error } = await supabase.rpc('get_group_member_counts', { p_group_ids: [groupId] });
+  if (error) return { data: null, error };
+  const rows = (data as Array<{ group_id: string; member_count: number }> | null) ?? [];
+  const match = rows.find((r) => r.group_id === groupId);
+  return { data: match?.member_count ?? null, error: null };
+}
+
 export async function fetchGroupMessages(groupId: string) {
   return supabase
     .from('group_messages')

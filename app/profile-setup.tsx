@@ -47,6 +47,7 @@ export default function ProfileSetupScreen() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [fullName, setFullName] = useState('');
   const [city, setCity] = useState('');
+  const [birthDate, setBirthDate] = useState('');
   const [bio, setBio] = useState('');
   const [ethnicity, setEthnicity] = useState('');
   const [religion, setReligion] = useState('');
@@ -66,9 +67,14 @@ export default function ProfileSetupScreen() {
   const canSubmit =
     fullName.trim().length >= 2 &&
     city.trim().length >= 2 &&
+    birthDate.trim().length > 0 &&
     ethnicity.trim().length >= 2 &&
     !saving;
-  const canProceedStep1 = fullName.trim().length >= 2 && city.trim().length >= 2 && !!gender;
+  const canProceedStep1 =
+    fullName.trim().length >= 2 &&
+    city.trim().length >= 2 &&
+    birthDate.trim().length > 0 &&
+    !!gender;
 
   const parsedLanguages = languagesInput
     .split(',')
@@ -95,7 +101,7 @@ export default function ProfileSetupScreen() {
 
       const { data: existingProfile, error: profileError } = await supabase
         .from('profiles')
-        .select('full_name, city, bio, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections')
+        .select('full_name, city, birth_date, bio, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -107,6 +113,7 @@ export default function ProfileSetupScreen() {
       setIsEditMode(true);
       setFullName(existingProfile.full_name ?? '');
       setCity(existingProfile.city ?? '');
+      setBirthDate(existingProfile.birth_date ?? '');
       setBio(existingProfile.bio ?? '');
       setEthnicity(existingProfile.ethnicity ?? '');
       setReligion(existingProfile.religion ?? '');
@@ -181,6 +188,30 @@ export default function ProfileSetupScreen() {
 
     const minAge = preferredAgeMin.trim() ? Number(preferredAgeMin) : null;
     const maxAge = preferredAgeMax.trim() ? Number(preferredAgeMax) : null;
+    const normalizedBirthDate = birthDate.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
+      setError('Birth date must use YYYY-MM-DD format.');
+      return;
+    }
+    const parsedBirthDate = new Date(`${normalizedBirthDate}T00:00:00.000Z`);
+    if (Number.isNaN(parsedBirthDate.getTime())) {
+      setError('Birth date is invalid.');
+      return;
+    }
+    if (parsedBirthDate > new Date()) {
+      setError('Birth date cannot be in the future.');
+      return;
+    }
+    const now = new Date();
+    let age = now.getFullYear() - parsedBirthDate.getUTCFullYear();
+    const monthDiff = now.getMonth() - parsedBirthDate.getUTCMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < parsedBirthDate.getUTCDate())) {
+      age -= 1;
+    }
+    if (age < 18) {
+      setError('You must be at least 18 years old.');
+      return;
+    }
     if (
       (minAge !== null && Number.isNaN(minAge)) ||
       (maxAge !== null && Number.isNaN(maxAge))
@@ -262,6 +293,7 @@ export default function ProfileSetupScreen() {
       user_id: user.id,
       full_name: fullName.trim(),
       city: city.trim(),
+      birth_date: normalizedBirthDate || null,
       bio: bio.trim() || null,
       ethnicity: ethnicity.trim(),
       religion: religion.trim() || null,
@@ -364,6 +396,19 @@ export default function ProfileSetupScreen() {
                   placeholder="Washington, DC"
                   placeholderTextColor={Colors.muted}
                   autoCapitalize="words"
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Birth date</Text>
+                <TextInput
+                  style={styles.input}
+                  value={birthDate}
+                  onChangeText={setBirthDate}
+                  placeholder="YYYY-MM-DD *"
+                  placeholderTextColor={Colors.muted}
+                  keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
+                  autoCapitalize="none"
                 />
               </View>
 

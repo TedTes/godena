@@ -113,9 +113,8 @@ export default function HomeScreen() {
             .from('group_events')
             .select('id, group_id, title, starts_at, location_name, is_virtual')
             .in('group_id', groupIds)
-            .gte('starts_at', new Date().toISOString())
             .order('starts_at', { ascending: true })
-            .limit(12),
+            .limit(50),
         ]);
 
         const groups =
@@ -183,8 +182,23 @@ export default function HomeScreen() {
             attendeeCountByEvent[row.event_id] = (attendeeCountByEvent[row.event_id] ?? 0) + 1;
           }
 
+          // Keep "Going" events visible, and avoid strict timezone cutoff hiding same-day events.
+          const cutoffMs = Date.now() - (6 * 60 * 60 * 1000);
+          const visibleEvents = events
+            .filter((ev) => {
+              const isGoing = (myRsvpByEvent.get(ev.id) ?? 'not_going') === 'going';
+              const eventMs = new Date(ev.starts_at).getTime();
+              return isGoing || eventMs >= cutoffMs;
+            })
+            .sort((a, b) => {
+              const aGoing = (myRsvpByEvent.get(a.id) ?? 'not_going') === 'going';
+              const bGoing = (myRsvpByEvent.get(b.id) ?? 'not_going') === 'going';
+              if (aGoing !== bGoing) return aGoing ? -1 : 1;
+              return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+            });
+
           setUpcomingEvents(
-            events.map((ev) => {
+            visibleEvents.map((ev) => {
               const sourceGroup = groupById.get(ev.group_id);
               const visuals = getGroupVisuals(sourceGroup?.category ?? 'other', sourceGroup?.icon_emoji);
               return {
@@ -324,14 +338,27 @@ export default function HomeScreen() {
                     onPress={() => router.push(`/group/${g.id}`)}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.groupEmoji}>{g.emoji}</Text>
-                    <Text style={styles.groupCardName}>{g.name}</Text>
-                    <Text style={styles.groupCardMeta}>{g.memberCount} members</Text>
-                    {g.isOpenToConnect && (
-                      <View style={styles.openBadge}>
-                        <Text style={styles.openBadgeText}>🌱 Open</Text>
+                    <View style={styles.groupCardTop}>
+                      <Text style={styles.groupEmoji}>{g.emoji}</Text>
+                      {g.isOpenToConnect ? (
+                        <View style={styles.openBadge}>
+                          <View style={styles.openDot} />
+                          <Text style={styles.openBadgeText}>Open</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.openBadgeMuted}>
+                          <Text style={styles.openBadgeMutedText}>Closed</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.groupCardName} numberOfLines={2}>{g.name}</Text>
+                    <View style={styles.groupCardFooter}>
+                      <View style={styles.groupCardMetaRow}>
+                        <Ionicons name="people-outline" size={12} color="rgba(255,255,255,0.78)" />
+                        <Text style={styles.groupCardMeta}>{g.memberCount} members</Text>
                       </View>
-                    )}
+                      <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.75)" />
+                    </View>
                   </TouchableOpacity>
                 ))
               ) : (
@@ -529,35 +556,81 @@ const styles = StyleSheet.create({
 
   hScroll: { paddingLeft: Spacing.lg },
   groupCard: {
-    width: 140,
-    height: 160,
+    width: 136,
+    height: 92,
     borderRadius: Radius.lg,
-    padding: Spacing.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginRight: 10,
-    justifyContent: 'flex-end',
+    gap: 8,
   },
-  groupEmoji: { fontSize: 28, marginBottom: 'auto' as any, paddingTop: 4 },
-  groupCardName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.white,
-    lineHeight: 18,
-    marginBottom: 2,
+  groupCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  groupCardMeta: { fontSize: 11, color: 'rgba(255,255,255,0.6)' },
+  groupEmoji: { fontSize: 28, marginTop: 3 },
   openBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.16)',
     borderRadius: Radius.full,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  openBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '600' },
+  openBadgeText: {
+    fontSize: 10,
+    color: Colors.white,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  openBadgeMuted: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  openBadgeMutedText: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.75)',
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  openDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#5a9e6f',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  groupCardName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.9)',
+    lineHeight: 16,
+    minHeight: 36,
+  },
+  groupCardFooter: {
+    marginTop: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  groupCardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  groupCardMeta: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.68)',
+    fontWeight: '400',
+  },
   inlineEmptyCard: {
-    width: 140,
-    height: 160,
+    width: 136,
+    height: 92,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -568,8 +641,8 @@ const styles = StyleSheet.create({
   },
   inlineEmptyText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
   addGroupCard: {
-    width: 120,
-    height: 160,
+    width: 136,
+    height: 92,
     borderRadius: Radius.lg,
     borderWidth: 1.5,
     borderColor: Colors.border,
