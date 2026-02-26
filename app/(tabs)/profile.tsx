@@ -7,7 +7,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Switch,
   ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -37,17 +36,6 @@ const settingsRows = [
   { icon: 'log-out-outline', label: 'Sign Out', danger: true },
 ] as const;
 
-const INTENT_META: Record<string, { emoji: string; label: string }> = {
-  friendship: { emoji: '🤝', label: 'Friendship' },
-  dating:     { emoji: '💛', label: 'Dating' },
-  long_term:  { emoji: '🌿', label: 'Long-term' },
-  marriage:   { emoji: '💍', label: 'Marriage' },
-};
-
-function getIntentMeta(intent: string) {
-  return INTENT_META[intent] ?? INTENT_META.dating;
-}
-
 function abbrevGender(g: string): string {
   const s = g.toLowerCase().replace(/[_\s]+/g, ' ').trim();
   if (s === 'male')   return 'M';
@@ -61,7 +49,6 @@ const COMPLETENESS_TOTAL = 7;
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const myGroups = mockGroups.filter((g) => g.isMember);
 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [updatingPhoto, setUpdatingPhoto] = useState(false);
@@ -89,9 +76,6 @@ export default function ProfileScreen() {
     avatar_url: string | null;
     photo_urls: string[] | null;
   } | null>(null);
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(
-    Object.fromEntries(myGroups.map((g) => [g.id, g.isOpenToConnect]))
-  );
 
   const resolvePhotoUri = async (value: string): Promise<string | null> => {
     if (value.startsWith('http://') || value.startsWith('https://')) {
@@ -178,7 +162,6 @@ export default function ProfileScreen() {
   const ethnicity       = profile?.ethnicity ?? null;
   const religion        = profile?.religion ?? null;
   const languages       = profile?.languages ?? [];
-  const intentMeta      = getIntentMeta(profile?.intent ?? 'dating');
   const preferredGenders = profile?.preferred_genders ?? [];
 
   const preferredAgeLabel     =
@@ -186,14 +169,18 @@ export default function ProfileScreen() {
       ? `${profile.preferred_age_min}–${profile.preferred_age_max} years`
       : null;
 
-  // Interleaved identity + preference grid (identity left col, prefs right col)
-  const detailItems = [
-    ethnicity                   ? { emoji: '🇪🇹', value: ethnicity }                                            : null,
-    profile?.gender             ? { emoji: '🧍',  value: abbrevGender(profile.gender) }                         : null,
-    religion                    ? { emoji: '✝️',  value: religion }                                             : null,
-    preferredGenders.length > 0 ? { emoji: '💞',  value: preferredGenders.map(abbrevGender).join(', ') }        : null,
-    languages.length > 0        ? { emoji: '🗣️', value: languages.join(', ') }                                 : null,
-    preferredAgeLabel           ? { emoji: '🎂',  value: preferredAgeLabel }                                    : null,
+  const identityItems = [
+    ethnicity            ? { emoji: '🌍', value: ethnicity }                     : null,
+    profile?.gender      ? { emoji: '🧍', value: abbrevGender(profile.gender) } : null,
+    religion             ? { emoji: '🛐', value: religion }                      : null,
+    languages.length > 0 ? { emoji: '🗣️', value: languages.join(', ') }         : null,
+  ].filter((x): x is { emoji: string; value: string } => Boolean(x));
+
+  const preferenceItems = [
+    preferredGenders.length > 0
+      ? { emoji: '💞', value: preferredGenders.map(abbrevGender).join(', ') }
+      : null,
+    preferredAgeLabel ? { emoji: '🎂', value: preferredAgeLabel } : null,
   ].filter((x): x is { emoji: string; value: string } => Boolean(x));
 
   // Profile completeness
@@ -206,11 +193,11 @@ export default function ProfileScreen() {
     Boolean(profile?.religion?.trim()),
     languages.length > 0,
   ].filter(Boolean).length;
-  const completenessPercent = Math.round((completenessScore / COMPLETENESS_TOTAL) * 100);
-  const isProfileComplete = completenessScore === COMPLETENESS_TOTAL;
 
-  const toggleGroup = (id: string, val: boolean) =>
-    setOpenGroups((prev) => ({ ...prev, [id]: val }));
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    router.replace('/onboarding');
+  };
 
   const toggleGlobalOpen = async (value: boolean) => {
     if (!userId || updatingGlobalOpen) return;
@@ -218,11 +205,6 @@ export default function ProfileScreen() {
 
     setUpdatingGlobalOpen(true);
     setProfile((prev) => (prev ? { ...prev, is_open_to_connections: value } : prev));
-    if (!value) {
-      setOpenGroups((prev) =>
-        Object.fromEntries(Object.keys(prev).map((groupId) => [groupId, false]))
-      );
-    }
 
     const { error } = await supabase
       .from('profiles')
@@ -234,11 +216,6 @@ export default function ProfileScreen() {
       Alert.alert('Update failed', error.message);
     }
     setUpdatingGlobalOpen(false);
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    router.replace('/onboarding');
   };
 
   const deleteAccount = async () => {
@@ -495,30 +472,66 @@ export default function ProfileScreen() {
           <View style={styles.headerBg}>
             <View style={styles.headerContent}>
 
-              {/* Avatar */}
-              <TouchableOpacity style={styles.photoWrap} onPress={openPhotoActions} activeOpacity={0.85}>
-                {avatarUri ? (
-                  <Image
-                    key={avatarUri}
-                    source={{ uri: avatarUri }}
-                    style={styles.photoImage}
-                    resizeMode="cover"
-                    onError={() => setAvatarUri(null)}
-                  />
-                ) : (
-                  <View style={styles.photoPlaceholder}>
-                    <Text style={styles.photoInitial}>{name[0]?.toUpperCase() ?? '?'}</Text>
+              {/* Avatar + completion ring */}
+              <View style={styles.avatarRingWrap}>
+                {/* Track */}
+                <View style={styles.ringTrack} />
+                {(() => {
+                  const frac = completenessScore / COMPLETENESS_TOTAL;
+                  const arcColor = completenessScore === COMPLETENESS_TOTAL ? Colors.success : Colors.terracotta;
+                  const rightRot = (Math.min(frac, 0.5) / 0.5) * 180 - 180;
+                  const leftRot  = frac > 0.5 ? ((frac - 0.5) / 0.5) * 180 - 180 : -180;
+                  return (
+                    <>
+                      {/* Right half — covers 0–50% of arc (12 o'clock → 6 o'clock CW) */}
+                      <View style={styles.ringHalfClipRight}>
+                        <View style={[styles.ringArc, {
+                          left: -60,
+                          borderTopColor: arcColor,
+                          borderRightColor: arcColor,
+                          borderBottomColor: 'transparent',
+                          borderLeftColor: 'transparent',
+                          transform: [{ rotate: `${rightRot}deg` }],
+                        }]} />
+                      </View>
+                      {/* Left half — covers 50–100% of arc (6 o'clock → 12 o'clock CW) */}
+                      <View style={styles.ringHalfClipLeft}>
+                        <View style={[styles.ringArc, {
+                          left: 0,
+                          borderTopColor: 'transparent',
+                          borderRightColor: 'transparent',
+                          borderBottomColor: arcColor,
+                          borderLeftColor: arcColor,
+                          transform: [{ rotate: `${leftRot}deg` }],
+                        }]} />
+                      </View>
+                    </>
+                  );
+                })()}
+                <TouchableOpacity style={styles.photoWrap} onPress={openPhotoActions} activeOpacity={0.85}>
+                  {avatarUri ? (
+                    <Image
+                      key={avatarUri}
+                      source={{ uri: avatarUri }}
+                      style={styles.photoImage}
+                      resizeMode="cover"
+                      onError={() => setAvatarUri(null)}
+                    />
+                  ) : (
+                    <View style={styles.photoPlaceholder}>
+                      <Text style={styles.photoInitial}>{name[0]?.toUpperCase() ?? '?'}</Text>
+                    </View>
+                  )}
+                  {updatingPhoto && (
+                    <View style={styles.photoLoadingOverlay}>
+                      <ActivityIndicator color={Colors.white} />
+                    </View>
+                  )}
+                  <View style={styles.cameraBtn}>
+                    <Ionicons name="camera" size={13} color={Colors.white} />
                   </View>
-                )}
-                {updatingPhoto && (
-                  <View style={styles.photoLoadingOverlay}>
-                    <ActivityIndicator color={Colors.white} />
-                  </View>
-                )}
-                <View style={styles.cameraBtn}>
-                  <Ionicons name="camera" size={13} color={Colors.white} />
-                </View>
-              </TouchableOpacity>
+                </TouchableOpacity>
+              </View>
 
               {/* Name */}
               <Text style={styles.name}>{name}</Text>
@@ -531,64 +544,41 @@ export default function ProfileScreen() {
                 <Text style={styles.metaText}>{city}</Text>
               </View>
 
-              {/* Intent pill */}
-              <View style={styles.intentPill}>
-                <Text style={styles.intentPillText}>{intentMeta.emoji} {intentMeta.label}</Text>
-              </View>
+              {profile && (
+                <View style={styles.headerActionsRow}>
+                  <TouchableOpacity
+                    style={styles.headerActionItem}
+                    onPress={() => router.push('/profile-setup')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.headerActionControl}>
+                      <Ionicons name="pencil-outline" size={22} color={Colors.white} />
+                    </View>
+                    <Text style={styles.headerActionLabel}>Edit Profile</Text>
+                  </TouchableOpacity>
 
-              {/* Edit button */}
-              <TouchableOpacity
-                style={styles.editBtn}
-                onPress={() => router.push('/profile-setup')}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="pencil-outline" size={14} color={Colors.brown} />
-                <Text style={styles.editBtnText}>Edit Profile</Text>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.headerActionItem}
+                    onPress={() => { void toggleGlobalOpen(!(profile.is_open_to_connections ?? true)); }}
+                    activeOpacity={0.8}
+                    disabled={updatingGlobalOpen}
+                  >
+                    <View style={[
+                      styles.toggleTrack,
+                      (profile.is_open_to_connections ?? true) && styles.toggleTrackOn,
+                    ]}>
+                      <View style={[
+                        styles.toggleThumb,
+                        (profile.is_open_to_connections ?? true) && styles.toggleThumbOn,
+                      ]} />
+                    </View>
+                    <Text style={styles.headerActionLabel}>Connections</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
             </View>
           </View>
-
-          {/* ── Open to Connections Quick Toggle ── */}
-          {profile && (
-            <View style={styles.openQuickRow}>
-              <View style={styles.openQuickLeft}>
-                <Text style={styles.openQuickEmoji}>🌱</Text>
-                <View>
-                  <Text style={styles.openQuickTitle}>Open to connections</Text>
-                  <Text style={styles.openQuickSub}>Across all groups · private</Text>
-                </View>
-              </View>
-              <Switch
-                value={profile.is_open_to_connections ?? true}
-                onValueChange={(val) => { void toggleGlobalOpen(val); }}
-                disabled={updatingGlobalOpen}
-                trackColor={{ false: Colors.border, true: Colors.olive }}
-                thumbColor={Colors.white}
-              />
-            </View>
-          )}
-
-          {/* ── Completeness Banner ── */}
-          {!isProfileComplete && (
-            <TouchableOpacity
-              style={styles.completenessBanner}
-              onPress={() => router.push('/profile-setup')}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="sparkles-outline" size={18} color={Colors.terracotta} />
-              <View style={styles.completenessMiddle}>
-                <Text style={styles.completenessTitle}>
-                  Complete your profile — {completenessPercent}%
-                </Text>
-                <View style={styles.completenessTrack}>
-                  <View
-                    style={[styles.completenessFill, { width: `${completenessPercent}%` as any }]}
-                  />
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={15} color={Colors.borderDark} />
-            </TouchableOpacity>
-          )}
 
           {/* ── Photos ── */}
           <View style={styles.section}>
@@ -675,13 +665,13 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* ── About Me (identity + preferences grid) ── */}
+          {/* ── About Me (identity) ── */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About Me</Text>
             <View style={[styles.card, styles.cardNoPad]}>
-              {detailItems.length > 0 ? (
+              {identityItems.length > 0 ? (
                 <View style={styles.detailChips}>
-                  {detailItems.map((item) => (
+                  {identityItems.map((item) => (
                     <View key={item.emoji} style={styles.detailChip}>
                       <Text style={styles.detailChipEmoji}>{item.emoji}</Text>
                       <Text style={styles.detailChipValue}>{item.value}</Text>
@@ -695,62 +685,37 @@ export default function ProfileScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.bioEmpty}>
-                    Add your identity and preferences to help others connect with you.
+                    Add your identity details to help others know you better.
                   </Text>
                 </TouchableOpacity>
               )}
             </View>
           </View>
 
-          {/* ── Openness Signals ── */}
+          {/* ── Preferences ── */}
           <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionLabel}>Openness Signals</Text>
-              <View style={styles.privateBadge}>
-                <Ionicons name="lock-closed" size={9} color={Colors.muted} />
-                <Text style={styles.privateBadgeText}>Private</Text>
-              </View>
-            </View>
-            <Text style={styles.sectionSubtext}>
-              Only visible to you. A reveal fires only when it's mutual.
-            </Text>
-
-            <View style={[styles.card, styles.globalOpenCard]}>
-              <View style={styles.globalOpenLeft}>
-                <Text style={styles.globalOpenTitle}>Open to connections</Text>
-                <Text style={styles.globalOpenText}>
-                  Controls your availability across all groups.
-                </Text>
-              </View>
-              <Switch
-                value={profile?.is_open_to_connections ?? true}
-                onValueChange={(val) => { void toggleGlobalOpen(val); }}
-                disabled={updatingGlobalOpen}
-                trackColor={{ false: Colors.border, true: Colors.olive }}
-                thumbColor={Colors.white}
-              />
-            </View>
-
-            <View style={styles.card}>
-              {myGroups.map((g, i) => (
-                <View key={g.id} style={[styles.infoRow, i > 0 && styles.infoRowDivider]}>
-                  <View style={[styles.signalDot, { backgroundColor: g.coverColor + '28' }]}>
-                    <Text style={styles.infoEmoji}>{g.emoji}</Text>
-                  </View>
-                  <View style={styles.infoText}>
-                    <Text style={styles.signalName} numberOfLines={1}>{g.name}</Text>
-                    <Text style={[styles.signalState, openGroups[g.id] && styles.signalStateOn]}>
-                      {openGroups[g.id] ? '🌱 Open to connect' : 'Not signalling'}
-                    </Text>
-                  </View>
-                  <Switch
-                    value={openGroups[g.id] || false}
-                    onValueChange={(val) => toggleGroup(g.id, val)}
-                    trackColor={{ false: Colors.border, true: Colors.olive }}
-                    thumbColor={Colors.white}
-                  />
+            <Text style={styles.sectionLabel}>Preferences</Text>
+            <View style={[styles.card, styles.cardNoPad]}>
+              {preferenceItems.length > 0 ? (
+                <View style={styles.detailChips}>
+                  {preferenceItems.map((item) => (
+                    <View key={item.emoji + item.value} style={styles.detailChip}>
+                      <Text style={styles.detailChipEmoji}>{item.emoji}</Text>
+                      <Text style={styles.detailChipValue}>{item.value}</Text>
+                    </View>
+                  ))}
                 </View>
-              ))}
+              ) : (
+                <TouchableOpacity
+                  style={{ padding: Spacing.md }}
+                  onPress={() => router.push('/profile-setup')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.bioEmpty}>
+                    Add your match preferences to get better introductions.
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
@@ -841,8 +806,45 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
   },
 
-  // Avatar
-  photoWrap: { position: 'relative', width: 108, height: 108, marginBottom: 18 },
+  // Avatar ring
+  avatarRingWrap: {
+    width: 120,
+    height: 120,
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  ringTrack: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  ringHalfClipRight: {
+    position: 'absolute',
+    width: 60,
+    height: 120,
+    right: 0,
+    overflow: 'hidden',
+  },
+  ringHalfClipLeft: {
+    position: 'absolute',
+    width: 60,
+    height: 120,
+    left: 0,
+    overflow: 'hidden',
+  },
+  ringArc: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 3,
+  },
+  photoWrap: { position: 'relative', width: 108, height: 108 },
   photoPlaceholder: {
     width: 108,
     height: 108,
@@ -890,74 +892,49 @@ const styles = StyleSheet.create({
   metaText: { fontSize: 13, color: Colors.brownLight },
   metaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: Colors.brownLight },
 
-  // Intent pill
-  intentPill: {
-    backgroundColor: 'rgba(196,98,45,0.22)',
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 5,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(196,98,45,0.3)',
-  },
-  intentPillText: { fontSize: 12, color: Colors.terraLight, fontWeight: '700' },
-
-  // Edit button
-  editBtn: {
+  // Header actions inside avatar card
+  headerActionsRow: {
     flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 28,
+    marginTop: 16,
+  },
+  headerActionItem: {
     alignItems: 'center',
     gap: 6,
+  },
+  headerActionControl: {
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerActionLabel: {
+    fontSize: 11,
+    color: Colors.brownLight,
+    fontWeight: '600',
+  },
+  toggleTrack: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    position: 'relative',
+  },
+  toggleTrackOn: {
+    backgroundColor: Colors.olive,
+  },
+  toggleThumb: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    top: 3,
+    left: 3,
+  },
+  toggleThumbOn: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.full,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  editBtnText: { fontSize: 13, color: Colors.brown, fontWeight: '700' },
-
-  // ── Open quick row ──
-  openQuickRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginHorizontal: Spacing.lg,
-    marginTop: 16,
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  openQuickLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  openQuickEmoji: { fontSize: 20 },
-  openQuickTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 1 },
-  openQuickSub: { fontSize: 11, color: Colors.muted },
-
-  // ── Completeness banner ──
-  completenessBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginHorizontal: Spacing.lg,
-    marginTop: 20,
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(196,98,45,0.2)',
-    padding: 14,
-  },
-  completenessMiddle: { flex: 1, gap: 6 },
-  completenessTitle: { fontSize: 13, fontWeight: '700', color: Colors.ink },
-  completenessTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Colors.border,
-    overflow: 'hidden',
-  },
-  completenessFill: {
-    height: '100%',
-    borderRadius: 2,
-    backgroundColor: Colors.terracotta,
+    left: 21,
   },
 
   // ── Sections ──
@@ -1125,36 +1102,6 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   infoValue: { fontSize: 14, color: Colors.ink, fontWeight: '600' },
-
-  // ── Private badge ──
-  privateBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: Colors.paper,
-    borderRadius: Radius.full,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  privateBadgeText: { fontSize: 9, color: Colors.muted, fontWeight: '600' },
-
-  // ── Signal rows ──
-  signalDot: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  signalName: { fontSize: 13, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
-  signalState: { fontSize: 11, color: Colors.muted },
-  signalStateOn: { color: Colors.olive, fontWeight: '600' },
-  globalOpenCard: {
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  globalOpenLeft: { flex: 1 },
-  globalOpenTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
-  globalOpenText: { fontSize: 12, color: Colors.muted, lineHeight: 17 },
 
   // ── Settings ──
   settingsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
