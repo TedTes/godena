@@ -646,25 +646,6 @@ export default function ProfileScreen() {
             )}
           </View>
 
-          {/* ── About ── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>About</Text>
-            <View style={styles.card}>
-              {profile?.bio ? (
-                <Text style={styles.bioText}>{profile.bio}</Text>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => router.push('/profile-setup')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.bioEmpty}>
-                    Tap to introduce yourself — your bio helps others decide if you'd connect well.
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-
           {/* ── About Me (identity) ── */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About Me</Text>

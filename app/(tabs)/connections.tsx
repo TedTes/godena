@@ -62,24 +62,6 @@ type ActiveConnection = {
   lastAt: string;
 };
 
-type RevealHistoryItem = {
-  id: string;
-  name: string;
-  groupName: string;
-  groupEmoji: string;
-  status: ConnectionRow['status'];
-  dateLabel: string;
-};
-
-function statusLabel(status: ConnectionRow['status']) {
-  switch (status) {
-    case 'passed': return 'Passed';
-    case 'unmatched': return 'Ended';
-    case 'closed': return 'Closed';
-    default: return status;
-  }
-}
-
 function groupEmoji(category?: string) {
   switch (category) {
     case 'outdoors': return '🥾';
@@ -97,11 +79,8 @@ export default function ConnectionsScreen() {
   const [loading, setLoading] = useState(true);
   const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
-  const [revealHistory, setRevealHistory] = useState<RevealHistoryItem[]>([]);
-  const [localTab, setLocalTab] = useState<'connections' | 'history'>('connections');
 
   const screenFade = useRef(new Animated.Value(0)).current;
-  const tabContentFade = useRef(new Animated.Value(1)).current;
 
   useFocusEffect(
     useCallback(() => {
@@ -114,7 +93,6 @@ export default function ConnectionsScreen() {
         if (!uid) {
           setPendingReveal(null);
           setActiveConnections([]);
-          setRevealHistory([]);
           setLoading(false);
           return;
         }
@@ -129,7 +107,6 @@ export default function ConnectionsScreen() {
         if (rows.length === 0) {
           setPendingReveal(null);
           setActiveConnections([]);
-          setRevealHistory([]);
           setLoading(false);
           return;
         }
@@ -172,7 +149,6 @@ export default function ConnectionsScreen() {
 
         const pending = rows.filter((c) => c.status === 'pending');
         const accepted = rows.filter((c) => c.status === 'accepted');
-        const historyRows = rows.filter((c) => ['passed', 'unmatched', 'closed'].includes(c.status));
 
         if (pending.length > 0) {
           const top = pending[0];
@@ -209,22 +185,6 @@ export default function ConnectionsScreen() {
           })
         );
 
-        setRevealHistory(
-          historyRows.slice(0, 20).map((c) => {
-            const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
-            const p = profileByUser.get(otherId);
-            const g = groupById.get(c.group_id);
-            return {
-              id: c.id,
-              name: p?.full_name || 'Connection',
-              groupName: g?.name || 'Group',
-              groupEmoji: groupEmoji(g?.category),
-              status: c.status,
-              dateLabel: new Date(c.revealed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            };
-          })
-        );
-
         setLoading(false);
       };
 
@@ -243,15 +203,7 @@ export default function ConnectionsScreen() {
     }
   }, [loading]);
 
-  const handleTabSwitch = (newTab: 'connections' | 'history') => {
-    if (newTab === localTab) return;
-    Animated.timing(tabContentFade, { toValue: 0, duration: 90, useNativeDriver: true }).start(() => {
-      setLocalTab(newTab);
-      Animated.timing(tabContentFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-    });
-  };
-
-  const hasAnyData = pendingReveal !== null || activeConnections.length > 0 || revealHistory.length > 0;
+  const hasAnyData = pendingReveal !== null || activeConnections.length > 0;
 
   return (
     <View style={styles.container}>
@@ -307,135 +259,85 @@ export default function ConnectionsScreen() {
 
         ) : (
 
-          /* ── Tabbed Layout ── */
+          /* ── Connections Layout ── */
           <Animated.View style={[styles.tabbedWrap, { opacity: screenFade }]}>
-
-            {/* Tab bar */}
-            <View style={styles.tabRow}>
-              {(['connections', 'history'] as const).map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  style={[styles.tabBtn, localTab === t && styles.tabBtnActive]}
-                  onPress={() => handleTabSwitch(t)}
-                >
-                  <Text style={[styles.tabText, localTab === t && styles.tabTextActive]}>
-                    {t === 'connections' ? 'Connections' : 'History'}
-                  </Text>
-                  {t === 'connections' && pendingReveal && (
-                    <View style={styles.tabDot} />
-                  )}
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Tab content with fade */}
-            <Animated.View style={[styles.tabContentWrap, { opacity: tabContentFade }]}>
+            <Animated.View style={styles.tabContentWrap}>
               <ScrollView showsVerticalScrollIndicator={false}>
-
-                {localTab === 'connections' ? (
-                  <>
-                    {/* Pending reveal */}
-                    {pendingReveal && (
-                      <View style={styles.section}>
-                        <View style={styles.sectionHeader}>
-                          <Text style={styles.sectionLabel}>New Introduction</Text>
-                          <View style={styles.newBadge}><Text style={styles.newBadgeText}>New</Text></View>
-                        </View>
-                        <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
-                          <View style={styles.revealGlow} />
-                          <View style={styles.revealRow}>
-                            <View style={styles.revealLeftCol}>
-                              <View style={styles.revealTop}>
-                                <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
-                                <View style={styles.revealBadge}>
-                                  <Text style={styles.revealBadgeText}>✨</Text>
-                                </View>
-                              </View>
-                            </View>
-                            <View style={styles.revealContent}>
-                              <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
-                              <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
-                              <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
-                            </View>
-                            <View style={styles.revealChevronWrap}>
-                              <Ionicons name="chevron-forward" size={20} color="rgba(245,240,232,0.85)" />
-                            </View>
-                          </View>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {/* Active connections */}
-                    <View style={styles.section}>
-                      <View style={styles.sectionHeader}>
-                        <Text style={styles.sectionLabel}>Active Connections</Text>
-                      </View>
-                      {activeConnections.length > 0 ? (
-                        activeConnections.map((c) => (
-                          <TouchableOpacity
-                            key={c.id}
-                            style={styles.connectionCard}
-                            onPress={() => router.push(`/chat/${c.id}`)}
-                            activeOpacity={0.85}
-                          >
-                            <Image source={{ uri: c.photo }} style={styles.connPhoto} />
-                            <View style={styles.connInfo}>
-                              <View style={styles.connTopRow}>
-                                <Text style={styles.connName} numberOfLines={1}>{c.name}</Text>
-                                <View style={styles.connTopRight}>
-                                  <Text style={styles.connDate}>{c.lastAt}</Text>
-                                  <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
-                                </View>
-                              </View>
-                              <Text style={styles.connGroup}>{c.groupEmoji} {c.groupName}</Text>
-                              <Text
-                                style={[styles.connLast, c.lastAt ? styles.connLastMsg : styles.connLastEmpty]}
-                                numberOfLines={1}
-                              >
-                                {c.lastAt ? c.lastMessage : 'Start the conversation'}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        ))
-                      ) : (
-                        <View style={styles.activeEmptyWrap}>
-                          <View style={styles.activeEmptyIconBox}>
-                            <Ionicons name="chatbubbles-outline" size={22} color={Colors.brownLight} />
-                          </View>
-                          <Text style={styles.activeEmptyTitle}>No active connections yet</Text>
-                          <Text style={styles.activeEmptyText}>
-                            Accepted introductions will appear here as conversations.
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </>
-                ) : (
-                  /* History tab */
+                {/* Pending reveal */}
+                {pendingReveal && (
                   <View style={styles.section}>
                     <View style={styles.sectionHeader}>
-                      <Text style={styles.sectionLabel}>Past Introductions</Text>
+                      <Text style={styles.sectionLabel}>New Introduction</Text>
+                      <View style={styles.newBadge}><Text style={styles.newBadgeText}>New</Text></View>
                     </View>
-                    {revealHistory.length > 0 ? (
-                      revealHistory.map((h) => (
-                        <View key={h.id} style={styles.historyCard}>
-                          <View>
-                            <Text style={styles.historyName}>{h.name}</Text>
-                            <Text style={styles.historyMeta}>{h.groupEmoji} {h.groupName}</Text>
-                          </View>
-                          <View style={styles.historyRight}>
-                            <Text style={styles.historyStatus}>{statusLabel(h.status)}</Text>
-                            <Text style={styles.historyDate}>{h.dateLabel}</Text>
+                    <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
+                      <View style={styles.revealGlow} />
+                      <View style={styles.revealRow}>
+                        <View style={styles.revealLeftCol}>
+                          <View style={styles.revealTop}>
+                            <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
+                            <View style={styles.revealBadge}>
+                              <Text style={styles.revealBadgeText}>✨</Text>
+                            </View>
                           </View>
                         </View>
-                      ))
-                    ) : (
-                      <View style={styles.emptyCard}>
-                        <Text style={styles.emptyCardText}>No past introductions yet.</Text>
+                        <View style={styles.revealContent}>
+                          <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
+                          <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
+                          <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
+                        </View>
+                        <View style={styles.revealChevronWrap}>
+                          <Ionicons name="chevron-forward" size={20} color="rgba(245,240,232,0.85)" />
+                        </View>
                       </View>
-                    )}
+                    </TouchableOpacity>
                   </View>
                 )}
+
+                {/* Active connections */}
+                <View style={styles.section}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionLabel}>Active Connections</Text>
+                  </View>
+                  {activeConnections.length > 0 ? (
+                    activeConnections.map((c) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={styles.connectionCard}
+                        onPress={() => router.push(`/chat/${c.id}`)}
+                        activeOpacity={0.85}
+                      >
+                        <Image source={{ uri: c.photo }} style={styles.connPhoto} />
+                        <View style={styles.connInfo}>
+                          <View style={styles.connTopRow}>
+                            <Text style={styles.connName} numberOfLines={1}>{c.name}</Text>
+                            <View style={styles.connTopRight}>
+                              <Text style={styles.connDate}>{c.lastAt}</Text>
+                              <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+                            </View>
+                          </View>
+                          <Text style={styles.connGroup}>{c.groupEmoji} {c.groupName}</Text>
+                          <Text
+                            style={[styles.connLast, c.lastAt ? styles.connLastMsg : styles.connLastEmpty]}
+                            numberOfLines={1}
+                          >
+                            {c.lastAt ? c.lastMessage : 'Start the conversation'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <View style={styles.activeEmptyWrap}>
+                      <View style={styles.activeEmptyIconBox}>
+                        <Ionicons name="chatbubbles-outline" size={22} color={Colors.brownLight} />
+                      </View>
+                      <Text style={styles.activeEmptyTitle}>No active connections yet</Text>
+                      <Text style={styles.activeEmptyText}>
+                        Accepted introductions will appear here as conversations.
+                      </Text>
+                    </View>
+                  )}
+                </View>
 
                 <View style={{ height: 40 }} />
               </ScrollView>
@@ -499,32 +401,6 @@ const styles = StyleSheet.create({
 
   // ── Tabbed layout ──
   tabbedWrap: { flex: 1 },
-  tabRow: {
-    flexDirection: 'row',
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
-    backgroundColor: Colors.paper,
-    borderRadius: Radius.full,
-    padding: 2,
-  },
-  tabBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    borderRadius: Radius.full,
-  },
-  tabBtnActive: { backgroundColor: Colors.white },
-  tabText: { fontSize: 13, fontWeight: '600', color: Colors.muted },
-  tabTextActive: { color: Colors.terracotta },
-  tabDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: Colors.terracotta,
-  },
   tabContentWrap: { flex: 1 },
 
   // ── Sections ──
@@ -545,14 +421,6 @@ const styles = StyleSheet.create({
   },
   newBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '700' },
 
-  emptyCard: {
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  emptyCardText: { fontSize: 13, color: Colors.muted },
   activeEmptyWrap: {
     paddingVertical: 32,
     paddingHorizontal: 24,
@@ -666,24 +534,6 @@ const styles = StyleSheet.create({
   connLastMsg: { color: Colors.brownMid, fontWeight: '500' },
   connLastEmpty: { fontStyle: 'italic' },
   connDate: { fontSize: 11, color: Colors.muted },
-
-  // ── History cards ──
-  historyCard: {
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-    marginBottom: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  historyName: { fontSize: 14, fontWeight: '700', color: Colors.ink },
-  historyMeta: { fontSize: 12, color: Colors.muted, marginTop: 2 },
-  historyRight: { alignItems: 'flex-end' },
-  historyStatus: { fontSize: 11, color: Colors.brownMid, fontWeight: '800', textTransform: 'uppercase' },
-  historyDate: { fontSize: 11, color: Colors.brownLight, marginTop: 2 },
 
   // ── How it works ──
   howBox: {

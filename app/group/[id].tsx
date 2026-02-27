@@ -799,7 +799,6 @@ export default function GroupDetailScreen() {
               <View style={styles.membersCard}>
                 {groupEvents.map((ev, i) => {
                   const stats = getEventStats(ev.id);
-                  const myRsvp = stats.mine;
                   return (
                     <View key={ev.id} style={[styles.eventBlock, i > 0 && styles.memberRowDivider]}>
                       <View style={styles.eventRow}>
@@ -837,79 +836,6 @@ export default function GroupDetailScreen() {
                         </View>
                       </View>
 
-                      {membership ? (
-                        <View style={styles.rsvpRow}>
-                          {myRsvp?.attended_at ? (
-                            <TouchableOpacity
-                              style={styles.attendedChip}
-                              onPress={() => {
-                                setEventRsvps((prev) =>
-                                  prev.map((r) =>
-                                    r.event_id === ev.id && r.user_id === userId
-                                      ? { ...r, attended_at: null }
-                                      : r
-                                  )
-                                );
-                              }}
-                            >
-                              <Ionicons name="checkmark-circle" size={11} color={Colors.success} />
-                              <Text style={styles.attendedChipText}>Attended</Text>
-                              <Ionicons name="close" size={10} color={Colors.success} style={{ opacity: 0.6 }} />
-                            </TouchableOpacity>
-                          ) : (
-                            <>
-                              <TouchableOpacity
-                                style={[
-                                  styles.rsvpChip,
-                                  myRsvp?.status === 'going' && styles.rsvpChipGoing,
-                                  myRsvp?.status === 'interested' && styles.rsvpChipInterested,
-                                  myRsvp?.status === 'not_going' && styles.rsvpChipNotGoing,
-                                  pendingRsvps.has(ev.id) && styles.rsvpChipPending,
-                                ]}
-                                disabled={pendingRsvps.has(ev.id)}
-                                onPress={() => {
-                                  Alert.alert('RSVP', undefined, [
-                                    { text: '✅ Going', onPress: () => void handleRsvp(ev.id, 'going') },
-                                    { text: '👀 Interested', onPress: () => void handleRsvp(ev.id, 'interested') },
-                                    { text: '✗ Not going', onPress: () => void handleRsvp(ev.id, 'not_going') },
-                                    { text: 'Cancel', style: 'cancel' },
-                                  ]);
-                                }}
-                              >
-                                {pendingRsvps.has(ev.id) ? (
-                                  <ActivityIndicator size="small" color={Colors.muted} />
-                                ) : (
-                                  <Text style={[
-                                    styles.rsvpChipText,
-                                    myRsvp?.status === 'going' && styles.rsvpChipTextGoing,
-                                    myRsvp?.status === 'interested' && styles.rsvpChipTextInterested,
-                                    myRsvp?.status === 'not_going' && styles.rsvpChipTextMuted,
-                                  ]}>
-                                    {myRsvp?.status === 'going' ? '✅ Going'
-                                      : myRsvp?.status === 'interested' ? '👀 Maybe'
-                                      : myRsvp?.status === 'not_going' ? '✗ Declined'
-                                      : '+ RSVP'}
-                                  </Text>
-                                )}
-                              </TouchableOpacity>
-                              {myRsvp?.status === 'going' && (
-                                <TouchableOpacity
-                                  style={[styles.attendedBtn, pendingAttendance.has(ev.id) && { opacity: 0.55 }]}
-                                  onPress={() => void handleMarkAttended(ev.id)}
-                                  disabled={pendingAttendance.has(ev.id)}
-                                >
-                                  {pendingAttendance.has(ev.id)
-                                    ? <ActivityIndicator size="small" color={Colors.brownMid} />
-                                    : <Text style={styles.attendedBtnText}>Mark attended</Text>
-                                  }
-                                </TouchableOpacity>
-                              )}
-                            </>
-                          )}
-                        </View>
-                      ) : (
-                        <Text style={styles.eventsJoinHint}>Join to RSVP.</Text>
-                      )}
                     </View>
                   );
                 })}
