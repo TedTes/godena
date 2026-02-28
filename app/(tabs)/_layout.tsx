@@ -13,16 +13,16 @@ type TabIconProps = {
 };
 
 function TabIcon({ name, focused, badge }: TabIconProps) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const scale = useRef(new Animated.Value(focused ? 1.08 : 1)).current;
 
   useEffect(() => {
     Animated.spring(scale, {
-      toValue: focused ? 1.2 : 1,
-      tension: 300,
-      friction: 12,
+      toValue: focused ? 1.08 : 1,
+      friction: 7,
+      tension: 120,
       useNativeDriver: true,
     }).start();
-  }, [focused]);
+  }, [focused, scale]);
 
   return (
     <Animated.View style={[styles.iconWrap, { transform: [{ scale }] }]}>

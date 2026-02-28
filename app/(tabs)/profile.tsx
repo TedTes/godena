@@ -1,5 +1,6 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Animated,
   Alert,
   Image,
   View,
@@ -15,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { useScreenEnter } from '../../hooks/useScreenEnter';
 
 type SignalGroup = {
   id: string;
@@ -182,6 +184,12 @@ export default function ProfileScreen() {
       : null,
     preferredAgeLabel ? { emoji: '🎂', value: preferredAgeLabel } : null,
   ].filter((x): x is { emoji: string; value: string } => Boolean(x));
+
+  const enterStyle = useScreenEnter();
+
+  // Toggle thumb position (off=0, on=18)
+  const isOpen  = profile?.is_open_to_connections ?? true;
+  const thumbStyle = { transform: [{ translateX: isOpen ? 18 : 0 }] as const };
 
   // Profile completeness
   const completenessScore = [
@@ -466,6 +474,7 @@ export default function ProfileScreen() {
   return (
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
+        <Animated.View style={[{ flex: 1 }, enterStyle]}>
         <ScrollView showsVerticalScrollIndicator={false}>
 
           {/* ── Hero Header ── */}
@@ -567,10 +576,7 @@ export default function ProfileScreen() {
                       styles.toggleTrack,
                       (profile.is_open_to_connections ?? true) && styles.toggleTrackOn,
                     ]}>
-                      <View style={[
-                        styles.toggleThumb,
-                        (profile.is_open_to_connections ?? true) && styles.toggleThumbOn,
-                      ]} />
+                      <View style={[styles.toggleThumb, thumbStyle]} />
                     </View>
                     <Text style={styles.headerActionLabel}>Connections</Text>
                   </TouchableOpacity>
@@ -754,6 +760,7 @@ export default function ProfileScreen() {
 
           <View style={{ height: 40 }} />
         </ScrollView>
+        </Animated.View>
       </SafeAreaView>
     </View>
   );
@@ -909,13 +916,9 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.6)',
+    backgroundColor: Colors.white,
     top: 3,
     left: 3,
-  },
-  toggleThumbOn: {
-    backgroundColor: Colors.white,
-    left: 21,
   },
 
   // ── Sections ──

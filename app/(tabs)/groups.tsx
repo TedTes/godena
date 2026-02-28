@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import { useScreenEnter } from '../../hooks/useScreenEnter';
 import {
   createGroup as createGroupRecord,
   fetchGroupMembershipCount,
@@ -398,8 +399,11 @@ export default function GroupsScreen() {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
+  const enterStyle = useScreenEnter();
+
   return (
     <View style={styles.container}>
+      <Animated.View style={[{ flex: 1 }, enterStyle]}>
       <SafeAreaView edges={['top']} style={styles.safe}>
 
         {/* ── Header ── */}
@@ -641,6 +645,7 @@ export default function GroupsScreen() {
           </Animated.View>
         )}
       </SafeAreaView>
+      </Animated.View>
 
       {/* ── Create Group Modal ── */}
       <Modal

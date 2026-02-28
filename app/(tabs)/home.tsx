@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Animated,
   View,
   Text,
   StyleSheet,
@@ -7,6 +8,7 @@ import {
   TouchableOpacity,
   Image,
 } from 'react-native';
+import { useScreenEnter } from '../../hooks/useScreenEnter';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -76,6 +78,7 @@ export default function HomeScreen() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
   const [openSignalGroupName, setOpenSignalGroupName] = useState<string | null>(null);
+  const enterStyle = useScreenEnter();
 
   const loadHome = useCallback(async () => {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -276,18 +279,19 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.wordmark}>Godena</Text>
-            <Text style={styles.greeting}>
-              Good morning, {loadingProfile ? '...' : firstName} 👋
-            </Text>
+        <Animated.View style={[{ flex: 1 }, enterStyle]}>
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.wordmark}>Godena</Text>
+              <Text style={styles.greeting}>
+                Good morning, {loadingProfile ? '...' : firstName} 👋
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.notifBtn}>
+              <Ionicons name="notifications-outline" size={22} color={Colors.brown} />
+              <View style={styles.notifDot} />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.notifBtn}>
-            <Ionicons name="notifications-outline" size={22} color={Colors.brown} />
-            <View style={styles.notifDot} />
-          </TouchableOpacity>
-        </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <TouchableOpacity
@@ -436,7 +440,8 @@ export default function HomeScreen() {
           </View>
 
           <View style={{ height: 20 }} />
-        </ScrollView>
+          </ScrollView>
+        </Animated.View>
       </SafeAreaView>
     </View>
   );
