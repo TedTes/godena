@@ -81,6 +81,7 @@ type Member = {
 type Event = {
   id: string;
   title: string;
+  description: string | null;
   starts_at: string;
   location_name: string | null;
   is_virtual: boolean;
@@ -126,6 +127,7 @@ export default function GroupDetailScreen() {
   const [showEventForm, setShowEventForm] = useState(false);
   const [creatingEvent, setCreatingEvent] = useState(false);
   const [eventTitleDraft, setEventTitleDraft] = useState('');
+  const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
   const [eventLocationDraft, setEventLocationDraft] = useState('');
@@ -359,10 +361,11 @@ export default function GroupDetailScreen() {
   const handleCreateEvent = async () => {
     if (!membership || !userId || !id || creatingEvent) return;
     const title = eventTitleDraft.trim();
+    const description = eventDescriptionDraft.trim();
     const date = eventDateDraft.trim();
     const time = eventTimeDraft.trim();
-    if (!title || !date || !time) {
-      Alert.alert('Missing fields', 'Title, date, and time are required.');
+    if (!title || !description || !date || !time) {
+      Alert.alert('Missing fields', 'Title, description, date, and time are required.');
       return;
     }
 
@@ -377,6 +380,7 @@ export default function GroupDetailScreen() {
       id,
       userId,
       title,
+      description,
       startsAt.toISOString(),
       eventVirtualDraft,
       eventLocationDraft.trim() || null
@@ -391,6 +395,7 @@ export default function GroupDetailScreen() {
     setGroupEvents((prev) => [data as Event, ...prev].sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
     setShowEventForm(false);
     setEventTitleDraft('');
+    setEventDescriptionDraft('');
     setEventDateDraft('');
     setEventTimeDraft('');
     setEventLocationDraft('');
@@ -1012,6 +1017,20 @@ export default function GroupDetailScreen() {
                 />
               </View>
 
+              <View style={styles.eventFieldGroup}>
+                <Text style={styles.eventFieldLabel}>Description</Text>
+                <TextInput
+                  style={[styles.eventInput, styles.eventInputMultiline]}
+                  value={eventDescriptionDraft}
+                  onChangeText={setEventDescriptionDraft}
+                  placeholder="What is this event about? What should people expect?"
+                  placeholderTextColor={Colors.muted}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+
               <View style={styles.eventInputRow}>
                 <View style={[styles.eventFieldGroup, { flex: 1 }]}>
                   <Text style={styles.eventFieldLabel}>Date</Text>
@@ -1455,6 +1474,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     paddingHorizontal: 12,
     paddingVertical: 10,
+  },
+  eventInputMultiline: {
+    minHeight: 88,
+    paddingTop: 10,
   },
   eventInputHalf: { flex: 1 },
   eventVirtualRow: {

@@ -4,6 +4,7 @@ export type EventRow = {
   id: string;
   group_id: string;
   title: string;
+  description: string | null;
   starts_at: string;
   location_name: string | null;
   is_virtual: boolean;
@@ -39,7 +40,7 @@ export async function fetchEventsForGroups(groupIds: string[]) {
   const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   return supabase
     .from('group_events')
-    .select('id, group_id, title, starts_at, location_name, is_virtual')
+    .select('id, group_id, title, description, starts_at, location_name, is_virtual')
     .in('group_id', groupIds)
     .gte('starts_at', cutoffIso)
     .order('starts_at', { ascending: true })
@@ -77,7 +78,7 @@ export async function upsertEventRsvp(
 export async function fetchEventById(eventId: string) {
   return supabase
     .from('group_events')
-    .select('id, group_id, title, starts_at, location_name, is_virtual, created_by')
+    .select('id, group_id, title, description, starts_at, location_name, is_virtual, created_by')
     .eq('id', eventId)
     .maybeSingle();
 }

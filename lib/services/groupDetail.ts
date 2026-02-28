@@ -41,7 +41,7 @@ export async function fetchUpcomingEvents(groupId: string) {
   const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   return supabase
     .from('group_events')
-    .select('id, title, starts_at, location_name, is_virtual, created_by')
+    .select('id, title, description, starts_at, location_name, is_virtual, created_by')
     .eq('group_id', groupId)
     .gte('starts_at', cutoffIso)
     .order('starts_at', { ascending: true })
@@ -155,6 +155,7 @@ export async function createGroupEvent(
   groupId: string,
   userId: string,
   title: string,
+  description: string,
   startsAtIso: string,
   isVirtual: boolean,
   locationName: string | null
@@ -165,11 +166,12 @@ export async function createGroupEvent(
       group_id: groupId,
       created_by: userId,
       title,
+      description,
       starts_at: startsAtIso,
       location_name: isVirtual ? null : locationName,
       is_virtual: isVirtual,
     })
-    .select('id, title, starts_at, location_name, is_virtual, created_by')
+    .select('id, title, description, starts_at, location_name, is_virtual, created_by')
     .single();
 }
 
