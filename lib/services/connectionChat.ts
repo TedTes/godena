@@ -95,7 +95,8 @@ export async function markConnectionRead(connectionId: string, userId: string) {
 
 export function subscribeToConnectionMessages(
   connectionId: string,
-  onInsert: (row: ConnectionMessageRow) => void
+  onInsert: (row: ConnectionMessageRow) => void,
+  onStatus?: (status: string) => void
 ) {
   const channel = supabase
     .channel(`connection_messages:${connectionId}`)
@@ -111,7 +112,9 @@ export function subscribeToConnectionMessages(
         onInsert(payload.new as ConnectionMessageRow);
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      onStatus?.(status);
+    });
 
   return channel;
 }

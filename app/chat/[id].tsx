@@ -135,6 +135,26 @@ export default function ConnectionChatScreen() {
   useEffect(() => {
     if (!id || !userId) return;
 
+    const syncLatest = async () => {
+      const { data } = await fetchConnectionMessages(id);
+      const rows = (data as ConnectionMessageRow[] | null) ?? [];
+      if (rows.length === 0) return;
+      const mappedRows: MessageItem[] = rows.map((m) => ({
+        id: m.id,
+        senderId: m.sender_id,
+        content: m.content,
+        sentAt: m.sent_at,
+        isOwn: m.sender_id === userId,
+      }));
+      setMessages((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]));
+        for (const m of mappedRows) byId.set(m.id, m);
+        return Array.from(byId.values()).sort(
+          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+        );
+      });
+    };
+
     const channel = subscribeToConnectionMessages(id, async (row) => {
       setMessages((prev) => {
         if (prev.some((m) => m.id === row.id)) return prev;
@@ -155,9 +175,19 @@ export default function ConnectionChatScreen() {
       }
 
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    }, (status) => {
+      if (status === 'SUBSCRIBED') {
+        void syncLatest();
+      }
     });
 
+    // Fallback: keep receiver up-to-date if realtime packet is missed/delayed.
+    const fallbackSync = setInterval(() => {
+      void syncLatest();
+    }, 1500);
+
     return () => {
+      clearInterval(fallbackSync);
       void removeChannel(channel);
     };
   }, [id, userId]);

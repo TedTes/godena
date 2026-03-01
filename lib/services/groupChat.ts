@@ -69,7 +69,8 @@ export async function fetchProfiles(userIds: string[]) {
 
 export function subscribeToGroupMessages(
   groupId: string,
-  onInsert: (row: GroupChatMessageRow) => void
+  onInsert: (row: GroupChatMessageRow) => void,
+  onStatus?: (status: string) => void
 ) {
   const channel = supabase
     .channel(`group_messages:${groupId}`)
@@ -85,7 +86,9 @@ export function subscribeToGroupMessages(
         onInsert(payload.new as GroupChatMessageRow);
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      onStatus?.(status);
+    });
 
   return channel;
 }

@@ -207,6 +207,22 @@ export default function GroupChatScreen() {
   useEffect(() => {
     if (!id) return;
 
+    const syncLatest = async () => {
+      const { data } = await fetchGroupMessages(id);
+      const rows =
+        (data as Array<{ id: string; group_id: string; sender_id: string; content: string; sent_at: string }> | null) ?? [];
+      if (rows.length === 0) return;
+      await hydrateSenderProfiles(Array.from(new Set(rows.map((m) => m.sender_id))));
+      const mappedRows = mapDbMessages(rows, userId);
+      setMessages((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]));
+        for (const m of mappedRows) byId.set(m.id, m);
+        return Array.from(byId.values()).sort(
+          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+        );
+      });
+    };
+
     const channel = subscribeToGroupMessages(id, async (row: GroupChatMessageRow) => {
       await hydrateSenderProfiles([row.sender_id]);
       setMessages((prev) => {
@@ -219,9 +235,21 @@ export default function GroupChatScreen() {
         // Only count messages from others as "pending unread"
         setPendingCount((n) => n + 1);
       }
+    }, (status) => {
+      if (status === 'SUBSCRIBED') {
+        void syncLatest();
+      }
     });
 
-    return () => { void removeChannel(channel); };
+    // Fallback: keep the receiver in sync if websocket delivery is delayed.
+    const fallbackSync = setInterval(() => {
+      void syncLatest();
+    }, 1500);
+
+    return () => {
+      clearInterval(fallbackSync);
+      void removeChannel(channel);
+    };
   }, [id, userId]);
 
   useEffect(() => {
