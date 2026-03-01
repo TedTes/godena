@@ -57,6 +57,14 @@ export default function RevealScreen() {
   const [successState, setSuccessState] = useState<'waiting' | 'connected' | null>(null);
 
   useEffect(() => {
+    if (successState !== 'waiting') return;
+    const timer = setTimeout(() => {
+      router.replace('/(tabs)/connections');
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [successState, router]);
+
+  useEffect(() => {
     const load = async () => {
       setLoading(true);
       const uid = await getSessionUserId();
@@ -76,6 +84,10 @@ export default function RevealScreen() {
         return;
       }
       setConnection(pending);
+      const hasResponded =
+        (pending.user_a_id === uid && !!pending.responded_a_at) ||
+        (pending.user_b_id === uid && !!pending.responded_b_at);
+      setSuccessState(hasResponded ? 'waiting' : null);
 
       const counterpartId = pending.user_a_id === uid ? pending.user_b_id : pending.user_a_id;
       const [{ data: profiles }, { data: groups }] = await Promise.all([

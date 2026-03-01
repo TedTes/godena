@@ -93,16 +93,27 @@ export async function updateConnectionDecision(
       .single();
   }
 
-  const nextRespondedA = isA ? now : connection.responded_a_at;
-  const nextRespondedB = isA ? connection.responded_b_at : now;
-  const bothAccepted = !!nextRespondedA && !!nextRespondedB;
+  const markResponded = await supabase
+    .from('connections')
+    .update({
+      [respondedField]: now,
+    })
+    .eq('id', connection.id)
+    .select('id, group_id, user_a_id, user_b_id, status, activity_suggested, responded_a_at, responded_b_at, revealed_at')
+    .single();
+  if (markResponded.error || !markResponded.data) return markResponded;
+
+  const latest = await fetchConnectionById(connection.id);
+  if (latest.error || !latest.data) return latest as typeof markResponded;
+
+  const bothAccepted = !!latest.data.responded_a_at && !!latest.data.responded_b_at;
+  if (!bothAccepted || latest.data.status === 'accepted') {
+    return latest as typeof markResponded;
+  }
 
   return supabase
     .from('connections')
-    .update({
-      status: bothAccepted ? 'accepted' : 'pending',
-      [respondedField]: now,
-    })
+    .update({ status: 'accepted' })
     .eq('id', connection.id)
     .select('id, group_id, user_a_id, user_b_id, status, activity_suggested, responded_a_at, responded_b_at, revealed_at')
     .single();
