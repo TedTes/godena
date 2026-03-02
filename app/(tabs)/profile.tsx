@@ -14,7 +14,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Colors, Spacing, Radius } from '../../constants/theme';
+import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { useScreenEnter } from '../../hooks/useScreenEnter';
 
@@ -48,6 +48,19 @@ function abbrevGender(g: string): string {
 }
 
 const COMPLETENESS_TOTAL = 7;
+
+function AvatarImage({ uri, style, onError }: { uri: string; style: object; onError: () => void }) {
+  const opacity = React.useRef(new Animated.Value(0)).current;
+  return (
+    <Animated.Image
+      source={{ uri }}
+      style={[style, { opacity }]}
+      resizeMode="cover"
+      onLoad={() => Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }).start()}
+      onError={onError}
+    />
+  );
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -186,6 +199,8 @@ export default function ProfileScreen() {
   ].filter((x): x is { emoji: string; value: string } => Boolean(x));
 
   const enterStyle = useScreenEnter();
+  const C = useThemeColors();
+  const styles = useMemo(() => makeStyles(C), [C]);
 
   // Toggle thumb position (off=0, on=18)
   const isOpen  = profile?.is_open_to_connections ?? true;
@@ -466,7 +481,7 @@ export default function ProfileScreen() {
   if (loadingProfile) {
     return (
       <View style={styles.loadingWrap}>
-        <ActivityIndicator color={Colors.terracotta} size="large" />
+        <ActivityIndicator color={C.terracotta} size="large" />
       </View>
     );
   }
@@ -487,7 +502,7 @@ export default function ProfileScreen() {
                 <View style={styles.ringTrack} />
                 {(() => {
                   const frac = completenessScore / COMPLETENESS_TOTAL;
-                  const arcColor = completenessScore === COMPLETENESS_TOTAL ? Colors.success : Colors.terracotta;
+                  const arcColor = completenessScore === COMPLETENESS_TOTAL ? C.success : C.terracotta;
                   const rightRot = (Math.min(frac, 0.5) / 0.5) * 180 - 180;
                   const leftRot  = frac > 0.5 ? ((frac - 0.5) / 0.5) * 180 - 180 : -180;
                   return (
@@ -519,11 +534,10 @@ export default function ProfileScreen() {
                 })()}
                 <TouchableOpacity style={styles.photoWrap} onPress={openPhotoActions} activeOpacity={0.85}>
                   {avatarUri ? (
-                    <Image
+                    <AvatarImage
                       key={avatarUri}
-                      source={{ uri: avatarUri }}
+                      uri={avatarUri}
                       style={styles.photoImage}
-                      resizeMode="cover"
                       onError={() => setAvatarUri(null)}
                     />
                   ) : (
@@ -533,11 +547,11 @@ export default function ProfileScreen() {
                   )}
                   {updatingPhoto && (
                     <View style={styles.photoLoadingOverlay}>
-                      <ActivityIndicator color={Colors.white} />
+                      <ActivityIndicator color={C.white} />
                     </View>
                   )}
                   <View style={styles.cameraBtn}>
-                    <Ionicons name="camera" size={13} color={Colors.white} />
+                    <Ionicons name="camera" size={13} color={C.white} />
                   </View>
                 </TouchableOpacity>
               </View>
@@ -549,7 +563,7 @@ export default function ProfileScreen() {
               <View style={styles.metaRow}>
                 {age ? <Text style={styles.metaText}>{age}</Text> : null}
                 {age ? <View style={styles.metaDot} /> : null}
-                <Ionicons name="location-outline" size={12} color={Colors.brownLight} />
+                <Ionicons name="location-outline" size={12} color={C.brownLight} />
                 <Text style={styles.metaText}>{city}</Text>
               </View>
 
@@ -561,7 +575,7 @@ export default function ProfileScreen() {
                     activeOpacity={0.8}
                   >
                     <View style={styles.headerActionControl}>
-                      <Ionicons name="pencil-outline" size={22} color={Colors.white} />
+                      <Ionicons name="pencil-outline" size={22} color={C.white} />
                     </View>
                     <Text style={styles.headerActionLabel}>Edit Profile</Text>
                   </TouchableOpacity>
@@ -602,14 +616,14 @@ export default function ProfileScreen() {
                 activeOpacity={0.85}
               >
                 <View style={styles.galleryEmptyIcon}>
-                  <Ionicons name="images-outline" size={26} color={Colors.muted} />
+                  <Ionicons name="images-outline" size={26} color={C.muted} />
                 </View>
                 <Text style={styles.galleryEmptyTitle}>Add photos</Text>
                 <Text style={styles.galleryEmptySubtext}>
                   Profiles with photos get far more connections
                 </Text>
                 <View style={styles.galleryEmptyBtn}>
-                  <Ionicons name="add" size={14} color={Colors.white} />
+                  <Ionicons name="add" size={14} color={C.white} />
                   <Text style={styles.galleryEmptyBtnText}>Upload a photo</Text>
                 </View>
               </TouchableOpacity>
@@ -633,7 +647,7 @@ export default function ProfileScreen() {
                         activeOpacity={0.85}
                         hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                       >
-                        <Ionicons name="close" size={11} color={Colors.white} />
+                        <Ionicons name="close" size={11} color={C.white} />
                       </TouchableOpacity>
                     )}
                   </View>
@@ -644,7 +658,7 @@ export default function ProfileScreen() {
                     onPress={() => void addGalleryPhoto()}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="add" size={26} color={Colors.terracotta} />
+                    <Ionicons name="add" size={26} color={C.terracotta} />
                     <Text style={styles.addPhotoLabel}>Add</Text>
                   </TouchableOpacity>
                 )}
@@ -710,6 +724,19 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Account</Text>
             <View style={[styles.card, styles.cardNoPad]}>
+              <TouchableOpacity
+                style={[styles.settingsRow, styles.settingsRowDivider]}
+                onPress={() => Alert.alert('Identity Verification', "Coming soon \u2014 verify your identity to build trust in your community.")}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.settingsIcon, { backgroundColor: 'rgba(201,168,76,0.12)' }]}>
+                  <Ionicons name="shield-checkmark-outline" size={18} color={C.gold} />
+                </View>
+                <Text style={styles.settingsLabel}>Verify Identity</Text>
+                <View style={styles.unverifiedBadge}>
+                  <Text style={styles.unverifiedText}>Unverified</Text>
+                </View>
+              </TouchableOpacity>
               {settingsRows.map((row, i) => (
                 <TouchableOpacity
                   key={row.label}
@@ -731,9 +758,9 @@ export default function ProfileScreen() {
                       name={row.icon as any}
                       size={18}
                       color={
-                        'danger' in row && row.danger ? Colors.error :
-                        'accent' in row && row.accent ? Colors.gold :
-                        Colors.brownMid
+                        'danger' in row && row.danger ? C.error :
+                        'accent' in row && row.accent ? C.gold :
+                        C.brownMid
                       }
                     />
                   </View>
@@ -749,9 +776,9 @@ export default function ProfileScreen() {
                       <Text style={styles.premiumBadgeText}>PRO</Text>
                     </View>
                   ) : row.label === 'Delete Account' && deletingAccount ? (
-                    <ActivityIndicator size="small" color={Colors.error} />
+                    <ActivityIndicator size="small" color={C.error} />
                   ) : (
-                    <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
+                    <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
                   )}
                 </TouchableOpacity>
               ))}
@@ -766,23 +793,23 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(C: typeof Colors) { return StyleSheet.create({
   loadingWrap: {
     flex: 1,
-    backgroundColor: Colors.cream,
+    backgroundColor: C.cream,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  container: { flex: 1, backgroundColor: Colors.cream },
+  container: { flex: 1, backgroundColor: C.cream },
   safe: { flex: 1 },
 
   // ── Header ──
   headerBg: {
-    backgroundColor: Colors.brown,
+    backgroundColor: C.brown,
     borderBottomLeftRadius: 32,
     borderBottomRightRadius: 32,
     paddingBottom: 36,
-    shadowColor: Colors.ink,
+    shadowColor: C.ink,
     shadowOpacity: 0.14,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 6 },
@@ -837,7 +864,7 @@ const styles = StyleSheet.create({
     width: 108,
     height: 108,
     borderRadius: 54,
-    backgroundColor: Colors.terracotta,
+    backgroundColor: C.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 4,
@@ -849,7 +876,7 @@ const styles = StyleSheet.create({
     borderRadius: 54,
     borderWidth: 4,
     borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: Colors.brownMid,
+    backgroundColor: C.brownMid,
   },
   photoLoadingOverlay: {
     position: 'absolute',
@@ -859,7 +886,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  photoInitial: { fontSize: 44, fontWeight: '900', color: Colors.white },
+  photoInitial: { fontSize: 44, fontWeight: '900', color: C.white },
   cameraBtn: {
     position: 'absolute',
     bottom: 2,
@@ -867,18 +894,18 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: Colors.terracotta,
+    backgroundColor: C.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: Colors.brown,
+    borderColor: C.brown,
   },
 
   // Name & meta
-  name: { fontSize: 26, fontWeight: '900', color: Colors.white, marginBottom: 6, textAlign: 'center' },
+  name: { fontSize: 26, fontWeight: '900', color: C.white, marginBottom: 6, textAlign: 'center' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 14 },
-  metaText: { fontSize: 13, color: Colors.brownLight },
-  metaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: Colors.brownLight },
+  metaText: { fontSize: 13, color: C.brownLight },
+  metaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: C.brownLight },
 
   // Header actions inside avatar card
   headerActionsRow: {
@@ -898,7 +925,7 @@ const styles = StyleSheet.create({
   },
   headerActionLabel: {
     fontSize: 11,
-    color: Colors.brownLight,
+    color: C.brownLight,
     fontWeight: '600',
   },
   toggleTrack: {
@@ -909,14 +936,14 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   toggleTrackOn: {
-    backgroundColor: Colors.olive,
+    backgroundColor: C.olive,
   },
   toggleThumb: {
     position: 'absolute',
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: Colors.white,
+    backgroundColor: C.white,
     top: 3,
     left: 3,
   },
@@ -926,14 +953,14 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: Colors.muted,
+    color: C.muted,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
     marginBottom: 10,
   },
   sectionMeta: {
     fontSize: 11,
-    color: Colors.muted,
+    color: C.muted,
     fontWeight: '500',
   },
   sectionHeaderRow: {
@@ -944,7 +971,7 @@ const styles = StyleSheet.create({
   },
   sectionSubtext: {
     fontSize: 12,
-    color: Colors.muted,
+    color: C.muted,
     lineHeight: 18,
     marginBottom: 10,
     marginTop: -6,
@@ -952,20 +979,20 @@ const styles = StyleSheet.create({
 
   // ── Card ──
   card: {
-    backgroundColor: Colors.warmWhite,
+    backgroundColor: C.warmWhite,
     borderRadius: Radius.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: Spacing.md,
   },
   cardNoPad: { padding: 0, overflow: 'hidden' },
 
   // ── Gallery ──
   galleryEmptyCard: {
-    backgroundColor: Colors.warmWhite,
+    backgroundColor: C.warmWhite,
     borderRadius: Radius.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderStyle: 'dashed',
     alignItems: 'center',
     paddingVertical: 28,
@@ -976,24 +1003,24 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 16,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
   },
-  galleryEmptyTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink },
-  galleryEmptySubtext: { fontSize: 12, color: Colors.muted, textAlign: 'center', lineHeight: 18 },
+  galleryEmptyTitle: { fontSize: 15, fontWeight: '700', color: C.ink },
+  galleryEmptySubtext: { fontSize: 12, color: C.muted, textAlign: 'center', lineHeight: 18 },
   galleryEmptyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     marginTop: 8,
-    backgroundColor: Colors.terracotta,
+    backgroundColor: C.terracotta,
     borderRadius: Radius.full,
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
-  galleryEmptyBtnText: { fontSize: 13, color: Colors.white, fontWeight: '700' },
+  galleryEmptyBtnText: { fontSize: 13, color: C.white, fontWeight: '700' },
 
   galleryScroll: { gap: 10, paddingRight: Spacing.lg },
   galleryPhotoWrap: {
@@ -1007,7 +1034,7 @@ const styles = StyleSheet.create({
     width: 112,
     height: 148,
     borderRadius: Radius.md,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
   },
   galleryRemoveBtn: {
     position: 'absolute',
@@ -1030,7 +1057,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   avatarBadgeText: {
-    color: Colors.white,
+    color: C.white,
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.3,
@@ -1042,19 +1069,19 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: Colors.borderDark,
-    backgroundColor: Colors.warmWhite,
+    borderColor: C.borderDark,
+    backgroundColor: C.warmWhite,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
   },
-  addPhotoLabel: { fontSize: 11, color: Colors.terracotta, fontWeight: '700' },
+  addPhotoLabel: { fontSize: 11, color: C.terracotta, fontWeight: '700' },
 
   // ── Bio ──
-  bioText: { fontSize: 14, color: Colors.brownMid, lineHeight: 23 },
+  bioText: { fontSize: 14, color: C.brownMid, lineHeight: 23 },
   bioEmpty: {
     fontSize: 14,
-    color: Colors.muted,
+    color: C.muted,
     lineHeight: 22,
     fontStyle: 'italic',
   },
@@ -1066,12 +1093,12 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 10,
   },
-  infoRowDivider: { borderTopWidth: 1, borderTopColor: Colors.border },
+  infoRowDivider: { borderTopWidth: 1, borderTopColor: C.border },
   infoIconBox: {
     width: 40,
     height: 40,
     borderRadius: 11,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1079,38 +1106,47 @@ const styles = StyleSheet.create({
   infoText: { flex: 1 },
   infoFieldLabel: {
     fontSize: 10,
-    color: Colors.muted,
+    color: C.muted,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 2,
   },
-  infoValue: { fontSize: 14, color: Colors.ink, fontWeight: '600' },
+  infoValue: { fontSize: 14, color: C.ink, fontWeight: '600' },
 
   // ── Settings ──
   settingsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
-  settingsRowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.border },
+  settingsRowDivider: { borderBottomWidth: 1, borderBottomColor: C.border },
   settingsRowPremium: { backgroundColor: 'rgba(201,168,76,0.06)' },
   settingsIcon: {
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
     alignItems: 'center',
     justifyContent: 'center',
   },
   settingsIconAccent: { backgroundColor: 'rgba(201,168,76,0.12)' },
   settingsIconDanger: { backgroundColor: 'rgba(217,79,79,0.1)' },
-  settingsLabel: { flex: 1, fontSize: 14, color: Colors.ink, fontWeight: '500' },
-  settingsLabelDanger: { color: Colors.error },
-  settingsLabelAccent: { color: Colors.gold, fontWeight: '600' },
+  settingsLabel: { flex: 1, fontSize: 14, color: C.ink, fontWeight: '500' },
+  settingsLabelDanger: { color: C.error },
+  settingsLabelAccent: { color: C.gold, fontWeight: '600' },
   premiumBadge: {
-    backgroundColor: Colors.gold,
+    backgroundColor: C.gold,
     borderRadius: Radius.full,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  premiumBadgeText: { fontSize: 9, color: Colors.white, fontWeight: '800', letterSpacing: 0.5 },
+  premiumBadgeText: { fontSize: 9, color: C.white, fontWeight: '800', letterSpacing: 0.5 },
+  unverifiedBadge: {
+    backgroundColor: 'rgba(201,168,76,0.12)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(201,168,76,0.3)',
+  },
+  unverifiedText: { fontSize: 10, color: C.gold, fontWeight: '700', letterSpacing: 0.2 },
 
   // ── About Me chips ──
   detailChips: {
@@ -1123,13 +1159,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
     borderRadius: Radius.full,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
   detailChipEmoji: { fontSize: 13 },
-  detailChipValue: { fontSize: 13, color: Colors.ink, fontWeight: '600' },
-});
+  detailChipValue: { fontSize: 13, color: C.ink, fontWeight: '600' },
+}); }

@@ -1,6 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   View,
   Text,
@@ -16,6 +15,7 @@ import { Colors, Spacing, Radius } from '../../constants/theme';
 import {
   fetchEventRsvps,
   fetchEventsForGroups,
+  fetchGoingUserProfiles,
   fetchGroupsByIds,
   fetchMembershipGroupIds,
   getSessionUserId,
@@ -25,6 +25,8 @@ import {
   type EventRow,
   type GroupRow,
 } from '../../lib/services/events';
+import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
+import { EventCardSkeleton } from '../../components/Skeleton';
 
 type EventCard = {
   id: string;
@@ -38,6 +40,7 @@ type EventCard = {
   isVirtual: boolean;
   attendeeCount: number;
   myStatus: 'going' | 'interested' | 'not_going' | null;
+  goingAvatars: (string | null)[];
 };
 
 function categoryEmoji(category?: string) {
@@ -107,24 +110,45 @@ export default function EventsScreen() {
       rsvps.filter((r) => r.user_id === uid).map((r) => [r.event_id, r.status])
     );
     const goingCountByEvent: Record<string, number> = {};
+    const goingUserIdsByEvent: Record<string, string[]> = {};
     for (const r of rsvps) {
-      if (r.status === 'going') goingCountByEvent[r.event_id] = (goingCountByEvent[r.event_id] ?? 0) + 1;
+      if (r.status === 'going') {
+        goingCountByEvent[r.event_id] = (goingCountByEvent[r.event_id] ?? 0) + 1;
+        if (!goingUserIdsByEvent[r.event_id]) goingUserIdsByEvent[r.event_id] = [];
+        if (goingUserIdsByEvent[r.event_id].length < 3) goingUserIdsByEvent[r.event_id].push(r.user_id);
+      }
+    }
+
+    // Batch-fetch avatars for all unique going users, resolve in parallel
+    const allGoingIds = Array.from(new Set(Object.values(goingUserIdsByEvent).flat()));
+    const userAvatarMap: Record<string, string | null> = {};
+    if (allGoingIds.length > 0) {
+      const { data: profileRows } = await fetchGoingUserProfiles(allGoingIds);
+      const rawMap: Record<string, string | null> = {};
+      for (const p of (profileRows ?? []) as Array<{ user_id: string; avatar_url: string | null }>) {
+        rawMap[p.user_id] = p.avatar_url;
+      }
+      const resolved = await Promise.all(
+        allGoingIds.map(async (id) => ({ id, url: await resolveProfilePhotoUrl(rawMap[id] ?? null) }))
+      );
+      for (const { id, url } of resolved) userAvatarMap[id] = url;
     }
 
     const mapped: EventCard[] = eventRows.map((e) => {
       const g = groupById.get(e.group_id);
       return {
-        id:           e.id,
-        groupId:      e.group_id,
-        groupName:    g?.name || 'Group',
-        groupEmoji:   categoryEmoji(g?.category),
-        title:        e.title,
-        startsAt:     e.starts_at,
-        time:         formatTime(e.starts_at),
-        location:     e.is_virtual ? 'Virtual' : (e.location_name || 'TBA'),
-        isVirtual:    e.is_virtual ?? false,
+        id:            e.id,
+        groupId:       e.group_id,
+        groupName:     g?.name || 'Group',
+        groupEmoji:    categoryEmoji(g?.category),
+        title:         e.title,
+        startsAt:      e.starts_at,
+        time:          formatTime(e.starts_at),
+        location:      e.is_virtual ? 'Virtual' : (e.location_name || 'TBA'),
+        isVirtual:     e.is_virtual ?? false,
         attendeeCount: goingCountByEvent[e.id] ?? 0,
-        myStatus:     (myRsvpByEvent.get(e.id) ?? null) as EventCard['myStatus'],
+        myStatus:      (myRsvpByEvent.get(e.id) ?? null) as EventCard['myStatus'],
+        goingAvatars:  (goingUserIdsByEvent[e.id] ?? []).map((id) => userAvatarMap[id] ?? null),
       };
     });
 
@@ -190,8 +214,8 @@ export default function EventsScreen() {
         </View>
 
         {loading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={Colors.terracotta} size="large" />
+          <View style={styles.skeletonList}>
+            {Array.from({ length: 3 }).map((_, i) => <EventCardSkeleton key={i} />)}
           </View>
         ) : (
           <FlatList
@@ -210,6 +234,18 @@ export default function EventsScreen() {
         </Animated.View>
       </SafeAreaView>
     </View>
+  );
+}
+
+// Fades an image in on load to avoid abrupt pop-in
+function FadeImage({ uri, style }: { uri: string; style: object }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  return (
+    <Animated.Image
+      source={{ uri }}
+      style={[style, { opacity }]}
+      onLoad={() => Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }).start()}
+    />
   );
 }
 
@@ -250,16 +286,41 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
         {/* Location */}
         <View style={styles.metaRow}>
           <Ionicons
-            name={ev.isVirtual ? 'videocam-outline' : 'location-outline'}
+            name={ev.isVirtual ? 'globe-outline' : 'location-outline'}
             size={12}
-            color={Colors.muted}
+            color={ev.isVirtual ? Colors.olive : Colors.muted}
           />
-          <Text style={styles.metaText} numberOfLines={1}>{ev.location}</Text>
+          <Text style={[styles.metaText, ev.isVirtual && styles.metaTextVirtual]} numberOfLines={1}>
+            {ev.location}
+          </Text>
+          {ev.isVirtual && <View style={styles.virtualPill}><Text style={styles.virtualPillText}>Online</Text></View>}
         </View>
 
-        {/* Footer: attendees + status badge */}
+        {/* Footer: avatar stack + status badge */}
         <View style={styles.cardFooter}>
-          {ev.attendeeCount > 0 ? (
+          {ev.goingAvatars.length > 0 ? (
+            <View style={styles.avatarStack}>
+              {ev.goingAvatars.map((uri, i) =>
+                uri ? (
+                  <FadeImage
+                    key={i}
+                    uri={uri}
+                    style={[styles.avatar, { marginLeft: i === 0 ? 0 : -7 }]}
+                  />
+                ) : (
+                  <View key={i} style={[styles.avatar, styles.avatarFallback, { marginLeft: i === 0 ? 0 : -7 }]}>
+                    <Ionicons name="person" size={9} color={Colors.muted} />
+                  </View>
+                )
+              )}
+              {ev.attendeeCount > 3 && (
+                <View style={[styles.avatar, styles.avatarOverflow, { marginLeft: -7 }]}>
+                  <Text style={styles.avatarOverflowText}>+{ev.attendeeCount - 3}</Text>
+                </View>
+              )}
+              <Text style={styles.goingLabel}>{ev.attendeeCount} going</Text>
+            </View>
+          ) : ev.attendeeCount > 0 ? (
             <View style={styles.attendeePill}>
               <Ionicons name="people-outline" size={11} color={Colors.muted} />
               <Text style={styles.attendeeText}>{ev.attendeeCount} going</Text>
@@ -294,11 +355,11 @@ function EmptyState({ error, filter }: { error: string; filter: 'all' | 'mine' }
       <View style={styles.emptyIconBox}>
         <Ionicons name="calendar-outline" size={32} color={Colors.muted} />
       </View>
-      <Text style={styles.emptyTitle}>{error ? 'Could not load events' : 'No events yet'}</Text>
+      <Text style={styles.emptyTitle}>{error ? 'Could not load events' : 'No upcoming events'}</Text>
       <Text style={styles.emptyText}>
         {error || (filter === 'mine'
-          ? 'Events you RSVP to will appear here.'
-          : 'Join groups to see upcoming events from your community.')}
+          ? "Events you RSVP'd to will appear here."
+          : "Nothing in your groups yet — join a new group or create an event to get things started.")}
       </Text>
     </View>
   );
@@ -328,13 +389,14 @@ const styles = StyleSheet.create({
     padding: 3,
     marginBottom: Spacing.md,
   },
-  tabBtn:       { flex: 1, height: 36, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' },
+  tabBtn:       { flex: 1, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' },
   tabBtnActive: { backgroundColor: Colors.white },
   tabText:      { fontSize: 13, fontWeight: '600', color: Colors.muted },
   tabTextActive: { color: Colors.terracotta, fontWeight: '700' },
 
   // ── List ──
   list: { paddingHorizontal: Spacing.lg, gap: 10, paddingBottom: 32 },
+  skeletonList: { paddingHorizontal: Spacing.lg, gap: 10, paddingTop: 4 },
 
   // ── Card ──
   card: {
@@ -403,6 +465,41 @@ const styles = StyleSheet.create({
   },
   attendeePill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   attendeeText: { fontSize: 11, color: Colors.muted },
+
+  // Avatar stack
+  avatarStack: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  avatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: Colors.warmWhite,
+  },
+  avatarFallback: {
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarOverflow: {
+    backgroundColor: Colors.paper,
+    borderColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarOverflowText: { fontSize: 8, fontWeight: '800', color: Colors.muted },
+  goingLabel: { fontSize: 11, color: Colors.muted, marginLeft: 2 },
+
+  // Virtual badge
+  metaTextVirtual: { color: Colors.olive },
+  virtualPill: {
+    backgroundColor: 'rgba(122,140,92,0.12)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(122,140,92,0.25)',
+  },
+  virtualPillText: { fontSize: 9, fontWeight: '700', color: Colors.olive, letterSpacing: 0.3 },
 
   statusGoing: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statusGoingText: { fontSize: 12, fontWeight: '700', color: Colors.success },

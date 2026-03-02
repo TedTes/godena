@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   View,
@@ -13,7 +13,7 @@ import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius } from '../../constants/theme';
+import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 
@@ -70,6 +70,27 @@ function formatEventTime(iso: string) {
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+function getGreetingWord() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getGreetingEmoji() {
+  const h = new Date().getHours();
+  if (h < 12) return '☕';
+  if (h < 17) return '☀️';
+  return '🌙';
+}
+
+function getGreetingSub() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Ready to show up somewhere today?';
+  if (h < 17) return "What's happening in your groups?";
+  return 'A good time to check in on your community.';
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const [myGroups, setMyGroups] = useState<HomeGroup[]>([]);
@@ -78,7 +99,10 @@ export default function HomeScreen() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
   const [openSignalGroupName, setOpenSignalGroupName] = useState<string | null>(null);
+  const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const enterStyle = useScreenEnter();
+  const C = useThemeColors();
+  const styles = useMemo(() => makeStyles(C), [C]);
 
   const loadHome = useCallback(async () => {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -97,6 +121,17 @@ export default function HomeScreen() {
       if (profile?.full_name) {
         setFirstName(profile.full_name.split(' ')[0] ?? profile.full_name);
       }
+
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      const { count: attendedCount } = await supabase
+        .from('event_rsvps')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .not('attended_at', 'is', null)
+        .gte('attended_at', startOfMonth.toISOString());
+      setEventsThisMonth(attendedCount ?? 0);
 
       const { data: membershipRows } = await supabase
         .from('group_memberships')
@@ -284,11 +319,14 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.wordmark}>Godena</Text>
               <Text style={styles.greeting}>
-                Good morning, {loadingProfile ? '...' : firstName} 👋
+                {loadingProfile ? '...' : `${getGreetingWord()}, ${firstName} ${getGreetingEmoji()}`}
               </Text>
+              {!loadingProfile && (
+                <Text style={styles.greetingSub}>{getGreetingSub()}</Text>
+              )}
             </View>
             <TouchableOpacity style={styles.notifBtn}>
-              <Ionicons name="notifications-outline" size={22} color={Colors.brown} />
+              <Ionicons name="notifications-outline" size={22} color={C.brown} />
               <View style={styles.notifDot} />
             </TouchableOpacity>
           </View>
@@ -301,17 +339,19 @@ export default function HomeScreen() {
           >
             <View style={styles.revealLeft}>
               <Text style={styles.revealEyebrow}>
-                {revealSuggestion ? '✨  New Connection' : '🌱  Keep Showing Up'}
+                {revealSuggestion ? '✨  New Connection' : '🌱  Building Momentum'}
               </Text>
               <Text style={styles.revealTitle}>
                 {revealSuggestion
                   ? `You and ${revealSuggestion.matchName} might connect`
-                  : 'No new introductions yet'}
+                  : "You're on the right path"}
               </Text>
               <Text style={styles.revealSub}>
                 {revealSuggestion
                   ? `via ${revealSuggestion.groupName}`
-                  : 'Mutual introductions appear after real group activity'}
+                  : eventsThisMonth > 0
+                    ? `${eventsThisMonth} event${eventsThisMonth !== 1 ? 's' : ''} attended this month — keep showing up`
+                    : 'Connections form through shared presence over time'}
               </Text>
             </View>
             <View style={styles.revealImgWrap}>
@@ -319,12 +359,21 @@ export default function HomeScreen() {
                 <Image source={{ uri: revealSuggestion.matchPhoto }} style={styles.revealImg} />
               ) : (
                 <View style={[styles.revealImg, styles.revealImgFallback]}>
-                  <Ionicons name="people-outline" size={26} color={Colors.brownLight} />
+                  <Ionicons name="people-outline" size={26} color={C.brownLight} />
                 </View>
               )}
               <View style={styles.revealImgBorder} />
             </View>
           </TouchableOpacity>
+
+          {eventsThisMonth > 0 && (
+            <View style={styles.momentumStrip}>
+              <View style={styles.momentumDot} />
+              <Text style={styles.momentumText}>
+                {`${eventsThisMonth} event${eventsThisMonth !== 1 ? 's' : ''} attended this month — reveals unlock through consistent presence`}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -374,7 +423,7 @@ export default function HomeScreen() {
                 style={styles.addGroupCard}
                 onPress={() => router.push('/(tabs)/groups')}
               >
-                <Ionicons name="add" size={28} color={Colors.muted} />
+                <Ionicons name="add" size={28} color={C.muted} />
                 <Text style={styles.addGroupText}>Join a Group</Text>
               </TouchableOpacity>
             </ScrollView>
@@ -447,8 +496,8 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.cream },
+function makeStyles(C: typeof Colors) { return StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.cream },
   safe: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -461,7 +510,7 @@ const styles = StyleSheet.create({
   wordmark: {
     fontSize: 11,
     fontWeight: '700',
-    color: Colors.terracotta,
+    color: C.terracotta,
     letterSpacing: 3,
     textTransform: 'uppercase',
     marginBottom: 4,
@@ -469,7 +518,12 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 22,
     fontWeight: '800',
-    color: Colors.ink,
+    color: C.ink,
+  },
+  greetingSub: {
+    fontSize: 13,
+    color: C.muted,
+    marginTop: 2,
   },
   notifBtn: { position: 'relative', padding: 6 },
   notifDot: {
@@ -479,16 +533,16 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: Colors.terracotta,
+    backgroundColor: C.terracotta,
     borderWidth: 1.5,
-    borderColor: Colors.cream,
+    borderColor: C.cream,
   },
   scroll: { paddingTop: Spacing.md },
 
   revealBanner: {
     marginHorizontal: Spacing.lg,
     marginBottom: Spacing.lg,
-    backgroundColor: Colors.brown,
+    backgroundColor: C.brown,
     borderRadius: Radius.lg,
     padding: Spacing.md,
     flexDirection: 'row',
@@ -498,7 +552,7 @@ const styles = StyleSheet.create({
   revealLeft: { flex: 1, paddingRight: Spacing.md },
   revealEyebrow: {
     fontSize: 11,
-    color: Colors.terraLight,
+    color: C.terraLight,
     fontWeight: '600',
     letterSpacing: 0.5,
     marginBottom: 6,
@@ -506,13 +560,13 @@ const styles = StyleSheet.create({
   revealTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: Colors.cream,
+    color: C.cream,
     marginBottom: 4,
     lineHeight: 24,
   },
   revealSub: {
     fontSize: 13,
-    color: Colors.brownLight,
+    color: C.brownLight,
   },
   revealImgWrap: {
     position: 'relative',
@@ -527,7 +581,7 @@ const styles = StyleSheet.create({
   revealImgFallback: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
   },
   revealImgBorder: {
     position: 'absolute',
@@ -537,7 +591,7 @@ const styles = StyleSheet.create({
     bottom: -2,
     borderRadius: 38,
     borderWidth: 2,
-    borderColor: Colors.terraLight,
+    borderColor: C.terraLight,
   },
 
   section: { marginBottom: Spacing.lg },
@@ -551,11 +605,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: Colors.ink,
+    color: C.ink,
   },
   seeAll: {
     fontSize: 13,
-    color: Colors.terracotta,
+    color: C.terracotta,
     fontWeight: '600',
   },
 
@@ -586,7 +640,7 @@ const styles = StyleSheet.create({
   },
   openBadgeText: {
     fontSize: 10,
-    color: Colors.white,
+    color: C.white,
     fontWeight: '700',
     letterSpacing: 0.2,
   },
@@ -638,92 +692,114 @@ const styles = StyleSheet.create({
     height: 92,
     borderRadius: Radius.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.warmWhite,
+    borderColor: C.border,
+    backgroundColor: C.warmWhite,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
   },
-  inlineEmptyText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
+  inlineEmptyText: { fontSize: 12, color: C.muted, fontWeight: '600' },
   addGroupCard: {
     width: 136,
     height: 92,
     borderRadius: Radius.lg,
     borderWidth: 1.5,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: Spacing.lg,
     gap: 8,
   },
-  addGroupText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
+  addGroupText: { fontSize: 12, color: C.muted, fontWeight: '600' },
 
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: Spacing.lg,
     marginBottom: 10,
-    backgroundColor: Colors.warmWhite,
+    backgroundColor: C.warmWhite,
     borderRadius: Radius.md,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     gap: 12,
   },
   eventIconWrap: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
     alignItems: 'center',
     justifyContent: 'center',
   },
   eventIcon: { fontSize: 22 },
   eventInfo: { flex: 1 },
-  eventTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 2 },
-  eventMeta: { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginBottom: 2 },
-  eventLocation: { fontSize: 11, color: Colors.muted },
+  eventTitle: { fontSize: 14, fontWeight: '700', color: C.ink, marginBottom: 2 },
+  eventMeta: { fontSize: 12, color: C.terracotta, fontWeight: '600', marginBottom: 2 },
+  eventLocation: { fontSize: 11, color: C.muted },
   eventRight: { alignItems: 'flex-end', gap: 4 },
   rsvpPill: {
     borderRadius: Radius.full,
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.cream,
+    borderColor: C.border,
+    backgroundColor: C.cream,
   },
   rsvpPillActive: {
-    backgroundColor: Colors.terracotta,
-    borderColor: Colors.terracotta,
+    backgroundColor: C.terracotta,
+    borderColor: C.terracotta,
   },
-  rsvpText: { fontSize: 11, fontWeight: '700', color: Colors.muted },
-  rsvpTextActive: { color: Colors.white },
-  attendeeCount: { fontSize: 10, color: Colors.muted },
+  rsvpText: { fontSize: 11, fontWeight: '700', color: C.muted },
+  rsvpTextActive: { color: C.white },
+  attendeeCount: { fontSize: 10, color: C.muted },
   emptySectionCard: {
     marginHorizontal: Spacing.lg,
-    backgroundColor: Colors.warmWhite,
+    backgroundColor: C.warmWhite,
     borderRadius: Radius.md,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
-  emptySectionText: { color: Colors.muted, fontSize: 13 },
+  emptySectionText: { color: C.muted, fontSize: 13 },
+
+  momentumStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: Spacing.lg,
+    marginTop: 10,
+    marginBottom: Spacing.lg,
+  },
+  momentumDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: C.olive,
+    flexShrink: 0,
+  },
+  momentumText: {
+    flex: 1,
+    fontSize: 12,
+    color: C.muted,
+    lineHeight: 17,
+  },
 
   hintBox: {
     marginHorizontal: Spacing.lg,
-    backgroundColor: Colors.paper,
+    backgroundColor: C.paper,
     borderRadius: Radius.md,
     padding: Spacing.md,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
     borderWidth: 1,
-    borderColor: Colors.borderDark,
+    borderColor: C.borderDark,
     borderLeftWidth: 3,
-    borderLeftColor: Colors.olive,
+    borderLeftColor: C.olive,
   },
   hintIcon: { fontSize: 18, marginTop: 1 },
-  hintText: { flex: 1, fontSize: 13, color: Colors.muted, lineHeight: 20 },
-  hintBold: { color: Colors.brown, fontWeight: '700' },
-});
+  hintText: { flex: 1, fontSize: 13, color: C.muted, lineHeight: 20 },
+  hintBold: { color: C.brown, fontWeight: '700' },
+}); }

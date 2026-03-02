@@ -33,11 +33,11 @@ import {
 } from '../../lib/services/groups';
 import { canUserJoinAnotherGroup } from '../../lib/services/billing';
 import { deriveGroupIcon, GROUP_ICON_CHOICES } from '../../lib/services/groupIcons';
+import { GroupRowSkeleton } from '../../components/Skeleton';
 
 const CATEGORIES = ['Outdoors', 'Food & Drink', 'Professional', 'Language', 'Faith'];
 const ALL_CITIES_LABEL = 'All Cities';
 const VIRTUAL_CITY_LABEL = 'Virtual';
-const USER_CITY = 'Washington, DC';
 const DB_CATEGORY_BY_LABEL: Record<string, string | null> = {
   Outdoors: 'outdoors',
   'Food & Drink': 'food_drink',
@@ -103,6 +103,7 @@ export default function GroupsScreen() {
   const [loadError, setLoadError] = useState('');
   const [unreadByGroup, setUnreadByGroup] = useState<Record<string, number>>({});
   const [lastMessages, setLastMessages] = useState<Record<string, { content: string; sentAt: string; isOwn: boolean }>>({});
+  const [userCity, setUserCity] = useState('');
 
   // Refs for stable access inside useFocusEffect (avoids stale closure issues)
   const userIdRef = useRef<string | null>(null);
@@ -247,10 +248,16 @@ export default function GroupsScreen() {
       const uid = await getSessionUserId();
       setUserId(uid);
 
-      const [{ data: groupsData, error: groupsError }, membershipsResponse] = await Promise.all([
+      const [{ data: groupsData, error: groupsError }, membershipsResponse, profileRes] = await Promise.all([
         fetchGroups(),
         fetchUserMemberships(uid),
+        uid
+          ? supabase.from('profiles').select('city').eq('user_id', uid).maybeSingle()
+          : Promise.resolve({ data: null }),
       ]);
+      const city = (profileRes?.data as { city?: string | null } | null)?.city ?? '';
+      setUserCity(city);
+      setNewGroupCity(city);
 
       if (groupsError) { setLoadError(groupsError.message); setLoading(false); return; }
 
@@ -352,10 +359,10 @@ export default function GroupsScreen() {
       new Set(
         groups
           .map((g) => (g.city ?? '').trim())
-          .filter((c) => c.length > 0 && c !== USER_CITY)
+          .filter((c) => c.length > 0 && c !== userCity)
       )
     ).sort((a, b) => a.localeCompare(b));
-  }, [groups]);
+  }, [groups, userCity]);
 
   const filtered = useMemo(() => groups.filter((g) => {
     const matchSearch =
@@ -410,12 +417,13 @@ export default function GroupsScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Groups</Text>
-            <Text style={styles.subtitle}>Washington, DC</Text>
+            {userCity ? <Text style={styles.subtitle}>{userCity}</Text> : null}
           </View>
           <TouchableOpacity
             style={[styles.headerCreateBtn, showCreateForm && styles.headerCreateBtnActive]}
             onPress={() => setShowCreateForm((v) => !v)}
             activeOpacity={0.85}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <Ionicons name={showCreateForm ? 'close' : 'add'} size={20} color={Colors.white} />
           </TouchableOpacity>
@@ -512,8 +520,8 @@ export default function GroupsScreen() {
 
         {/* ── List ── */}
         {loading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={Colors.terracotta} />
+          <View style={styles.skeletonList}>
+            {Array.from({ length: 4 }).map((_, i) => <GroupRowSkeleton key={i} />)}
           </View>
         ) : (
           <Animated.View style={[{ flex: 1 }, { opacity: screenFade }]}>
@@ -904,8 +912,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 11,
-    height: 32,
+    paddingHorizontal: 13,
+    height: 38,
     borderRadius: Radius.full,
     backgroundColor: Colors.paper,
     borderWidth: 1,
@@ -922,8 +930,8 @@ const styles = StyleSheet.create({
     marginHorizontal: 2,
   },
   cityChip: {
-    paddingHorizontal: 10,
-    height: 28,
+    paddingHorizontal: 12,
+    height: 34,
     borderRadius: Radius.full,
     backgroundColor: Colors.warmWhite,
     borderWidth: 1,
@@ -935,8 +943,9 @@ const styles = StyleSheet.create({
   cityChipText: { fontSize: 11, fontWeight: '600', color: Colors.muted },
   cityChipTextActive: { color: Colors.white },
 
-  // ── Loading ──
+  // ── Loading / Skeleton ──
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  skeletonList: { paddingHorizontal: Spacing.lg, gap: 10, paddingTop: 4 },
 
   // ── Empty ──
   emptyWrap: { alignItems: 'center', paddingTop: 52, paddingHorizontal: 32, gap: 8 },
