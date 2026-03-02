@@ -44,3 +44,33 @@ export const Radius = {
   xl: 24,
   full: 9999,
 };
+
+// ── Dark mode variant (earthy, warm — matches brand) ──
+export const DarkColors: typeof Colors = {
+  cream:       '#1a1410',
+  paper:       '#231c16',
+  warmWhite:   '#1e1812',
+  terracotta:  '#c4622d',
+  terraLight:  '#e8855a',
+  terraDim:    '#8b4220',
+  brown:       '#e8d5c4',
+  brownMid:    '#c4a898',
+  brownLight:  '#a08878',
+  olive:       '#8fa86e',
+  oliveLight:  '#a8bc82',
+  gold:        '#c9a84c',
+  goldLight:   '#e8c97a',
+  ink:         '#f0e8e0',
+  muted:       '#9a8a7e',
+  border:      '#3a2e28',
+  borderDark:  '#4a3c34',
+  white:       '#ffffff',
+  error:       '#d94f4f',
+  success:     '#5a9e6f',
+};
+
+import { useColorScheme } from 'react-native';
+export function useThemeColors(): typeof Colors {
+  const scheme = useColorScheme();
+  return scheme === 'dark' ? DarkColors : Colors;
+}

@@ -104,3 +104,11 @@ export function subscribeToGroupEvents(
 export async function removeChannel(channel: ReturnType<typeof supabase.channel>) {
   return supabase.removeChannel(channel);
 }
+
+export async function fetchGoingUserProfiles(userIds: string[]) {
+  if (userIds.length === 0) return { data: [] as Array<{ user_id: string; avatar_url: string | null }>, error: null };
+  return supabase
+    .from('profiles')
+    .select('user_id, avatar_url')
+    .in('user_id', userIds);
+}
