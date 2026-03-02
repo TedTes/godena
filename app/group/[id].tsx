@@ -534,17 +534,21 @@ export default function GroupDetailScreen() {
           </View>
         </SafeAreaView>
         <View style={styles.heroContent}>
-          <TouchableOpacity
-            style={styles.heroEmojiWrap}
-            onPress={openGroupIconPicker}
-            activeOpacity={canEditGroupIcon ? 0.8 : 1}
-            disabled={!canEditGroupIcon}
-          >
-            <Text style={styles.heroEmoji}>{visuals.emoji}</Text>
-          </TouchableOpacity>
-          {canEditGroupIcon ? (
-            <Text style={styles.iconEditHint}>Tap icon to change</Text>
-          ) : null}
+          <View style={styles.heroIconGroup}>
+            <TouchableOpacity
+              style={styles.heroEmojiWrap}
+              onPress={openGroupIconPicker}
+              activeOpacity={canEditGroupIcon ? 0.75 : 1}
+              disabled={!canEditGroupIcon}
+            >
+              <Text style={styles.heroEmoji}>{visuals.emoji}</Text>
+              {canEditGroupIcon ? (
+                <View style={styles.heroEmojiEditBadge}>
+                  <Ionicons name="pencil" size={11} color={Colors.white} />
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          </View>
           <View style={styles.heroMeta}>
             <View style={styles.heroMetaItem}>
               <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.75)" />
@@ -1131,21 +1135,29 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.md,
     alignItems: 'center',
   },
+  heroIconGroup: {
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   heroEmojiWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
+    width: 72,
+    height: 72,
+    borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    position: 'relative',
   },
-  heroEmoji: { fontSize: 28 },
-  iconEditHint: {
-    marginTop: 6,
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.8)',
-    fontWeight: '600',
+  heroEmoji: { fontSize: 36 },
+  heroEmojiEditBadge: {
+    position: 'absolute',
+    bottom: -7,
+    right: -7,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
   heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
