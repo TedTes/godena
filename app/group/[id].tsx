@@ -153,6 +153,24 @@ export default function GroupDetailScreen() {
   };
 
   const isOpen = membership?.is_open_to_connect ?? false;
+  const openCardScale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (isOpen) {
+      Animated.sequence([
+        Animated.timing(openCardScale, {
+          toValue: 1.02,
+          duration: 120,
+          useNativeDriver: true,
+        }),
+        Animated.spring(openCardScale, {
+          toValue: 1,
+          speed: 18,
+          bounciness: 6,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [isOpen, openCardScale]);
   const canEditGroupIcon = membership?.role === 'organizer' || membership?.role === 'moderator';
   const displayMemberCount = membership ? members.length : group?.member_count ?? 0;
   const lockedPreviewCount = group?.member_count ?? 0;
@@ -287,6 +305,20 @@ export default function GroupDetailScreen() {
       const targetAuthorId = posts.find((p) => p.id === postId)?.author_id ?? null;
       void logInteraction('post_reaction', targetAuthorId, postId, undefined, { reaction });
     }
+  };
+
+  const handleReportGroup = () =>
+    Alert.alert('Report submitted', "Thanks \u2014 we'll review this group shortly.");
+  const handleLeaveGroup = () =>
+    Alert.alert('Leave Group', 'This feature is coming soon.');
+  const handleGroupMenu = () => {
+    const actions: { text: string; style?: 'destructive' | 'cancel' | 'default'; onPress?: () => void }[] = [];
+    if (membership && membership.role !== 'organizer') {
+      actions.push({ text: 'Leave Group', style: 'destructive', onPress: handleLeaveGroup });
+    }
+    actions.push({ text: 'Report Group', onPress: handleReportGroup });
+    actions.push({ text: 'Cancel', style: 'cancel' });
+    Alert.alert(group?.name ?? 'Group', undefined, actions);
   };
 
   const handleOpenToggle = (val: boolean) => {
@@ -530,7 +562,13 @@ export default function GroupDetailScreen() {
               <Ionicons name="arrow-back" size={20} color={Colors.white} />
             </TouchableOpacity>
             <Text style={styles.heroNavTitle} numberOfLines={1}>{group.name}</Text>
-            <View style={styles.heroNavSpacer} />
+            <TouchableOpacity
+              style={styles.heroMenuBtn}
+              onPress={handleGroupMenu}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color="rgba(255,255,255,0.9)" />
+            </TouchableOpacity>
           </View>
         </SafeAreaView>
         <View style={styles.heroContent}>
@@ -608,6 +646,7 @@ export default function GroupDetailScreen() {
         )}
 
         {/* ── Openness Signal ── */}
+        <Animated.View style={{ transform: [{ scale: openCardScale }] }}>
         <View style={[styles.openCard, isOpen && styles.openCardActive]}>
           <View style={styles.openLeft}>
             <Text style={styles.openTitle}>
@@ -627,6 +666,7 @@ export default function GroupDetailScreen() {
             thumbColor={Colors.white}
           />
         </View>
+        </Animated.View>
 
         {/* ── Chat CTA ── */}
         <TouchableOpacity
@@ -1129,7 +1169,12 @@ const styles = StyleSheet.create({
     color: Colors.white,
     marginHorizontal: 8,
   },
-  heroNavSpacer: { width: 36 },
+  heroMenuBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   heroContent: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.md,

@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   View,
   Text,
@@ -54,11 +55,78 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
-const RSVP_OPTIONS: { status: MyStatus; label: string; icon: string; color: string }[] = [
+type RsvpOption = { status: MyStatus; label: string; icon: string; color: string };
+
+const RSVP_OPTIONS: RsvpOption[] = [
   { status: 'going',     label: 'Going',           icon: 'checkmark-circle', color: Colors.success },
   { status: 'interested',label: 'Interested',       icon: 'eye',              color: Colors.gold },
   { status: 'not_going', label: "Can't make it",    icon: 'close-circle',     color: Colors.muted },
 ];
+
+function RsvpRow({
+  opt,
+  selected,
+  saving,
+  hasDivider,
+  onPress,
+}: {
+  opt: RsvpOption;
+  selected: boolean;
+  saving: boolean;
+  hasDivider: boolean;
+  onPress: () => void;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (selected) {
+      Animated.sequence([
+        Animated.timing(scale, {
+          toValue: 0.96,
+          duration: 80,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scale, {
+          toValue: 1,
+          speed: 18,
+          bounciness: 7,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [selected, scale]);
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        style={[
+          styles.rsvpRow,
+          hasDivider && styles.rsvpRowDivider,
+          selected && { backgroundColor: opt.color + '0d' },
+        ]}
+        onPress={onPress}
+        disabled={saving}
+        activeOpacity={0.7}
+      >
+        <Ionicons
+          name={(selected ? opt.icon : `${opt.icon}-outline`) as any}
+          size={22}
+          color={selected ? opt.color : Colors.borderDark}
+        />
+        <Text style={[styles.rsvpLabel, selected && { color: opt.color, fontWeight: '700' }]}>
+          {opt.label}
+        </Text>
+        {saving && selected ? (
+          <ActivityIndicator size="small" color={opt.color} />
+        ) : (
+          <View style={[styles.radioOuter, selected && { borderColor: opt.color }]}>
+            {selected && <View style={[styles.radioInner, { backgroundColor: opt.color }]} />}
+          </View>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -258,38 +326,16 @@ export default function EventDetailScreen() {
           {/* ── RSVP ── */}
           <View style={styles.rsvpCard}>
             <Text style={styles.rsvpHeading}>Will you attend?</Text>
-            {RSVP_OPTIONS.map((opt, i) => {
-              const selected = myStatus === opt.status;
-              return (
-                <TouchableOpacity
-                  key={opt.status}
-                  style={[
-                    styles.rsvpRow,
-                    i < RSVP_OPTIONS.length - 1 && styles.rsvpRowDivider,
-                    selected && { backgroundColor: opt.color + '0d' },
-                  ]}
-                  onPress={() => handleSetStatus(opt.status)}
-                  disabled={saving}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name={(selected ? opt.icon : `${opt.icon}-outline`) as any}
-                    size={22}
-                    color={selected ? opt.color : Colors.borderDark}
-                  />
-                  <Text style={[styles.rsvpLabel, selected && { color: opt.color, fontWeight: '700' }]}>
-                    {opt.label}
-                  </Text>
-                  {saving && selected ? (
-                    <ActivityIndicator size="small" color={opt.color} />
-                  ) : (
-                    <View style={[styles.radioOuter, selected && { borderColor: opt.color }]}>
-                      {selected && <View style={[styles.radioInner, { backgroundColor: opt.color }]} />}
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+            {RSVP_OPTIONS.map((opt, i) => (
+              <RsvpRow
+                key={opt.status}
+                opt={opt}
+                selected={myStatus === opt.status}
+                saving={saving}
+                hasDivider={i < RSVP_OPTIONS.length - 1}
+                onPress={() => handleSetStatus(opt.status)}
+              />
+            ))}
           </View>
 
           <View style={{ height: 40 }} />
