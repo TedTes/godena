@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Alert,
+  Modal,
   Image,
   View,
   Text,
@@ -69,6 +70,8 @@ export default function ProfileScreen() {
   const [updatingPhoto, setUpdatingPhoto] = useState(false);
   const [updatingGlobalOpen, setUpdatingGlobalOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [galleryPhotos, setGalleryPhotos] = useState<
@@ -254,6 +257,7 @@ export default function ProfileScreen() {
         return;
       }
       await supabase.auth.signOut();
+      setShowDeleteModal(false);
       const restoreUntil = (data as any)?.restore_until as string | undefined;
       const restoreText = restoreUntil
         ? ` You can request account restore until ${new Date(restoreUntil).toLocaleDateString()}.`
@@ -267,27 +271,8 @@ export default function ProfileScreen() {
 
   const onPressSettingRow = (label: string) => {
     if (label === 'Delete Account') {
-      Alert.alert(
-        'Delete account?',
-        'Your account will be deactivated and scheduled for deletion after 30 days. You can restore it during that window.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => {
-              Alert.alert(
-                'Final confirmation',
-                'Are you sure you want to deactivate your account now?',
-                [
-                  { text: 'No', style: 'cancel' },
-                  { text: 'Yes, delete', style: 'destructive', onPress: () => void deleteAccount() },
-                ]
-              );
-            },
-          },
-        ]
-      );
+      setDeleteStep(1);
+      setShowDeleteModal(true);
       return;
     }
     if (label === 'Sign Out') {
@@ -296,6 +281,14 @@ export default function ProfileScreen() {
     }
     if (label === 'Upgrade to Premium') {
       router.push('/premium');
+      return;
+    }
+    if (label === 'Privacy & Safety') {
+      router.push('/privacy-safety');
+      return;
+    }
+    if (label === 'Help & Feedback') {
+      router.push('/help-feedback');
     }
   };
 
@@ -793,6 +786,93 @@ export default function ProfileScreen() {
         </ScrollView>
         </Animated.View>
       </SafeAreaView>
+
+      {/* ── Delete Account Modal ── */}
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!deletingAccount) setShowDeleteModal(false); }}
+      >
+        <View style={styles.deleteOverlay}>
+          <TouchableOpacity
+            style={styles.deleteBackdrop}
+            activeOpacity={1}
+            onPress={() => { if (!deletingAccount) setShowDeleteModal(false); }}
+          />
+          <View style={styles.deleteSheet}>
+            <View style={styles.deleteHandle} />
+
+            {deleteStep === 1 ? (
+              <>
+                <View style={styles.deleteIconWrap}>
+                  <Ionicons name="person-remove-outline" size={28} color={Colors.terracotta} />
+                </View>
+                <Text style={styles.deleteTitle}>Delete your account?</Text>
+                <Text style={styles.deleteBody}>
+                  Your account will be <Text style={styles.deleteBold}>deactivated immediately</Text> and permanently deleted after 30 days.
+                </Text>
+                <View style={styles.deleteRestoreBox}>
+                  <Ionicons name="refresh-circle-outline" size={18} color={Colors.terracotta} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.deleteRestoreTitle}>30-day restore window</Text>
+                    <Text style={styles.deleteRestoreBody}>
+                      Changed your mind? Email us within 30 days to recover everything — profile, groups, and connections.
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.deleteActions}>
+                  <TouchableOpacity
+                    style={styles.deleteCancelBtn}
+                    onPress={() => setShowDeleteModal(false)}
+                  >
+                    <Text style={styles.deleteCancelText}>Keep account</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.deleteNextBtn}
+                    onPress={() => setDeleteStep(2)}
+                  >
+                    <Text style={styles.deleteNextText}>Continue</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={[styles.deleteIconWrap, styles.deleteIconWrapRed]}>
+                  <Ionicons name="trash-outline" size={28} color={Colors.error} />
+                </View>
+                <Text style={styles.deleteTitle}>This is permanent</Text>
+                <Text style={styles.deleteBody}>
+                  Deleting your account removes your profile, groups, events, and connections — all of it — after the 30-day window closes.
+                </Text>
+                <Text style={styles.deleteNote}>
+                  You can still request a restore within 30 days by emailing support.
+                </Text>
+                <View style={styles.deleteActions}>
+                  <TouchableOpacity
+                    style={styles.deleteCancelBtn}
+                    onPress={() => setDeleteStep(1)}
+                    disabled={deletingAccount}
+                  >
+                    <Text style={styles.deleteCancelText}>Go back</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.deleteConfirmBtn, deletingAccount && styles.deleteConfirmBtnDisabled]}
+                    onPress={() => void deleteAccount()}
+                    disabled={deletingAccount}
+                  >
+                    {deletingAccount ? (
+                      <ActivityIndicator size="small" color={Colors.white} />
+                    ) : (
+                      <Text style={styles.deleteConfirmText}>Delete my account</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1172,4 +1252,122 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
   detailChipEmoji: { fontSize: 13 },
   detailChipValue: { fontSize: 13, color: C.ink, fontWeight: '600' },
+
+  // ── Delete Account Modal ──
+  deleteOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  deleteBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  deleteSheet: {
+    backgroundColor: C.warmWhite,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
+    alignItems: 'center',
+  },
+  deleteHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  deleteIconWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: 'rgba(196,98,45,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deleteIconWrapRed: { backgroundColor: 'rgba(217,79,79,0.10)' },
+  deleteTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: C.ink,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  deleteBody: {
+    fontSize: 14,
+    color: C.brownMid,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 14,
+  },
+  deleteBold: { fontWeight: '700', color: C.ink },
+  deleteRestoreBox: {
+    alignSelf: 'stretch',
+    backgroundColor: 'rgba(196,98,45,0.07)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.18)',
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 22,
+  },
+  deleteRestoreTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: C.terracotta,
+    marginBottom: 3,
+  },
+  deleteRestoreBody: {
+    fontSize: 12,
+    color: C.brownMid,
+    lineHeight: 18,
+  },
+  deleteNote: {
+    fontSize: 12,
+    color: C.muted,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 22,
+    marginTop: -4,
+  },
+  deleteActions: {
+    flexDirection: 'row',
+    gap: 10,
+    alignSelf: 'stretch',
+  },
+  deleteCancelBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: Radius.full,
+    backgroundColor: C.paper,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteCancelText: { fontSize: 15, fontWeight: '600', color: C.brownMid },
+  deleteNextBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: Radius.full,
+    backgroundColor: C.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteNextText: { fontSize: 15, fontWeight: '700', color: C.white },
+  deleteConfirmBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteConfirmBtnDisabled: { opacity: 0.55 },
+  deleteConfirmText: { fontSize: 15, fontWeight: '700', color: Colors.white },
 }); }
