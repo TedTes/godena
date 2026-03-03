@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
         new Set(inserted.flatMap((r) => [r.user_a_id, r.user_b_id])),
       );
 
-      const [groupsRes, profilesRes, tokensRes] = await Promise.all([
+      const [groupsRes, profilesRes, tokensRes, prefsRes] = await Promise.all([
         client.from("groups").select("id, name").in("id", insertedGroupIds),
         client.from("profiles").select("user_id, full_name").in("user_id", insertedUserIds),
         client
@@ -261,10 +261,15 @@ Deno.serve(async (req) => {
           .select("user_id, expo_push_token")
           .eq("is_active", true)
           .in("user_id", insertedUserIds),
+        client
+          .from("profiles")
+          .select("user_id, notify_reveals")
+          .in("user_id", insertedUserIds),
       ]);
       if (groupsRes.error) throw groupsRes.error;
       if (profilesRes.error) throw profilesRes.error;
       if (tokensRes.error) throw tokensRes.error;
+      if (prefsRes.error) throw prefsRes.error;
 
       const groupById = new Map<string, GroupRow>();
       for (const g of (groupsRes.data ?? []) as GroupRow[]) groupById.set(g.id, g);
@@ -274,8 +279,14 @@ Deno.serve(async (req) => {
         nameByUserId.set(p.user_id, p.full_name || "Someone");
       }
 
+      const revealOptIn = new Set<string>();
+      for (const p of (prefsRes.data ?? []) as Array<{ user_id: string; notify_reveals: boolean | null }>) {
+        if (p.notify_reveals !== false) revealOptIn.add(p.user_id);
+      }
+
       const tokensByUserId = new Map<string, string[]>();
       for (const t of (tokensRes.data ?? []) as PushTokenRow[]) {
+        if (!revealOptIn.has(t.user_id)) continue;
         const arr = tokensByUserId.get(t.user_id) ?? [];
         arr.push(t.expo_push_token);
         tokensByUserId.set(t.user_id, arr);

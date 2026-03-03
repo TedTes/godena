@@ -64,14 +64,24 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Sender not in connection" }), { status: 403 });
     }
 
-    const [{ data: senderProfile }, { data: tokenRows }] = await Promise.all([
+    const [{ data: senderProfile }, { data: prefRow }] = await Promise.all([
       client.from("profiles").select("full_name").eq("user_id", senderId).maybeSingle(),
       client
-        .from("user_push_tokens")
-        .select("expo_push_token")
-        .eq("is_active", true)
-        .eq("user_id", recipientId),
+        .from("profiles")
+        .select("notify_connection_messages")
+        .eq("user_id", recipientId)
+        .maybeSingle(),
     ]);
+
+    if (prefRow && prefRow.notify_connection_messages === false) {
+      return new Response(JSON.stringify({ sent: 0, reason: "disabled_by_preferences" }), { status: 200 });
+    }
+
+    const { data: tokenRows } = await client
+      .from("user_push_tokens")
+      .select("expo_push_token")
+      .eq("is_active", true)
+      .eq("user_id", recipientId);
 
     const tokens = Array.from(new Set((tokenRows ?? []).map((r) => r.expo_push_token))).filter(Boolean);
     if (tokens.length === 0) {

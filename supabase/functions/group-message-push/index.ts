@@ -57,11 +57,24 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ sent: 0 }), { status: 200 });
     }
 
+    const { data: prefRows } = await client
+      .from("profiles")
+      .select("user_id, notify_group_messages")
+      .in("user_id", recipientIds);
+    const prefMap = new Map<string, boolean | null>();
+    for (const row of ((prefRows ?? []) as Array<{ user_id: string; notify_group_messages: boolean | null }>)) {
+      prefMap.set(row.user_id, row.notify_group_messages);
+    }
+    const allowedRecipientIds = recipientIds.filter((uid) => prefMap.get(uid) !== false);
+    if (allowedRecipientIds.length === 0) {
+      return new Response(JSON.stringify({ sent: 0, reason: "disabled_by_preferences" }), { status: 200 });
+    }
+
     const { data: tokenRows } = await client
       .from("user_push_tokens")
       .select("expo_push_token")
       .eq("is_active", true)
-      .in("user_id", recipientIds);
+      .in("user_id", allowedRecipientIds);
 
     const tokens = Array.from(new Set((tokenRows ?? []).map((r) => r.expo_push_token))).filter(Boolean);
     if (tokens.length === 0) {
