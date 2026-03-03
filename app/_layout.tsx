@@ -19,6 +19,7 @@ export default function RootLayout() {
         <Stack.Screen name="group/chat/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="event/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="privacy-safety" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="help-feedback" options={{ animation: 'slide_from_right' }} />

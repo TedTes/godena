@@ -283,6 +283,10 @@ export default function ProfileScreen() {
       router.push('/premium');
       return;
     }
+    if (label === 'Notifications') {
+      router.push('/notifications');
+      return;
+    }
     if (label === 'Privacy & Safety') {
       router.push('/privacy-safety');
       return;
