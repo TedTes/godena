@@ -33,6 +33,8 @@ import {
   getSessionUserId,
   insertPostReaction,
   joinGroup as joinGroupMembership,
+  leaveGroup as leaveGroupMembership,
+  deleteGroup as deleteGroupByOwner,
   logInteractionEvent,
   markEventAttended,
   setOpenSignal,
@@ -137,6 +139,8 @@ export default function GroupDetailScreen() {
   const [pendingReactions, setPendingReactions] = useState<Set<string>>(new Set());
   const [pendingRsvps, setPendingRsvps] = useState<Set<string>>(new Set());
   const [pendingAttendance, setPendingAttendance] = useState<Set<string>>(new Set());
+  const [confirmModal, setConfirmModal] = useState<'leave' | 'delete' | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const visuals = useMemo(
     () => getGroupVisuals(group?.category ?? 'other', group?.icon_emoji),
@@ -309,11 +313,45 @@ export default function GroupDetailScreen() {
 
   const handleReportGroup = () =>
     Alert.alert('Report submitted', "Thanks \u2014 we'll review this group shortly.");
-  const handleLeaveGroup = () =>
-    Alert.alert('Leave Group', 'This feature is coming soon.');
+
+  const handleLeaveGroup = () => {
+    if (!id || !userId || !membership) return;
+    if (membership.role === 'organizer') {
+      Alert.alert('Group owner', 'As the group creator, you can delete the group instead of leaving it.');
+      return;
+    }
+    setConfirmModal('leave');
+  };
+
+  const handleDeleteGroup = () => {
+    if (!id || !userId || !membership || membership.role !== 'organizer') return;
+    setConfirmModal('delete');
+  };
+
+  const confirmLeave = async () => {
+    if (!id || !userId) return;
+    setActionLoading(true);
+    const { error } = await leaveGroupMembership(id, userId);
+    setActionLoading(false);
+    setConfirmModal(null);
+    if (error) { Alert.alert('Could not leave group', error.message); return; }
+    router.replace('/(tabs)/groups?tab=discover');
+  };
+
+  const confirmDelete = async () => {
+    if (!id || !userId) return;
+    setActionLoading(true);
+    const { error } = await deleteGroupByOwner(id, userId);
+    setActionLoading(false);
+    setConfirmModal(null);
+    if (error) { Alert.alert('Could not delete group', error.message); return; }
+    router.replace('/(tabs)/groups?tab=discover');
+  };
   const handleGroupMenu = () => {
     const actions: { text: string; style?: 'destructive' | 'cancel' | 'default'; onPress?: () => void }[] = [];
-    if (membership && membership.role !== 'organizer') {
+    if (membership?.role === 'organizer') {
+      actions.push({ text: 'Delete Group', style: 'destructive', onPress: handleDeleteGroup });
+    } else if (membership) {
       actions.push({ text: 'Leave Group', style: 'destructive', onPress: handleLeaveGroup });
     }
     actions.push({ text: 'Report Group', onPress: handleReportGroup });
@@ -1029,6 +1067,90 @@ export default function GroupDetailScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
+      {/* ── Leave / Delete Confirmation Modal ── */}
+      <Modal
+        visible={confirmModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!actionLoading) setConfirmModal(null); }}
+      >
+        <View style={styles.confirmOverlay}>
+          <TouchableOpacity
+            style={styles.confirmBackdrop}
+            activeOpacity={1}
+            onPress={() => { if (!actionLoading) setConfirmModal(null); }}
+          />
+          <View style={styles.confirmSheet}>
+            <View style={styles.confirmHandle} />
+
+            {confirmModal === 'leave' && (
+              <>
+                <View style={[styles.confirmIconWrap, styles.confirmIconWrapWarn]}>
+                  <Ionicons name="exit-outline" size={28} color={Colors.terracotta} />
+                </View>
+                <Text style={styles.confirmTitle}>Leave Group?</Text>
+                <Text style={styles.confirmBody}>
+                  You'll lose access to{' '}
+                  <Text style={styles.confirmBold}>{group?.name}</Text>
+                  {' '}— including posts, events, and group chat.
+                </Text>
+                <Text style={styles.confirmNote}>You can rejoin later if the group remains open.</Text>
+              </>
+            )}
+
+            {confirmModal === 'delete' && (
+              <>
+                <View style={[styles.confirmIconWrap, styles.confirmIconWrapDanger]}>
+                  <Ionicons name="trash-outline" size={28} color={Colors.error} />
+                </View>
+                <Text style={styles.confirmTitle}>Delete Group?</Text>
+                <Text style={styles.confirmBody}>
+                  Permanently removes{' '}
+                  <Text style={styles.confirmBold}>{group?.name}</Text>
+                  {' '}and everything in it:
+                </Text>
+                <View style={styles.confirmBullets}>
+                  <Text style={styles.confirmBullet}>· All posts and activity</Text>
+                  <Text style={styles.confirmBullet}>· All events and RSVPs</Text>
+                  <Text style={styles.confirmBullet}>· All member records and connections</Text>
+                </View>
+                <Text style={styles.confirmNote}>This cannot be undone.</Text>
+              </>
+            )}
+
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                style={styles.confirmCancelBtn}
+                onPress={() => setConfirmModal(null)}
+                disabled={actionLoading}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.confirmDestructiveBtn,
+                  confirmModal === 'delete' && styles.confirmDestructiveBtnRed,
+                  actionLoading && styles.confirmBtnDisabled,
+                ]}
+                onPress={() => {
+                  if (confirmModal === 'leave') void confirmLeave();
+                  else if (confirmModal === 'delete') void confirmDelete();
+                }}
+                disabled={actionLoading}
+              >
+                {actionLoading ? (
+                  <ActivityIndicator size="small" color={Colors.white} />
+                ) : (
+                  <Text style={styles.confirmDestructiveText}>
+                    {confirmModal === 'leave' ? 'Leave Group' : 'Delete Group'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Create Event Modal ── */}
       <Modal
         visible={showEventForm}
@@ -1172,9 +1294,106 @@ const styles = StyleSheet.create({
   heroMenuBtn: {
     width: 36,
     height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
   },
+
+  // ── Confirm Modal ──
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  confirmBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  confirmSheet: {
+    backgroundColor: Colors.warmWhite,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
+    alignItems: 'center',
+  },
+  confirmHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  confirmIconWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  confirmIconWrapWarn: { backgroundColor: 'rgba(196,98,45,0.10)' },
+  confirmIconWrapDanger: { backgroundColor: 'rgba(217,79,79,0.10)' },
+  confirmTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.ink,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  confirmBody: {
+    fontSize: 14,
+    color: Colors.brownMid,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 6,
+  },
+  confirmBold: { fontWeight: '700', color: Colors.ink },
+  confirmBullets: {
+    alignSelf: 'stretch',
+    backgroundColor: Colors.paper,
+    borderRadius: 12,
+    padding: 14,
+    gap: 6,
+    marginTop: 6,
+  },
+  confirmBullet: { fontSize: 13, color: Colors.brownMid, lineHeight: 20 },
+  confirmNote: {
+    fontSize: 12,
+    color: Colors.muted,
+    textAlign: 'center',
+    marginTop: 10,
+    marginBottom: 22,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 10,
+    alignSelf: 'stretch',
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.paper,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmCancelText: { fontSize: 15, fontWeight: '600', color: Colors.brownMid },
+  confirmDestructiveBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmDestructiveBtnRed: { backgroundColor: Colors.error },
+  confirmBtnDisabled: { opacity: 0.55 },
+  confirmDestructiveText: { fontSize: 15, fontWeight: '700', color: Colors.white },
   heroContent: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.md,

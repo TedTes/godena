@@ -151,6 +151,22 @@ export async function joinGroup(groupId: string, userId: string) {
     .upsert({ group_id: groupId, user_id: userId }, { onConflict: 'group_id,user_id', ignoreDuplicates: true });
 }
 
+export async function leaveGroup(groupId: string, userId: string) {
+  return supabase
+    .from('group_memberships')
+    .delete()
+    .eq('group_id', groupId)
+    .eq('user_id', userId);
+}
+
+export async function deleteGroup(groupId: string, userId: string) {
+  return supabase
+    .from('groups')
+    .delete()
+    .eq('id', groupId)
+    .eq('created_by', userId);
+}
+
 export async function createGroupEvent(
   groupId: string,
   userId: string,
