@@ -34,45 +34,36 @@ Deno.serve(async (req) => {
     }
     const userId = userData.user.id;
 
-    // Cleanup profile media paths in storage.
-    const { data: profile } = await admin
+    const nowIso = new Date().toISOString();
+    const restoreUntilIso = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { error: profileError } = await admin
       .from("profiles")
-      .select("avatar_url, photo_urls")
-      .eq("user_id", userId)
-      .maybeSingle();
-    const paths = Array.from(
-      new Set([
-        ...(profile?.avatar_url ? [profile.avatar_url] : []),
-        ...((profile?.photo_urls as string[] | null) ?? []),
-      ].filter(Boolean)),
-    );
-    if (paths.length > 0) {
-      await admin.storage.from("profile-photos").remove(paths);
+      .update({
+        deleted_at: nowIso,
+        deletion_requested_at: nowIso,
+        deletion_restore_until: restoreUntilIso,
+        is_open_to_connections: false,
+      })
+      .eq("user_id", userId);
+    if (profileError) {
+      return json(500, { ok: false, error: profileError.message });
     }
 
-    // Delete rows that can block auth user deletion due RESTRICT constraints.
-    const { data: createdGroups } = await admin.from("groups").select("id").eq("created_by", userId);
-    const createdGroupIds = (createdGroups ?? []).map((g) => g.id);
+    // Safety: globally turn off openness signals for this user in all groups.
+    await admin
+      .from("group_memberships")
+      .update({ is_open_to_connect: false, openness_set_at: null })
+      .eq("user_id", userId);
 
-    if (createdGroupIds.length > 0) {
-      await admin.from("connections").delete().in("group_id", createdGroupIds);
-      await admin.from("group_events").delete().in("group_id", createdGroupIds);
-      await admin.from("groups").delete().in("id", createdGroupIds);
-    }
-
+    // Close active/pending introductions for privacy.
     await admin
       .from("connections")
-      .delete()
-      .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
+      .update({ status: "closed" })
+      .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+      .in("status", ["pending", "accepted"]);
 
-    await admin.from("group_events").delete().eq("created_by", userId);
-
-    const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
-    if (deleteError) {
-      return json(500, { ok: false, error: deleteError.message });
-    }
-
-    return json(200, { ok: true });
+    return json(200, { ok: true, soft_deleted: true, restore_until: restoreUntilIso });
   } catch (err) {
     return json(500, {
       ok: false,
