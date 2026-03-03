@@ -3,17 +3,28 @@ import { supabase } from '../supabase';
 export async function hasProfile(userId: string): Promise<boolean> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('user_id')
+    .select('user_id, deleted_at')
     .eq('user_id', userId)
     .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
   }
-  return Boolean(data?.user_id);
+  return Boolean(data?.user_id && !data.deleted_at);
 }
 
-export async function resolvePostAuthRoute(userId: string): Promise<'/(tabs)/home' | '/profile-setup'> {
-  const exists = await hasProfile(userId);
-  return exists ? '/(tabs)/home' : '/profile-setup';
+export async function resolvePostAuthRoute(userId: string): Promise<'/(tabs)/home' | '/profile-setup' | '/(auth)'> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('user_id, deleted_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data?.user_id) return '/profile-setup';
+  if (data.deleted_at) {
+    await supabase.auth.signOut();
+    return '/(auth)';
+  }
+  return '/(tabs)/home';
 }

@@ -254,7 +254,11 @@ export default function ProfileScreen() {
         return;
       }
       await supabase.auth.signOut();
-      Alert.alert('Account deleted', 'Your account was permanently deleted.');
+      const restoreUntil = (data as any)?.restore_until as string | undefined;
+      const restoreText = restoreUntil
+        ? ` You can request account restore until ${new Date(restoreUntil).toLocaleDateString()}.`
+        : '';
+      Alert.alert('Account deletion scheduled', `Your account has been deactivated.${restoreText}`);
       router.replace('/onboarding');
     } finally {
       setDeletingAccount(false);
@@ -265,7 +269,7 @@ export default function ProfileScreen() {
     if (label === 'Delete Account') {
       Alert.alert(
         'Delete account?',
-        'This permanently deletes your account and cannot be undone.',
+        'Your account will be deactivated and scheduled for deletion after 30 days. You can restore it during that window.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -274,7 +278,7 @@ export default function ProfileScreen() {
             onPress: () => {
               Alert.alert(
                 'Final confirmation',
-                'Are you sure you want to permanently delete your account?',
+                'Are you sure you want to deactivate your account now?',
                 [
                   { text: 'No', style: 'cancel' },
                   { text: 'Yes, delete', style: 'destructive', onPress: () => void deleteAccount() },
