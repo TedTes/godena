@@ -98,7 +98,6 @@ export default function HomeScreen() {
   const [firstName, setFirstName] = useState('there');
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
-  const [openSignalGroupName, setOpenSignalGroupName] = useState<string | null>(null);
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
@@ -182,9 +181,6 @@ export default function HomeScreen() {
           })
         );
 
-        const firstOpenGroup = groups.find((g) => openByGroup.get(g.id));
-        setOpenSignalGroupName(firstOpenGroup?.name ?? null);
-
         const events =
           (eventsRes.data as Array<{
             id: string;
@@ -258,7 +254,6 @@ export default function HomeScreen() {
       } else {
         setMyGroups([]);
         setUpcomingEvents([]);
-        setOpenSignalGroupName(null);
       }
 
       const { data: pendingConnection } = await supabase
@@ -384,48 +379,54 @@ export default function HomeScreen() {
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
               {myGroups.length > 0 ? (
-                myGroups.map((g) => (
-                  <TouchableOpacity
-                    key={g.id}
-                    style={[styles.groupCard, { backgroundColor: g.coverColor }]}
-                    onPress={() => router.push(`/group/${g.id}`)}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.groupCardTop}>
-                      <Text style={styles.groupEmoji}>{g.emoji}</Text>
-                      {g.isOpenToConnect ? (
-                        <View style={styles.openBadge}>
-                          <View style={styles.openDot} />
-                          <Text style={styles.openBadgeText}>Open</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.openBadgeMuted}>
-                          <Text style={styles.openBadgeMutedText}>Closed</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.groupCardName} numberOfLines={2}>{g.name}</Text>
-                    <View style={styles.groupCardFooter}>
-                      <View style={styles.groupCardMetaRow}>
-                        <Ionicons name="people-outline" size={12} color="rgba(255,255,255,0.78)" />
-                        <Text style={styles.groupCardMeta}>{g.memberCount} members</Text>
+                <>
+                  {myGroups.map((g) => (
+                    <TouchableOpacity
+                      key={g.id}
+                      style={[styles.groupCard, { backgroundColor: g.coverColor }]}
+                      onPress={() => router.push(`/group/${g.id}`)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.groupCardTop}>
+                        <Text style={styles.groupEmoji}>{g.emoji}</Text>
+                        {g.isOpenToConnect ? (
+                          <View style={styles.openBadge}>
+                            <View style={styles.openDot} />
+                            <Text style={styles.openBadgeText}>Open</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.openBadgeMuted}>
+                            <Text style={styles.openBadgeMutedText}>Closed</Text>
+                          </View>
+                        )}
                       </View>
-                      <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.75)" />
-                    </View>
+                      <Text style={styles.groupCardName} numberOfLines={2}>{g.name}</Text>
+                      <View style={styles.groupCardFooter}>
+                        <View style={styles.groupCardMetaRow}>
+                          <Ionicons name="people-outline" size={12} color="rgba(255,255,255,0.78)" />
+                          <Text style={styles.groupCardMeta}>{g.memberCount} members</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.75)" />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.addGroupCard}
+                    onPress={() => router.push('/(tabs)/groups')}
+                  >
+                    <Ionicons name="add" size={28} color={C.muted} />
+                    <Text style={styles.addGroupText}>Join a Group</Text>
                   </TouchableOpacity>
-                ))
+                </>
               ) : (
-                <View style={styles.inlineEmptyCard}>
-                  <Text style={styles.inlineEmptyText}>No groups yet</Text>
-                </View>
+                <TouchableOpacity
+                  style={styles.addGroupCard}
+                  onPress={() => router.push('/(tabs)/groups')}
+                >
+                  <Ionicons name="add" size={28} color={C.muted} />
+                  <Text style={styles.addGroupText}>Join a Group</Text>
+                </TouchableOpacity>
               )}
-              <TouchableOpacity
-                style={styles.addGroupCard}
-                onPress={() => router.push('/(tabs)/groups')}
-              >
-                <Ionicons name="add" size={28} color={C.muted} />
-                <Text style={styles.addGroupText}>Join a Group</Text>
-              </TouchableOpacity>
             </ScrollView>
           </View>
 
@@ -467,25 +468,28 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               ))
             ) : (
-              <View style={styles.emptySectionCard}>
-                <Text style={styles.emptySectionText}>No upcoming events yet.</Text>
+              <View style={styles.eventsEmpty}>
+                <View style={styles.eventsEmptyIcon}>
+                  <Ionicons name="calendar-outline" size={28} color={C.terracotta} />
+                </View>
+                <Text style={styles.eventsEmptyTitle}>Nothing planned yet</Text>
+                <Text style={styles.eventsEmptySub}>
+                  {myGroups.length === 0
+                    ? 'Join a group to unlock events from your community.'
+                    : 'Events from your groups will show here once organizers add them.'}
+                </Text>
+                {myGroups.length === 0 && (
+                  <TouchableOpacity
+                    style={styles.eventsEmptyBtn}
+                    onPress={() => router.push('/(tabs)/groups?tab=discover')}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.eventsEmptyBtnText}>Browse groups</Text>
+                    <Ionicons name="arrow-forward" size={12} color={C.terracotta} />
+                  </TouchableOpacity>
+                )}
               </View>
             )}
-          </View>
-
-          <View style={styles.hintBox}>
-            <Text style={styles.hintIcon}>🌱</Text>
-            <Text style={styles.hintText}>
-              {openSignalGroupName ? (
-                <>
-                  You're open to a connection in <Text style={styles.hintBold}>{openSignalGroupName}</Text>. Keep showing up - it matters.
-                </>
-              ) : (
-                <>
-                  Toggle openness in a group when you're ready. Introductions stay private and mutual.
-                </>
-              )}
-            </Text>
           </View>
 
           <View style={{ height: 20 }} />
@@ -687,18 +691,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     color: 'rgba(255,255,255,0.68)',
     fontWeight: '400',
   },
-  inlineEmptyCard: {
-    width: 136,
-    height: 92,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.warmWhite,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  inlineEmptyText: { fontSize: 12, color: C.muted, fontWeight: '600' },
   addGroupCard: {
     width: 136,
     height: 92,
@@ -754,15 +746,50 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   rsvpText: { fontSize: 11, fontWeight: '700', color: C.muted },
   rsvpTextActive: { color: C.white },
   attendeeCount: { fontSize: 10, color: C.muted },
-  emptySectionCard: {
+  eventsEmpty: {
     marginHorizontal: Spacing.lg,
     backgroundColor: C.warmWhite,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    paddingVertical: 36,
+    paddingHorizontal: Spacing.lg,
     borderWidth: 1,
     borderColor: C.border,
+    alignItems: 'center',
+    gap: 8,
   },
-  emptySectionText: { color: C.muted, fontSize: 13 },
+  eventsEmptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(196,98,45,0.09)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  eventsEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: C.ink,
+    textAlign: 'center',
+  },
+  eventsEmptySub: {
+    fontSize: 13,
+    color: C.muted,
+    lineHeight: 19,
+    textAlign: 'center',
+    maxWidth: 260,
+  },
+  eventsEmptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
+  },
+  eventsEmptyBtnText: {
+    fontSize: 13,
+    color: C.terracotta,
+    fontWeight: '700',
+  },
 
   momentumStrip: {
     flexDirection: 'row',
@@ -786,20 +813,4 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     lineHeight: 17,
   },
 
-  hintBox: {
-    marginHorizontal: Spacing.lg,
-    backgroundColor: C.paper,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: C.borderDark,
-    borderLeftWidth: 3,
-    borderLeftColor: C.olive,
-  },
-  hintIcon: { fontSize: 18, marginTop: 1 },
-  hintText: { flex: 1, fontSize: 13, color: C.muted, lineHeight: 20 },
-  hintBold: { color: C.brown, fontWeight: '700' },
 }); }

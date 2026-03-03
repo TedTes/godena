@@ -13,7 +13,7 @@ import {
   ActivityIndicator,
   Switch,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
@@ -81,10 +81,11 @@ function getGroupVisuals(category: string) {
 
 export default function GroupsScreen() {
   const router = useRouter();
+  const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
   const [activeCity, setActiveCity] = useState(ALL_CITIES_LABEL);
-  const [tab, setTab] = useState<'mine' | 'discover'>('mine');
+  const [tab, setTab] = useState<'mine' | 'discover'>(tabParam === 'discover' ? 'discover' : 'mine');
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set());
   const [userId, setUserId] = useState<string | null>(null);
@@ -120,6 +121,11 @@ export default function GroupsScreen() {
       Animated.timing(tabFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
     });
   };
+
+  useEffect(() => {
+    if (tabParam === 'discover') switchTab('discover');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabParam]);
 
   const joinGroup = async (groupId: string) => {
     if (!userId) {
