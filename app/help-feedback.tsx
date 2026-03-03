@@ -83,6 +83,14 @@ export default function HelpFeedbackScreen() {
     })();
   };
 
+  const openSubmission = (row: FeedbackRow) => {
+    Alert.alert(
+      row.subject,
+      `${new Date(row.created_at).toLocaleString()}\n\n${row.message}`,
+      [{ text: 'Close', style: 'cancel' }]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingWrap}>
@@ -163,7 +171,12 @@ export default function HelpFeedbackScreen() {
               <Text style={styles.emptyText}>No submissions yet.</Text>
             ) : (
               tickets.map((t, i) => (
-                <View key={t.id} style={[styles.ticketRow, i > 0 && styles.rowDivider]}>
+                <TouchableOpacity
+                  key={t.id}
+                  style={[styles.ticketRow, i > 0 && styles.rowDivider]}
+                  activeOpacity={0.8}
+                  onPress={() => openSubmission(t)}
+                >
                   <View style={styles.ticketTop}>
                     <Text style={styles.ticketSubject}>{t.subject}</Text>
                     <Text style={styles.ticketStatus}>{t.status}</Text>
@@ -171,7 +184,7 @@ export default function HelpFeedbackScreen() {
                   <Text style={styles.ticketMeta}>
                     {t.category} • {new Date(t.created_at).toLocaleDateString()}
                   </Text>
-                </View>
+                </TouchableOpacity>
               ))
             )}
           </View>
@@ -278,4 +291,3 @@ const styles = StyleSheet.create({
   ticketMeta: { marginTop: 4, fontSize: 11, color: Colors.muted, textTransform: 'capitalize' },
   emptyText: { padding: Spacing.md, fontSize: 13, color: Colors.muted },
 });
-
