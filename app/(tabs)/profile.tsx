@@ -2,16 +2,33 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Alert,
-  Modal,
   Image,
+  LayoutAnimation,
+  Modal,
+  Platform,
+  UIManager,
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import RAnimated, { FadeIn, FadeInDown, FadeOut, useReducedMotion } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
+
+if (Platform.OS === 'android') {
+  UIManager.setLayoutAnimationEnabledExperimental?.(true);
+}
+
+const LAYOUT_SPRING = {
+  duration: 280,
+  create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+  update: { type: LayoutAnimation.Types.spring, springDamping: 0.8 },
+  delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+};
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -39,16 +56,47 @@ const settingsRows = [
   { icon: 'log-out-outline', label: 'Sign Out', danger: true },
 ] as const;
 
-function abbrevGender(g: string): string {
-  const s = g.toLowerCase().replace(/[_\s]+/g, ' ').trim();
-  if (s === 'male')   return 'M';
-  if (s === 'female') return 'F';
-  if (s.includes('non')) return 'NB';
-  // Capitalise first letter, keep short
-  return s.charAt(0).toUpperCase() + s.slice(1, 8) + (s.length > 8 ? '.' : '');
-}
-
 const COMPLETENESS_TOTAL = 7;
+const INTENT_OPTIONS = [
+  { value: 'friendship', label: 'Friendship' },
+  { value: 'dating', label: 'Dating' },
+  { value: 'long_term', label: 'Long-term' },
+  { value: 'marriage', label: 'Marriage' },
+] as const;
+const GENDER_OPTIONS = [
+  { value: 'woman', label: 'Woman' },
+  { value: 'man', label: 'Man' },
+  { value: 'non_binary', label: 'Non-binary' },
+] as const;
+
+type EditableField =
+  | 'bio'
+  | 'birth_date'
+  | 'ethnicity'
+  | 'gender'
+  | 'religion'
+  | 'languages'
+  | 'intent'
+  | 'preferred_genders'
+  | 'preferred_age';
+
+type ProfileData = {
+  full_name: string;
+  city: string | null;
+  bio: string | null;
+  birth_date: string | null;
+  ethnicity: string | null;
+  religion: string | null;
+  languages: string[] | null;
+  intent: string;
+  gender: string | null;
+  preferred_genders: string[] | null;
+  preferred_age_min: number | null;
+  preferred_age_max: number | null;
+  is_open_to_connections: boolean | null;
+  avatar_url: string | null;
+  photo_urls: string[] | null;
+};
 
 function AvatarImage({ uri, style, onError }: { uri: string; style: object; onError: () => void }) {
   const opacity = React.useRef(new Animated.Value(0)).current;
@@ -77,23 +125,13 @@ export default function ProfileScreen() {
   const [galleryPhotos, setGalleryPhotos] = useState<
     Array<{ uri: string; path: string; isAvatar: boolean }>
   >([]);
-  const [profile, setProfile] = useState<{
-    full_name: string;
-    city: string | null;
-    bio: string | null;
-    birth_date: string | null;
-    ethnicity: string | null;
-    religion: string | null;
-    languages: string[] | null;
-    intent: string;
-    gender: string | null;
-    preferred_genders: string[] | null;
-    preferred_age_min: number | null;
-    preferred_age_max: number | null;
-    is_open_to_connections: boolean | null;
-    avatar_url: string | null;
-    photo_urls: string[] | null;
-  } | null>(null);
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [editingField, setEditingField] = useState<EditableField | null>(null);
+  const [editingValue, setEditingValue] = useState('');
+  const [editingSecondaryValue, setEditingSecondaryValue] = useState('');
+  const [editingMultiValue, setEditingMultiValue] = useState<string[]>([]);
+  const [editingDate, setEditingDate] = useState<Date>(new Date());
+  const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
 
   const resolvePhotoUri = async (value: string): Promise<string | null> => {
     if (value.startsWith('http://') || value.startsWith('https://')) {
@@ -181,29 +219,49 @@ export default function ProfileScreen() {
   const religion        = profile?.religion ?? null;
   const languages       = profile?.languages ?? [];
   const preferredGenders = profile?.preferred_genders ?? [];
+  const intentLabelMap: Record<string, string> = {
+    friendship: 'Friendship',
+    dating: 'Dating',
+    long_term: 'Long-term',
+    marriage: 'Marriage',
+  };
+  const intentLabel = profile?.intent ? (intentLabelMap[profile.intent] ?? profile.intent) : null;
+  const birthDateLabel = profile?.birth_date
+    ? new Date(`${profile.birth_date}T00:00:00.000Z`).toLocaleDateString()
+    : null;
 
   const preferredAgeLabel     =
     profile?.preferred_age_min != null && profile?.preferred_age_max != null
       ? `${profile.preferred_age_min}–${profile.preferred_age_max} years`
       : null;
 
-  const identityItems = [
-    ethnicity            ? { emoji: '🌍', value: ethnicity }                     : null,
-    profile?.gender      ? { emoji: '🧍', value: abbrevGender(profile.gender) } : null,
-    religion             ? { emoji: '🛐', value: religion }                      : null,
-    languages.length > 0 ? { emoji: '🗣️', value: languages.join(', ') }         : null,
-  ].filter((x): x is { emoji: string; value: string } => Boolean(x));
+  const aboutMeRows: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string | null; field: EditableField }[] = [
+    { icon: 'calendar-outline',             label: 'Birth Date', value: birthDateLabel, field: 'birth_date' },
+    { icon: 'globe-outline',                label: 'Ethnicity',  value: ethnicity, field: 'ethnicity' },
+    { icon: 'person-outline',               label: 'Gender',     value: profile?.gender ?? null, field: 'gender' },
+    { icon: 'leaf-outline',                 label: 'Religion',   value: religion, field: 'religion' },
+    { icon: 'chatbubble-ellipses-outline',  label: 'Languages',  value: languages.length > 0 ? languages.join(', ') : null, field: 'languages' },
+  ];
 
-  const preferenceItems = [
-    preferredGenders.length > 0
-      ? { emoji: '💞', value: preferredGenders.map(abbrevGender).join(', ') }
-      : null,
-    preferredAgeLabel ? { emoji: '🎂', value: preferredAgeLabel } : null,
-  ].filter((x): x is { emoji: string; value: string } => Boolean(x));
+  const preferencesRows: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string | null; field: EditableField }[] = [
+    { icon: 'sparkles-outline', label: 'Connection Goal', value: intentLabel, field: 'intent' },
+    { icon: 'heart-outline',    label: 'Interested in',  value: preferredGenders.length > 0 ? preferredGenders.join(', ') : null, field: 'preferred_genders' },
+    { icon: 'calendar-outline', label: 'Preferred Age',  value: preferredAgeLabel, field: 'preferred_age' },
+  ];
 
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
+
+  const reducedMotion   = useReducedMotion();
+  // Edit row — slides down into the expanding row, exits quickly so LayoutAnimation can spring-close cleanly
+  const editEnterAnim   = reducedMotion ? FadeIn.duration(60)     : FadeInDown.duration(200);
+  const editExitAnim    = reducedMotion ? FadeOut.duration(60)    : FadeOut.duration(80);
+  // View row — fades back in after row collapses, fades out quickly when opening edit
+  const viewEnterAnim   = reducedMotion ? FadeIn.duration(60)     : FadeIn.duration(180);
+  const viewExitAnim    = reducedMotion ? FadeOut.duration(60)    : FadeOut.duration(60);
+  // Inner controls stagger (fires after the row wrapper animation begins)
+  const inputEnterAnim  = reducedMotion ? FadeIn.duration(60)     : FadeIn.duration(160).delay(60);
 
   // Toggle thumb position (off=0, on=18)
   const isOpen  = profile?.is_open_to_connections ?? true;
@@ -223,6 +281,227 @@ export default function ProfileScreen() {
   const signOut = async () => {
     await supabase.auth.signOut();
     router.replace('/onboarding');
+  };
+
+  const updateProfilePatch = async (patch: Partial<ProfileData>) => {
+    if (!userId || !profile) return false;
+    const prev = profile;
+    setProfile({ ...prev, ...patch });
+    const { error } = await supabase.from('profiles').update(patch).eq('user_id', userId);
+    if (error) {
+      setProfile(prev);
+      Alert.alert('Update failed', error.message);
+      return false;
+    }
+    return true;
+  };
+
+  const closeEditRow = () => {
+    LayoutAnimation.configureNext(LAYOUT_SPRING);
+    setEditingField(null);
+  };
+
+  const openInlineEditor = (field: EditableField) => {
+    if (!profile) return;
+    if (field === 'birth_date') {
+      const parsed = profile.birth_date ? new Date(`${profile.birth_date}T00:00:00.000Z`) : new Date();
+      setEditingDate(Number.isNaN(parsed.getTime()) ? new Date() : parsed);
+      setShowBirthDateSheet(true);
+      return;
+    }
+    LayoutAnimation.configureNext(LAYOUT_SPRING);
+    setEditingField(field);
+    if (field === 'preferred_age') {
+      setEditingValue(profile.preferred_age_min?.toString() ?? '');
+      setEditingSecondaryValue(profile.preferred_age_max?.toString() ?? '');
+    } else if (field === 'preferred_genders') {
+      setEditingMultiValue(profile.preferred_genders ?? []);
+      setEditingValue('');
+    } else if (field === 'languages') {
+      setEditingValue((profile.languages ?? []).join(', '));
+    } else if (field === 'bio') {
+      setEditingValue(profile.bio ?? '');
+    } else if (field === 'ethnicity') {
+      setEditingValue(profile.ethnicity ?? '');
+    } else if (field === 'religion') {
+      setEditingValue(profile.religion ?? '');
+    } else if (field === 'gender') {
+      setEditingValue(profile.gender ?? '');
+    } else if (field === 'intent') {
+      setEditingValue(profile.intent ?? '');
+    }
+  };
+
+  const saveBirthDateFromSheet = async () => {
+    const iso = `${editingDate.getUTCFullYear()}-${String(editingDate.getUTCMonth() + 1).padStart(2, '0')}-${String(editingDate.getUTCDate()).padStart(2, '0')}`;
+    const ok = await updateProfilePatch({ birth_date: iso });
+    if (ok) setShowBirthDateSheet(false);
+  };
+
+  const renderFieldInput = (field: EditableField) => {
+    // ── Single-select chips: save immediately on tap ──
+    if (field === 'gender') {
+      return (
+        <View style={styles.inlineOptionsWrap}>
+          {GENDER_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.inlineOptionChip, editingValue === opt.value && styles.inlineOptionChipActive]}
+              onPress={() => {
+                setEditingValue(opt.value);
+                void updateProfilePatch({ gender: opt.value }).then(closeEditRow);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.inlineOptionText, editingValue === opt.value && styles.inlineOptionTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      );
+    }
+    if (field === 'intent') {
+      return (
+        <View style={styles.inlineOptionsWrap}>
+          {INTENT_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.inlineOptionChip, editingValue === opt.value && styles.inlineOptionChipActive]}
+              onPress={() => {
+                setEditingValue(opt.value);
+                void updateProfilePatch({ intent: opt.value }).then(closeEditRow);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.inlineOptionText, editingValue === opt.value && styles.inlineOptionTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      );
+    }
+    // ── Multi-select chips: Done chip to commit ──
+    if (field === 'preferred_genders') {
+      return (
+        <View style={styles.inlineOptionsWrap}>
+          {GENDER_OPTIONS.map((opt) => {
+            const selected = editingMultiValue.includes(opt.value);
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.inlineOptionChip, selected && styles.inlineOptionChipActive]}
+                onPress={() => setEditingMultiValue((prev) =>
+                  prev.includes(opt.value) ? prev.filter((v) => v !== opt.value) : [...prev, opt.value]
+                )}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.inlineOptionText, selected && styles.inlineOptionTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      );
+    }
+    // ── Two-input preferred age with Done chip ──
+    if (field === 'preferred_age') {
+      return (
+        <View style={styles.inlineAgeRow}>
+          <TextInput
+            value={editingValue}
+            onChangeText={setEditingValue}
+            placeholder="Min age"
+            keyboardType="number-pad"
+            style={[styles.inlineInput, styles.inlineInputHalf]}
+            autoFocus
+            placeholderTextColor={C.muted}
+          />
+          <TextInput
+            value={editingSecondaryValue}
+            onChangeText={setEditingSecondaryValue}
+            placeholder="Max age"
+            keyboardType="number-pad"
+            style={[styles.inlineInput, styles.inlineInputHalf]}
+            placeholderTextColor={C.muted}
+          />
+        </View>
+      );
+    }
+    // ── Text input with auto-save on blur ──
+    const handleBlur = () => {
+      if (field === 'languages') {
+        const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
+        void updateProfilePatch({ languages: parsed }).then(closeEditRow);
+      } else if (field === 'ethnicity') {
+        void updateProfilePatch({ ethnicity: editingValue.trim() || null }).then(closeEditRow);
+      } else if (field === 'religion') {
+        void updateProfilePatch({ religion: editingValue.trim() || null }).then(closeEditRow);
+      }
+    };
+    return (
+      <TextInput
+        value={editingValue}
+        onChangeText={setEditingValue}
+        onBlur={handleBlur}
+        placeholder={field === 'languages' ? 'e.g. English, Amharic' : 'Enter value'}
+        style={styles.inlineInput}
+        autoFocus
+        autoCapitalize="sentences"
+        placeholderTextColor={C.muted}
+      />
+    );
+  };
+
+  const commitActiveEdit = async () => {
+    if (!editingField) return;
+
+    if (editingField === 'preferred_genders') {
+      await updateProfilePatch({ preferred_genders: editingMultiValue });
+      closeEditRow();
+      return;
+    }
+
+    if (editingField === 'preferred_age') {
+      const min = editingValue.trim() ? Number(editingValue.trim()) : null;
+      const max = editingSecondaryValue.trim() ? Number(editingSecondaryValue.trim()) : null;
+      if ((min !== null && Number.isNaN(min)) || (max !== null && Number.isNaN(max)) || (min !== null && max !== null && min > max)) {
+        closeEditRow();
+        return;
+      }
+      await updateProfilePatch({ preferred_age_min: min, preferred_age_max: max });
+      closeEditRow();
+      return;
+    }
+
+    if (editingField === 'languages') {
+      const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
+      await updateProfilePatch({ languages: parsed });
+      closeEditRow();
+      return;
+    }
+
+    if (editingField === 'ethnicity') {
+      await updateProfilePatch({ ethnicity: editingValue.trim() || null });
+      closeEditRow();
+      return;
+    }
+
+    if (editingField === 'religion') {
+      await updateProfilePatch({ religion: editingValue.trim() || null });
+      closeEditRow();
+      return;
+    }
+
+    if (editingField === 'bio') {
+      await updateProfilePatch({ bio: editingValue.trim() || null });
+      closeEditRow();
+      return;
+    }
+
+    closeEditRow();
   };
 
   const toggleGlobalOpen = async (value: boolean) => {
@@ -491,7 +770,12 @@ export default function ProfileScreen() {
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
         <Animated.View style={[{ flex: 1 }, enterStyle]}>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          onTouchStart={() => { void commitActiveEdit(); }}
+        >
 
           {/* ── Hero Header ── */}
           <View style={styles.headerBg}>
@@ -593,7 +877,7 @@ export default function ProfileScreen() {
                     ]}>
                       <View style={[styles.toggleThumb, thumbStyle]} />
                     </View>
-                    <Text style={styles.headerActionLabel}>Connections</Text>
+                    <Text style={styles.headerActionLabel}>Open to Connect</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -667,30 +951,85 @@ export default function ProfileScreen() {
             )}
           </View>
 
-          {/* ── About Me (identity) ── */}
+          {/* ── Bio + Identity merged under "About" ── */}
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>About Me</Text>
-            <View style={[styles.card, styles.cardNoPad]}>
-              {identityItems.length > 0 ? (
-                <View style={styles.detailChips}>
-                  {identityItems.map((item) => (
-                    <View key={item.emoji} style={styles.detailChip}>
-                      <Text style={styles.detailChipEmoji}>{item.emoji}</Text>
-                      <Text style={styles.detailChipValue}>{item.value}</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={{ padding: Spacing.md }}
-                  onPress={() => router.push('/profile-setup')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.bioEmpty}>
-                    Add your identity details to help others know you better.
+            <Text style={styles.sectionLabel}>About</Text>
+            {editingField === 'bio' ? (
+              <RAnimated.View key="bio-edit" entering={editEnterAnim} exiting={editExitAnim} style={styles.bioDashedCard}>
+                <RAnimated.View entering={inputEnterAnim}>
+                  <TextInput
+                    value={editingValue}
+                    onChangeText={setEditingValue}
+                    onBlur={() => void updateProfilePatch({ bio: editingValue.trim() || null }).then(closeEditRow)}
+                    multiline
+                    style={styles.bioInput}
+                    autoFocus
+                    placeholder="Write something about yourself..."
+                    placeholderTextColor={C.muted}
+                  />
+                </RAnimated.View>
+              </RAnimated.View>
+            ) : (
+              <RAnimated.View key="bio-view" entering={viewEnterAnim} exiting={viewExitAnim}>
+                <TouchableOpacity style={styles.bioDashedCard} activeOpacity={0.85} onPress={() => openInlineEditor('bio')}>
+                  <Text style={profile?.bio?.trim() ? styles.bioText : styles.bioEmpty}>
+                    {profile?.bio?.trim() || 'No bio yet. Tap to add.'}
                   </Text>
                 </TouchableOpacity>
-              )}
+              </RAnimated.View>
+            )}
+          </View>
+
+          {/* ── About Me (identity) ── */}
+          <View style={styles.section}>
+            <View style={[styles.card, styles.cardNoPad]}>
+              {aboutMeRows.map((row, i) => {
+                const isEditing = editingField === row.field;
+                if (isEditing) {
+                  return (
+                    <RAnimated.View
+                      key={`${row.label}-edit`}
+                      entering={editEnterAnim}
+                      exiting={editExitAnim}
+                      style={[styles.infoRow, i > 0 && styles.infoRowDivider, styles.infoRowEditing, { paddingHorizontal: Spacing.md }]}
+                    >
+                      <View style={[styles.infoIconBox, { alignSelf: 'flex-start', marginTop: 2 }]}>
+                        <Ionicons name={row.icon} size={18} color={C.terracotta} />
+                      </View>
+                      <View style={[styles.infoText, { gap: 8 }]}>
+                        <Text style={styles.infoFieldLabel}>{row.label}</Text>
+                        <RAnimated.View entering={inputEnterAnim}>
+                          {renderFieldInput(row.field)}
+                        </RAnimated.View>
+                      </View>
+                    </RAnimated.View>
+                  );
+                }
+                return (
+                  <RAnimated.View
+                    key={`${row.label}-view`}
+                    entering={viewEnterAnim}
+                    exiting={viewExitAnim}
+                  >
+                    <TouchableOpacity
+                      style={[styles.infoRow, i > 0 && styles.infoRowDivider, { paddingHorizontal: Spacing.md }]}
+                      activeOpacity={0.8}
+                      onPress={() => openInlineEditor(row.field)}
+                    >
+                      <View style={styles.infoIconBox}>
+                        <Ionicons name={row.icon} size={18} color={C.brownMid} />
+                      </View>
+                      <View style={styles.infoText}>
+                        <Text style={styles.infoFieldLabel}>{row.label}</Text>
+                        <Text style={[styles.infoValue, !row.value && styles.infoValueEmpty]} numberOfLines={2}>
+                          {row.value ?? 'Not set'}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
+                    </TouchableOpacity>
+                  </RAnimated.View>
+                );
+              })}
             </View>
           </View>
 
@@ -698,26 +1037,53 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Preferences</Text>
             <View style={[styles.card, styles.cardNoPad]}>
-              {preferenceItems.length > 0 ? (
-                <View style={styles.detailChips}>
-                  {preferenceItems.map((item) => (
-                    <View key={item.emoji + item.value} style={styles.detailChip}>
-                      <Text style={styles.detailChipEmoji}>{item.emoji}</Text>
-                      <Text style={styles.detailChipValue}>{item.value}</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={{ padding: Spacing.md }}
-                  onPress={() => router.push('/profile-setup')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.bioEmpty}>
-                    Add your match preferences to get better introductions.
-                  </Text>
-                </TouchableOpacity>
-              )}
+              {preferencesRows.map((row, i) => {
+                const isEditing = editingField === row.field;
+                if (isEditing) {
+                  return (
+                    <RAnimated.View
+                      key={`${row.label}-edit`}
+                      entering={editEnterAnim}
+                      exiting={editExitAnim}
+                      style={[styles.infoRow, i > 0 && styles.infoRowDivider, styles.infoRowEditing, { paddingHorizontal: Spacing.md }]}
+                    >
+                      <View style={[styles.infoIconBox, { alignSelf: 'flex-start', marginTop: 2 }]}>
+                        <Ionicons name={row.icon} size={18} color={C.terracotta} />
+                      </View>
+                      <View style={[styles.infoText, { gap: 8 }]}>
+                        <Text style={styles.infoFieldLabel}>{row.label}</Text>
+                        <RAnimated.View entering={inputEnterAnim}>
+                          {renderFieldInput(row.field)}
+                        </RAnimated.View>
+                      </View>
+                    </RAnimated.View>
+                  );
+                }
+                return (
+                  <RAnimated.View
+                    key={`${row.label}-view`}
+                    entering={viewEnterAnim}
+                    exiting={viewExitAnim}
+                  >
+                    <TouchableOpacity
+                      style={[styles.infoRow, i > 0 && styles.infoRowDivider, { paddingHorizontal: Spacing.md }]}
+                      activeOpacity={0.8}
+                      onPress={() => openInlineEditor(row.field)}
+                    >
+                      <View style={styles.infoIconBox}>
+                        <Ionicons name={row.icon} size={18} color={C.brownMid} />
+                      </View>
+                      <View style={styles.infoText}>
+                        <Text style={styles.infoFieldLabel}>{row.label}</Text>
+                        <Text style={[styles.infoValue, !row.value && styles.infoValueEmpty]} numberOfLines={1}>
+                          {row.value ?? 'Not set'}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
+                    </TouchableOpacity>
+                  </RAnimated.View>
+                );
+              })}
             </View>
           </View>
 
@@ -790,6 +1156,53 @@ export default function ProfileScreen() {
         </ScrollView>
         </Animated.View>
       </SafeAreaView>
+
+      {/* ── Birth Date Picker Sheet ── */}
+      <Modal
+        visible={showBirthDateSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowBirthDateSheet(false)}
+      >
+        <View style={styles.dateSheetOverlay}>
+          <TouchableOpacity
+            style={styles.dateSheetBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowBirthDateSheet(false)}
+          />
+          <View style={styles.dateSheet}>
+            <View style={styles.dateSheetHeader}>
+              <TouchableOpacity onPress={() => setShowBirthDateSheet(false)} activeOpacity={0.8}>
+                <Text style={styles.dateSheetCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.dateSheetTitle}>Select Birth Date</Text>
+              <TouchableOpacity onPress={() => void saveBirthDateFromSheet()} activeOpacity={0.8}>
+                <Text style={styles.dateSheetSave}>Save</Text>
+              </TouchableOpacity>
+            </View>
+            <DateTimePicker
+              value={editingDate}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              maximumDate={new Date()}
+              onChange={(event, date) => {
+                if (date) setEditingDate(date);
+                if (Platform.OS === 'android') {
+                  if (event.type === 'set' && date) {
+                    void updateProfilePatch({
+                      birth_date: `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`,
+                    }).then((ok) => {
+                      if (ok) setShowBirthDateSheet(false);
+                    });
+                  } else if (event.type === 'dismissed') {
+                    setShowBirthDateSheet(false);
+                  }
+                }
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Delete Account Modal ── */}
       <Modal
@@ -1166,6 +1579,24 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   addPhotoLabel: { fontSize: 11, color: C.terracotta, fontWeight: '700' },
 
   // ── Bio ──
+  bioDashedCard: {
+    backgroundColor: C.warmWhite,
+    borderWidth: 1,
+    borderColor: C.borderDark,
+    borderStyle: 'dashed',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    minHeight: 94,
+    justifyContent: 'flex-start',
+  },
+  bioInput: {
+    fontSize: 14,
+    color: C.ink,
+    lineHeight: 22,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    padding: 0,
+  },
   bioText: { fontSize: 14, color: C.brownMid, lineHeight: 23 },
   bioEmpty: {
     fontSize: 14,
@@ -1182,6 +1613,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     paddingVertical: 10,
   },
   infoRowDivider: { borderTopWidth: 1, borderTopColor: C.border },
+  infoRowEditing: { alignItems: 'flex-start', paddingVertical: 14, backgroundColor: 'rgba(196,98,45,0.03)' },
   infoIconBox: {
     width: 40,
     height: 40,
@@ -1201,6 +1633,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     marginBottom: 2,
   },
   infoValue: { fontSize: 14, color: C.ink, fontWeight: '600' },
+  infoValueEmpty: { color: C.muted, fontStyle: 'italic', fontWeight: '400' },
 
   // ── Settings ──
   settingsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
@@ -1236,26 +1669,104 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
   unverifiedText: { fontSize: 10, color: C.gold, fontWeight: '700', letterSpacing: 0.2 },
 
-  // ── About Me chips ──
-  detailChips: {
+  // ── Inline Edit (in-place) ──
+  inlineInput: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: C.border,
+    backgroundColor: C.paper,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    color: C.ink,
+  },
+  inlineAgeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  inlineInputHalf: {
+    flex: 1,
+  },
+  inlineOptionsWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    padding: Spacing.md,
   },
-  detailChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: C.paper,
-    borderRadius: Radius.full,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  inlineOptionChip: {
     borderWidth: 1,
     borderColor: C.border,
+    backgroundColor: C.warmWhite,
+    borderRadius: Radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  detailChipEmoji: { fontSize: 13 },
-  detailChipValue: { fontSize: 13, color: C.ink, fontWeight: '600' },
+  inlineOptionChipActive: {
+    borderColor: C.terracotta,
+    backgroundColor: 'rgba(196,98,45,0.1)',
+  },
+  inlineOptionText: {
+    fontSize: 13,
+    color: C.brownMid,
+    fontWeight: '600',
+  },
+  inlineOptionTextActive: {
+    color: C.terracotta,
+  },
+  inlineDoneChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: C.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+  },
+  inlineDoneChipText: {
+    fontSize: 13,
+    color: C.white,
+    fontWeight: '700',
+  },
+
+  // ── Birth Date Sheet ──
+  dateSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  dateSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  dateSheet: {
+    backgroundColor: C.warmWhite,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 18,
+    borderTopWidth: 1,
+    borderColor: C.border,
+  },
+  dateSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    marginBottom: 4,
+  },
+  dateSheetTitle: {
+    fontSize: 14,
+    color: C.ink,
+    fontWeight: '700',
+  },
+  dateSheetCancel: {
+    fontSize: 14,
+    color: C.muted,
+    fontWeight: '600',
+  },
+  dateSheetSave: {
+    fontSize: 14,
+    color: C.terracotta,
+    fontWeight: '700',
+  },
 
   // ── Delete Account Modal ──
   deleteOverlay: {
