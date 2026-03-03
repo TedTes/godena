@@ -10,6 +10,8 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
+import Constants from 'expo-constants';
+import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
@@ -22,9 +24,13 @@ export default function AuthChoiceScreen() {
   const [loadingProvider, setLoadingProvider] = useState<Provider | null>(null);
   const [error, setError] = useState('');
 
-  // Allow forcing one stable OAuth callback during development to avoid scheme flapping.
-  const forcedRedirect = process.env.EXPO_PUBLIC_OAUTH_REDIRECT?.trim();
-  const oauthRedirectTo = forcedRedirect || Linking.createURL('auth/callback');
+  // In Expo Go the godena:// scheme is not registered, so deep links back to it won't
+  // open the app. Instead use Linking.createURL which generates the correct exp:// URL.
+  // In dev-client / standalone, godena:// is registered so we use it directly.
+  const isExpoGo = Constants.executionEnvironment === 'storeClient';
+  const oauthRedirectTo =
+    process.env.EXPO_PUBLIC_OAUTH_REDIRECT?.trim() ??
+    (isExpoGo ? Linking.createURL('auth/callback') : 'godena://auth/callback');
 
   if (__DEV__) {
     console.log('[Auth] OAuth redirectTo:', oauthRedirectTo);
@@ -129,14 +135,80 @@ export default function AuthChoiceScreen() {
       }
 
       if (__DEV__) console.log('[Auth] opening OAuth URL:', data.url);
-      try {
-        await Linking.openURL(data.url);
-      } catch {
+
+      // openAuthSessionAsync opens an in-app Safari sheet and intercepts the redirect
+      // URL at the browser level — no deep link registration needed. Works in Expo Go,
+      // dev client, and standalone. The code is returned directly in result.url.
+      const result = await WebBrowser.openAuthSessionAsync(data.url, oauthRedirectTo);
+
+      if (__DEV__) console.log('[Auth] OAuth result:', result.type, (result as any).url ?? '');
+
+      if (result.type !== 'success') {
+        // User cancelled or dismissed the browser — not an error.
         setLoadingProvider(null);
-        setError(`Could not open ${provider} sign in.`);
         return;
       }
+
+      // Parse the code / tokens from the callback URL.
+      const callbackUrl = result.url;
+      const parsed = Linking.parse(callbackUrl);
+      const q = (parsed.queryParams ?? {}) as Record<string, string | undefined>;
+
+      // Also check hash fragment (implicit flow fallback).
+      const hash = callbackUrl.includes('#') ? callbackUrl.slice(callbackUrl.indexOf('#') + 1) : '';
+      const hp = new URLSearchParams(hash);
+
+      const authError = q.error_description ?? q.error ?? hp.get('error_description') ?? hp.get('error');
+      if (authError) {
+        setLoadingProvider(null);
+        setError(authError);
+        return;
+      }
+
+      const code = q.code ?? hp.get('code');
+      const accessToken = q.access_token ?? hp.get('access_token');
+      const refreshToken = q.refresh_token ?? hp.get('refresh_token');
+
+      if (code) {
+        if (__DEV__) console.log('[Auth] exchanging PKCE code');
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+        if (exchangeError) {
+          setLoadingProvider(null);
+          setError(exchangeError.message);
+          return;
+        }
+      } else if (accessToken && refreshToken) {
+        if (__DEV__) console.log('[Auth] setting session from tokens');
+        const { error: setErr } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (setErr) {
+          setLoadingProvider(null);
+          setError(setErr.message);
+          return;
+        }
+      } else {
+        setLoadingProvider(null);
+        setError('OAuth callback missing auth payload. Check Supabase redirect URL configuration.');
+        return;
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+      if (!userId) {
+        setLoadingProvider(null);
+        setError('Sign-in failed — no session. Please try again.');
+        return;
+      }
+
       setLoadingProvider(null);
+      try {
+        const route = await resolvePostAuthRoute(userId);
+        router.replace(route);
+      } catch {
+        router.replace('/');
+      }
     })();
   };
 

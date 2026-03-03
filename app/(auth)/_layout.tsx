@@ -9,32 +9,36 @@ export default function AuthLayout() {
 
   useEffect(() => {
     let mounted = true;
+    // Prevent double-navigation when callback.tsx and this layout both try to route
+    // simultaneously after an OAuth exchange.
+    const navigating = { current: false };
+
+    const navigateIfSignedIn = async (userId: string) => {
+      if (navigating.current || !mounted) return;
+      navigating.current = true;
+      try {
+        const route = await resolvePostAuthRoute(userId);
+        if (mounted) router.replace(route);
+      } catch {
+        if (mounted) router.replace('/');
+      }
+    };
 
     const routeIfSignedIn = async () => {
       const { data } = await supabase.auth.getSession();
       const userId = data.session?.user.id;
-      if (!mounted || !userId) return;
-      try {
-        const route = await resolvePostAuthRoute(userId);
-        router.replace(route);
-      } catch {
-        router.replace('/');
-      }
+      if (!userId) return;
+      await navigateIfSignedIn(userId);
     };
 
     void routeIfSignedIn();
 
-    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
+      // Only react to a new sign-in; ignore token refreshes and other state changes.
+      if (event !== 'SIGNED_IN') return;
       const userId = session?.user.id;
       if (!userId) return;
-      void (async () => {
-        try {
-          const route = await resolvePostAuthRoute(userId);
-          router.replace(route);
-        } catch {
-          router.replace('/');
-        }
-      })();
+      void navigateIfSignedIn(userId);
     });
 
     return () => {
