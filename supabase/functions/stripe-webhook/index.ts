@@ -74,6 +74,23 @@ async function resolveUserId(
   return data?.user_id ?? null;
 }
 
+async function resolveVerificationUserId(
+  admin: ReturnType<typeof createClient>,
+  candidateUserId: string | null | undefined,
+  providerSessionId: string,
+): Promise<string | null> {
+  if (candidateUserId) return candidateUserId;
+
+  const { data } = await admin
+    .from("identity_verifications")
+    .select("user_id")
+    .eq("provider", "stripe_identity")
+    .eq("provider_session_id", providerSessionId)
+    .maybeSingle();
+
+  return data?.user_id ?? null;
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") {
@@ -141,6 +158,58 @@ Deno.serve(async (req) => {
           canceledAt: toIso(sub.canceled_at),
           metadata: sub.metadata,
         });
+      }
+    }
+
+    if (
+      event.type === "identity.verification_session.verified"
+      || event.type === "identity.verification_session.requires_input"
+      || event.type === "identity.verification_session.canceled"
+    ) {
+      const session = event.data.object as Stripe.Identity.VerificationSession;
+      const userId = await resolveVerificationUserId(
+        admin,
+        (session.metadata?.user_id as string | undefined) ?? null,
+        session.id,
+      );
+
+      if (userId) {
+        const nextStatus =
+          event.type === "identity.verification_session.verified"
+            ? "verified"
+            : event.type === "identity.verification_session.requires_input"
+            ? "requires_input"
+            : "canceled";
+
+        await admin
+          .from("identity_verifications")
+          .upsert(
+            {
+              user_id: userId,
+              provider: "stripe_identity",
+              provider_session_id: session.id,
+              status: nextStatus,
+              hosted_url: session.url ?? null,
+              failure_reason: session.last_error?.reason ?? null,
+              verified_at: nextStatus === "verified" ? new Date().toISOString() : null,
+              canceled_at: nextStatus === "canceled" ? new Date().toISOString() : null,
+              metadata: {
+                raw_status: session.status,
+                redaction_status: session.redaction?.status ?? null,
+              },
+            },
+            { onConflict: "provider,provider_session_id" },
+          );
+
+        await admin
+          .from("profiles")
+          .update({
+            verification_status: nextStatus,
+            verification_provider: "stripe_identity",
+            verification_submitted_at: new Date().toISOString(),
+            verified_at: nextStatus === "verified" ? new Date().toISOString() : null,
+          })
+          .eq("user_id", userId);
       }
     }
 
