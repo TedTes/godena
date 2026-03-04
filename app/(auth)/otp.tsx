@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -102,7 +103,7 @@ export default function OtpScreen() {
               <Text style={styles.backText}>← Back</Text>
             </TouchableOpacity>
 
-            <Text style={styles.wordmark}>Godena</Text>
+            <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
             <Text style={styles.title}>Enter the code</Text>
             <Text style={styles.subtitle}>
               We sent a 6-digit code to your number. It expires in 10 minutes.
@@ -176,12 +177,9 @@ const styles = StyleSheet.create({
   content: { flex: 1, padding: Spacing.lg, paddingTop: Spacing.md },
   back: { marginBottom: Spacing.xl },
   backText: { color: Colors.muted, fontSize: 15 },
-  wordmark: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.terracotta,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+  wordmarkLogo: {
+    width: 120,
+    height: 30,
     marginBottom: 28,
   },
   title: {

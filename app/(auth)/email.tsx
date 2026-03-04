@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -120,7 +121,7 @@ export default function EmailAuthScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Text style={styles.wordmark}>Godena</Text>
+              <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
               <Text style={styles.title}>
                 {mode === 'signin' ? 'Welcome back' : 'Create your account'}
               </Text>
@@ -244,12 +245,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   header: { marginBottom: 28 },
-  wordmark: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.terracotta,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+  wordmarkLogo: {
+    width: 120,
+    height: 30,
     marginBottom: 24,
   },
   title: {

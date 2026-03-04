@@ -6,6 +6,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -217,7 +218,7 @@ export default function AuthChoiceScreen() {
       <SafeAreaView style={styles.safe}>
         <View style={styles.content}>
           <View style={styles.header}>
-            <Text style={styles.wordmark}>Godena</Text>
+            <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
             <Text style={styles.title}>Sign in</Text>
             <Text style={styles.subtitle}>
               Choose the fastest way to continue.
@@ -289,12 +290,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: { flex: 1, paddingHorizontal: Spacing.lg, paddingTop: Spacing.xl },
   header: { marginBottom: 28 },
-  wordmark: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.terracotta,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+  wordmarkLogo: {
+    width: 120,
+    height: 30,
     marginBottom: 20,
   },
   title: { fontSize: 34, fontWeight: '900', color: Colors.ink, marginBottom: 8 },

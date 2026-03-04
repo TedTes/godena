@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -61,7 +62,7 @@ export default function PhoneScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Text style={styles.wordmark}>Godena</Text>
+              <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
               <Text style={styles.title}>What's your{'\n'}phone number?</Text>
               <Text style={styles.subtitle}>
                 We'll send a one-time code. Your number is never shown to other members.
@@ -125,12 +126,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   header: { marginBottom: 40 },
-  wordmark: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.terracotta,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+  wordmarkLogo: {
+    width: 120,
+    height: 30,
     marginBottom: 32,
   },
   title: {
