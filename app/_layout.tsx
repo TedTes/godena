@@ -24,6 +24,7 @@ export default function RootLayout() {
         <Stack.Screen name="privacy-safety" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="help-feedback" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="verify-identity" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="reveal" options={{ animation: 'fade' }} />
       </Stack>
     </>

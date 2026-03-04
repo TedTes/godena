@@ -94,6 +94,7 @@ type ProfileData = {
   preferred_age_min: number | null;
   preferred_age_max: number | null;
   is_open_to_connections: boolean | null;
+  verification_status: string | null;
   avatar_url: string | null;
   photo_urls: string[] | null;
 };
@@ -153,7 +154,7 @@ export default function ProfileScreen() {
 
     const { data } = await supabase
       .from('profiles')
-      .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, avatar_url, photo_urls')
+      .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, verification_status, avatar_url, photo_urls')
       .eq('user_id', resolvedUserId)
       .maybeSingle();
 
@@ -569,6 +570,16 @@ export default function ProfileScreen() {
       router.push('/help-feedback');
     }
   };
+
+  const verificationLabel = (() => {
+    const status = profile?.verification_status ?? 'unverified';
+    if (status === 'verified') return 'Verified';
+    if (status === 'pending') return 'Pending';
+    if (status === 'requires_input') return 'Needs action';
+    if (status === 'failed') return 'Failed';
+    if (status === 'canceled') return 'Canceled';
+    return 'Unverified';
+  })();
 
   const updatePhoto = async () => {
     if (!userId || updatingPhoto) return;
@@ -1092,15 +1103,17 @@ export default function ProfileScreen() {
             <View style={[styles.card, styles.cardNoPad]}>
               <TouchableOpacity
                 style={[styles.settingsRow, styles.settingsRowDivider]}
-                onPress={() => Alert.alert('Identity Verification', "Coming soon \u2014 verify your identity to build trust in your community.")}
+                onPress={() => router.push('/verify-identity')}
                 activeOpacity={0.7}
               >
                 <View style={[styles.settingsIcon, { backgroundColor: 'rgba(201,168,76,0.12)' }]}>
                   <Ionicons name="shield-checkmark-outline" size={18} color={C.gold} />
                 </View>
-                <Text style={styles.settingsLabel}>Verify Identity</Text>
-                <View style={styles.unverifiedBadge}>
-                  <Text style={styles.unverifiedText}>Unverified</Text>
+                <Text style={styles.settingsLabel}>Photo Verification</Text>
+                <View style={[styles.unverifiedBadge, verificationLabel === 'Verified' && styles.verifiedBadge]}>
+                  <Text style={[styles.unverifiedText, verificationLabel === 'Verified' && styles.verifiedText]}>
+                    {verificationLabel}
+                  </Text>
                 </View>
               </TouchableOpacity>
               {settingsRows.map((row, i) => (
@@ -1667,6 +1680,11 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     borderColor: 'rgba(201,168,76,0.3)',
   },
   unverifiedText: { fontSize: 10, color: C.gold, fontWeight: '700', letterSpacing: 0.2 },
+  verifiedBadge: {
+    backgroundColor: 'rgba(126,150,94,0.16)',
+    borderColor: 'rgba(126,150,94,0.6)',
+  },
+  verifiedText: { color: C.olive },
 
   // ── Inline Edit (in-place) ──
   inlineInput: {
