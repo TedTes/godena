@@ -457,6 +457,7 @@ export default function ProfileScreen() {
 
   const commitActiveEdit = async () => {
     if (!editingField) return;
+    if (editingField === 'bio') return;
 
     if (editingField === 'preferred_genders') {
       await updateProfilePatch({ preferred_genders: editingMultiValue });
@@ -491,12 +492,6 @@ export default function ProfileScreen() {
 
     if (editingField === 'religion') {
       await updateProfilePatch({ religion: editingValue.trim() || null });
-      closeEditRow();
-      return;
-    }
-
-    if (editingField === 'bio') {
-      await updateProfilePatch({ bio: editingValue.trim() || null });
       closeEditRow();
       return;
     }
@@ -774,7 +769,11 @@ export default function ProfileScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          onTouchStart={() => { void commitActiveEdit(); }}
+          onTouchStart={() => {
+            if (editingField && editingField !== 'bio') {
+              void commitActiveEdit();
+            }
+          }}
         >
 
           {/* ── Hero Header ── */}
