@@ -38,6 +38,7 @@ import {
   logInteractionEvent,
   markEventAttended,
   setOpenSignal,
+  updateGroupDescription,
   updateGroupIcon,
   upsertEventRsvp,
 } from '../../lib/services/groupDetail';
@@ -141,6 +142,10 @@ export default function GroupDetailScreen() {
   const [pendingAttendance, setPendingAttendance] = useState<Set<string>>(new Set());
   const [confirmModal, setConfirmModal] = useState<'leave' | 'delete' | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [showGroupMenu, setShowGroupMenu] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [savingDescription, setSavingDescription] = useState(false);
 
   const visuals = useMemo(
     () => getGroupVisuals(group?.category ?? 'other', group?.icon_emoji),
@@ -176,6 +181,7 @@ export default function GroupDetailScreen() {
     }
   }, [isOpen, openCardScale]);
   const canEditGroupIcon = membership?.role === 'organizer' || membership?.role === 'moderator';
+  const canEditGroupDescription = membership?.role === 'organizer';
   const displayMemberCount = membership ? members.length : group?.member_count ?? 0;
   const lockedPreviewCount = group?.member_count ?? 0;
 
@@ -348,15 +354,7 @@ export default function GroupDetailScreen() {
     router.replace('/(tabs)/groups?tab=discover');
   };
   const handleGroupMenu = () => {
-    const actions: { text: string; style?: 'destructive' | 'cancel' | 'default'; onPress?: () => void }[] = [];
-    if (membership?.role === 'organizer') {
-      actions.push({ text: 'Delete Group', style: 'destructive', onPress: handleDeleteGroup });
-    } else if (membership) {
-      actions.push({ text: 'Leave Group', style: 'destructive', onPress: handleLeaveGroup });
-    }
-    actions.push({ text: 'Report Group', onPress: handleReportGroup });
-    actions.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(group?.name ?? 'Group', undefined, actions);
+    setShowGroupMenu(true);
   };
 
   const handleOpenToggle = (val: boolean) => {
@@ -577,6 +575,31 @@ export default function GroupDetailScreen() {
     );
   };
 
+  const startEditDescription = () => {
+    if (!canEditGroupDescription || !group) return;
+    setDescriptionDraft(group.description ?? '');
+    setEditingDescription(true);
+  };
+
+  const cancelEditDescription = () => {
+    setEditingDescription(false);
+    setDescriptionDraft('');
+  };
+
+  const saveDescription = async () => {
+    if (!group || !canEditGroupDescription || savingDescription) return;
+    setSavingDescription(true);
+    const nextDescription = descriptionDraft.trim() || null;
+    const { data, error } = await updateGroupDescription(group.id, nextDescription);
+    setSavingDescription(false);
+    if (error) {
+      Alert.alert('Could not update description', error.message);
+      return;
+    }
+    setGroup((prev) => (prev ? { ...prev, description: (data as { description: string | null }).description } : prev));
+    setEditingDescription(false);
+  };
+
   if (loading || !group) {
     return (
       <View style={styles.loadingWrap}>
@@ -741,15 +764,69 @@ export default function GroupDetailScreen() {
         {activeTab === 'about' && (
           <View style={styles.tabContent}>
             <View style={styles.aboutCard}>
-              <Text style={styles.aboutText}>
-                {group.description || 'No description provided yet.'}
-              </Text>
+              <View style={styles.aboutHeaderRow}>
+                <Text style={styles.aboutLabel}>About</Text>
+                {canEditGroupDescription && !editingDescription ? (
+                  <TouchableOpacity
+                    style={styles.aboutEditBtn}
+                    onPress={startEditDescription}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="create-outline" size={14} color={Colors.terracotta} />
+                    <Text style={styles.aboutEditBtnText}>Edit</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {editingDescription ? (
+                <>
+                  <TextInput
+                    style={styles.aboutInput}
+                    value={descriptionDraft}
+                    onChangeText={setDescriptionDraft}
+                    placeholder="Add a short group description..."
+                    placeholderTextColor={Colors.muted}
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                    autoFocus
+                  />
+                  <View style={styles.aboutActionsRow}>
+                    <TouchableOpacity
+                      style={styles.aboutCancelBtn}
+                      onPress={cancelEditDescription}
+                      disabled={savingDescription}
+                    >
+                      <Text style={styles.aboutCancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.aboutSaveBtn, savingDescription && styles.aboutSaveBtnDisabled]}
+                      onPress={() => void saveDescription()}
+                      disabled={savingDescription}
+                    >
+                      {savingDescription ? (
+                        <ActivityIndicator size="small" color={Colors.white} />
+                      ) : (
+                        <Text style={styles.aboutSaveBtnText}>Save</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.aboutText}>
+                  {group.description || 'No description provided yet.'}
+                </Text>
+              )}
             </View>
 
             {groupEvents[0] && (
               <>
                 <Text style={styles.sectionLabel}>Next Event</Text>
-                <View style={styles.eventCard}>
+                <TouchableOpacity
+                  style={styles.eventCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push(`/event/${groupEvents[0].id}`)}
+                >
                   <View style={styles.eventDateBlock}>
                     <Text style={styles.eventDateMonth}>
                       {new Date(groupEvents[0].starts_at).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}
@@ -768,7 +845,7 @@ export default function GroupDetailScreen() {
                   <TouchableOpacity style={styles.rsvpBtn} onPress={() => setActiveTab('events')}>
                     <Text style={styles.rsvpText}>RSVP</Text>
                   </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
               </>
             )}
           </View>
@@ -887,7 +964,12 @@ export default function GroupDetailScreen() {
                 {groupEvents.map((ev, i) => {
                   const stats = getEventStats(ev.id);
                   return (
-                    <View key={ev.id} style={[styles.eventBlock, i > 0 && styles.memberRowDivider]}>
+                    <TouchableOpacity
+                      key={ev.id}
+                      style={[styles.eventBlock, i > 0 && styles.memberRowDivider]}
+                      activeOpacity={0.85}
+                      onPress={() => router.push(`/event/${ev.id}`)}
+                    >
                       <View style={styles.eventRow}>
                         <View style={styles.eventDateBlock}>
                           <Text style={styles.eventDateMonth}>
@@ -923,7 +1005,7 @@ export default function GroupDetailScreen() {
                         </View>
                       </View>
 
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -1066,6 +1148,64 @@ export default function GroupDetailScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ── Group Menu ── */}
+      <Modal
+        visible={showGroupMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGroupMenu(false)}
+      >
+        <View style={styles.menuOverlay}>
+          <TouchableOpacity
+            style={styles.menuBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowGroupMenu(false)}
+          />
+          <View style={styles.menuSheet}>
+            <Text style={styles.menuTitle}>{group?.name}</Text>
+
+            {membership?.role === 'organizer' ? (
+              <TouchableOpacity
+                style={[styles.menuBtn, styles.menuBtnDanger]}
+                onPress={() => {
+                  setShowGroupMenu(false);
+                  handleDeleteGroup();
+                }}
+              >
+                <Ionicons name="trash-outline" size={16} color={Colors.error} />
+                <Text style={[styles.menuBtnText, styles.menuBtnTextDanger]}>Delete Group</Text>
+              </TouchableOpacity>
+            ) : membership ? (
+              <TouchableOpacity
+                style={[styles.menuBtn, styles.menuBtnDanger]}
+                onPress={() => {
+                  setShowGroupMenu(false);
+                  handleLeaveGroup();
+                }}
+              >
+                <Ionicons name="exit-outline" size={16} color={Colors.error} />
+                <Text style={[styles.menuBtnText, styles.menuBtnTextDanger]}>Leave Group</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity
+              style={styles.menuBtn}
+              onPress={() => {
+                setShowGroupMenu(false);
+                handleReportGroup();
+              }}
+            >
+              <Ionicons name="flag-outline" size={16} color={Colors.brownMid} />
+              <Text style={styles.menuBtnText}>Report Group</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuCancelBtn} onPress={() => setShowGroupMenu(false)}>
+              <Text style={styles.menuCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Leave / Delete Confirmation Modal ── */}
       <Modal
@@ -1394,6 +1534,69 @@ const styles = StyleSheet.create({
   confirmDestructiveBtnRed: { backgroundColor: Colors.error },
   confirmBtnDisabled: { opacity: 0.55 },
   confirmDestructiveText: { fontSize: 15, fontWeight: '700', color: Colors.white },
+
+  // Group menu
+  menuOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  menuSheet: {
+    backgroundColor: Colors.warmWhite,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: 14,
+    paddingBottom: 24,
+    gap: 10,
+  },
+  menuTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginBottom: 2,
+  },
+  menuBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  menuBtnDanger: {
+    borderColor: 'rgba(217,79,79,0.35)',
+    backgroundColor: 'rgba(217,79,79,0.06)',
+  },
+  menuBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.ink,
+  },
+  menuBtnTextDanger: {
+    color: Colors.error,
+  },
+  menuCancelBtn: {
+    marginTop: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.full,
+    paddingVertical: 10,
+    backgroundColor: Colors.warmWhite,
+  },
+  menuCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.brownMid,
+  },
   heroContent: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.md,
@@ -1580,6 +1783,81 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: Spacing.md,
     marginBottom: Spacing.lg,
+  },
+  aboutHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  aboutLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  aboutEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.paper,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  aboutEditBtnText: {
+    fontSize: 12,
+    color: Colors.terracotta,
+    fontWeight: '700',
+  },
+  aboutInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.paper,
+    color: Colors.ink,
+    fontSize: 14,
+    lineHeight: 21,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 104,
+    marginBottom: 10,
+  },
+  aboutActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  aboutCancelBtn: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.warmWhite,
+  },
+  aboutCancelBtnText: {
+    fontSize: 13,
+    color: Colors.brownMid,
+    fontWeight: '600',
+  },
+  aboutSaveBtn: {
+    borderRadius: Radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.terracotta,
+    minWidth: 74,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aboutSaveBtnDisabled: { opacity: 0.65 },
+  aboutSaveBtnText: {
+    fontSize: 13,
+    color: Colors.white,
+    fontWeight: '700',
   },
   aboutText: { fontSize: 14, color: Colors.brownMid, lineHeight: 22 },
 

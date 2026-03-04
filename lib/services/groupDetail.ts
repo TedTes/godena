@@ -23,6 +23,15 @@ export async function updateGroupIcon(groupId: string, iconEmoji: string) {
     .single();
 }
 
+export async function updateGroupDescription(groupId: string, description: string | null) {
+  return supabase
+    .from('groups')
+    .update({ description })
+    .eq('id', groupId)
+    .select('id, description')
+    .single();
+}
+
 export async function fetchMembership(groupId: string, userId: string) {
   return supabase
     .from('group_memberships')
