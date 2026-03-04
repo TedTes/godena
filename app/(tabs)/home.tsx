@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
+import { fetchNotificationInboxItems } from '../../lib/services/notificationInbox';
 
 type HomeGroup = {
   id: string;
@@ -99,6 +100,7 @@ export default function HomeScreen() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
+  const [notificationCount, setNotificationCount] = useState(0);
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -108,8 +110,12 @@ export default function HomeScreen() {
       const userId = sessionData.session?.user.id;
       if (!userId) {
         setLoadingProfile(false);
+        setNotificationCount(0);
         return;
       }
+
+      const inboxItems = await fetchNotificationInboxItems(userId);
+      setNotificationCount(inboxItems.length);
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -320,9 +326,17 @@ export default function HomeScreen() {
                 <Text style={styles.greetingSub}>{getGreetingSub()}</Text>
               )}
             </View>
-            <TouchableOpacity style={styles.notifBtn}>
+            <TouchableOpacity
+              style={styles.notifBtn}
+              onPress={() => router.push('/notification-inbox')}
+              activeOpacity={0.8}
+            >
               <Ionicons name="notifications-outline" size={22} color={C.brown} />
-              <View style={styles.notifDot} />
+              {notificationCount > 0 && (
+                <View style={styles.notifDot}>
+                  <Text style={styles.notifCountText}>{notificationCount > 9 ? '9+' : `${notificationCount}`}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -373,7 +387,7 @@ export default function HomeScreen() {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>My Groups</Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/groups')}>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/groups?tab=discover')}>
                 <Text style={styles.seeAll}>See all</Text>
               </TouchableOpacity>
             </View>
@@ -412,7 +426,7 @@ export default function HomeScreen() {
                   ))}
                   <TouchableOpacity
                     style={styles.addGroupCard}
-                    onPress={() => router.push('/(tabs)/groups')}
+                    onPress={() => router.push('/(tabs)/groups?tab=discover')}
                   >
                     <Ionicons name="add" size={28} color={C.muted} />
                     <Text style={styles.addGroupText}>Join a Group</Text>
@@ -421,7 +435,7 @@ export default function HomeScreen() {
               ) : (
                 <TouchableOpacity
                   style={styles.addGroupCard}
-                  onPress={() => router.push('/(tabs)/groups')}
+                  onPress={() => router.push('/(tabs)/groups?tab=discover')}
                 >
                   <Ionicons name="add" size={28} color={C.muted} />
                   <Text style={styles.addGroupText}>Join a Group</Text>
@@ -532,15 +546,18 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   notifBtn: { position: 'relative', padding: 6 },
   notifDot: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    top: 1,
+    right: 1,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: C.terracotta,
     borderWidth: 1.5,
     borderColor: C.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  notifCountText: { fontSize: 9, color: C.white, fontWeight: '800', lineHeight: 10 },
   scroll: { paddingTop: Spacing.md },
 
   revealBanner: {
