@@ -8,6 +8,7 @@ export type EventRow = {
   starts_at: string;
   location_name: string | null;
   is_virtual: boolean;
+  created_by?: string;
 };
 
 export type GroupRow = {
@@ -81,6 +82,38 @@ export async function fetchEventById(eventId: string) {
     .select('id, group_id, title, description, starts_at, location_name, is_virtual, created_by')
     .eq('id', eventId)
     .maybeSingle();
+}
+
+export async function updateEventByOwner(params: {
+  eventId: string;
+  ownerUserId: string;
+  title: string;
+  description: string | null;
+  starts_at: string;
+  location_name: string | null;
+  is_virtual: boolean;
+}) {
+  return supabase
+    .from('group_events')
+    .update({
+      title: params.title,
+      description: params.description,
+      starts_at: params.starts_at,
+      location_name: params.is_virtual ? null : params.location_name,
+      is_virtual: params.is_virtual,
+    })
+    .eq('id', params.eventId)
+    .eq('created_by', params.ownerUserId)
+    .select('id, group_id, title, description, starts_at, location_name, is_virtual, created_by')
+    .single();
+}
+
+export async function deleteEventByOwner(eventId: string, ownerUserId: string) {
+  return supabase
+    .from('group_events')
+    .delete()
+    .eq('id', eventId)
+    .eq('created_by', ownerUserId);
 }
 
 export function subscribeToGroupEvents(

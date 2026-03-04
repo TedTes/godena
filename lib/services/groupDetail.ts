@@ -45,6 +45,13 @@ export async function fetchMembers(groupId: string) {
   return supabase.rpc('get_group_members', { p_group_id: groupId });
 }
 
+export async function fetchGroupMemberProfile(groupId: string, memberId: string) {
+  return supabase.rpc('get_group_member_profile', {
+    p_group_id: groupId,
+    p_member_id: memberId,
+  });
+}
+
 export async function fetchUpcomingEvents(groupId: string) {
   // Keep a small grace window to avoid timezone/input edge-cases hiding newly created events.
   const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
