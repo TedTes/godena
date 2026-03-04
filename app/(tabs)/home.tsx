@@ -98,7 +98,7 @@ export default function HomeScreen() {
   const [upcomingEvents, setUpcomingEvents] = useState<HomeEvent[]>([]);
   const [firstName, setFirstName] = useState('there');
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [revealSuggestion, setRevealSuggestion] = useState<RevealSuggestion | null>(null);
+  const [revealSuggestions, setRevealSuggestions] = useState<RevealSuggestion[]>([]);
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const [notificationCount, setNotificationCount] = useState(0);
   const enterStyle = useScreenEnter();
@@ -262,41 +262,59 @@ export default function HomeScreen() {
         setUpcomingEvents([]);
       }
 
-      const { data: pendingConnection } = await supabase
+      const { data: pendingConnections } = await supabase
         .from('connections')
         .select('id, group_id, user_a_id, user_b_id, revealed_at')
         .eq('status', 'pending')
         .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
         .order('revealed_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(5);
 
-      if (pendingConnection) {
-        const counterpartId =
-          pendingConnection.user_a_id === userId
-            ? pendingConnection.user_b_id
-            : pendingConnection.user_a_id;
+      const pendingRows = (pendingConnections as Array<{
+        id: string;
+        group_id: string;
+        user_a_id: string;
+        user_b_id: string;
+      }> | null) ?? [];
 
-        const [{ data: counterpartRows }, { data: group }] = await Promise.all([
-          supabase
-            .rpc('get_connection_profiles', { p_user_ids: [counterpartId] }),
-          supabase
-            .from('groups')
-            .select('name')
-            .eq('id', pendingConnection.group_id)
-            .maybeSingle(),
+      if (pendingRows.length > 0) {
+        const counterpartIds = pendingRows.map((c) => (
+          c.user_a_id === userId ? c.user_b_id : c.user_a_id
+        ));
+        const groupIdsForPending = pendingRows.map((c) => c.group_id);
+        const [{ data: counterpartRows }, { data: groupRows }] = await Promise.all([
+          supabase.rpc('get_connection_profiles', { p_user_ids: counterpartIds }),
+          supabase.from('groups').select('id, name').in('id', groupIdsForPending),
         ]);
-        const counterpart = ((counterpartRows as Array<{ full_name: string | null; avatar_url: string | null }> | null) ?? [])[0] ?? null;
-        const matchPhoto = counterpart?.avatar_url ? await resolveProfilePhotoUrl(counterpart.avatar_url) : null;
 
-        setRevealSuggestion({
-          connectionId: pendingConnection.id,
-          matchName: counterpart?.full_name || 'Someone',
-          matchPhoto,
-          groupName: group?.name || 'your group',
-        });
+        const counterpartById = new Map(
+          (((counterpartRows as Array<{ user_id: string; full_name: string | null; avatar_url: string | null }> | null) ?? [])
+            .map((r) => [r.user_id, r]))
+        );
+        const groupNameById = new Map(
+          (((groupRows as Array<{ id: string; name: string }> | null) ?? [])
+            .map((g) => [g.id, g.name]))
+        );
+
+        const built = await Promise.all(
+          pendingRows.map(async (row) => {
+            const counterpartId = row.user_a_id === userId ? row.user_b_id : row.user_a_id;
+            const counterpart = counterpartById.get(counterpartId);
+            const matchPhoto = counterpart?.avatar_url
+              ? await resolveProfilePhotoUrl(counterpart.avatar_url)
+              : null;
+            return {
+              connectionId: row.id,
+              matchName: counterpart?.full_name || 'Someone',
+              matchPhoto,
+              groupName: groupNameById.get(row.group_id) || 'your group',
+            } satisfies RevealSuggestion;
+          })
+        );
+
+        setRevealSuggestions(built);
       } else {
-        setRevealSuggestion(null);
+        setRevealSuggestions([]);
       }
 
       setLoadingProfile(false);
@@ -318,7 +336,7 @@ export default function HomeScreen() {
         <Animated.View style={[{ flex: 1 }, enterStyle]}>
           <View style={styles.header}>
             <View>
-              <Text style={styles.wordmark}>Godena</Text>
+              <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
               <Text style={styles.greeting}>
                 {loadingProfile ? '...' : `${getGreetingWord()}, ${firstName} ${getGreetingEmoji()}`}
               </Text>
@@ -341,39 +359,40 @@ export default function HomeScreen() {
           </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-          <TouchableOpacity
-            style={styles.revealBanner}
-            onPress={() => router.push('/reveal')}
-            activeOpacity={0.88}
-          >
-            <View style={styles.revealLeft}>
-              <Text style={styles.revealEyebrow}>
-                {revealSuggestion ? '✨  New Connection' : '🌱  Building Momentum'}
-              </Text>
-              <Text style={styles.revealTitle}>
-                {revealSuggestion
-                  ? `You and ${revealSuggestion.matchName} might connect`
-                  : "You're on the right path"}
-              </Text>
-              <Text style={styles.revealSub}>
-                {revealSuggestion
-                  ? `via ${revealSuggestion.groupName}`
-                  : eventsThisMonth > 0
-                    ? `${eventsThisMonth} event${eventsThisMonth !== 1 ? 's' : ''} attended this month — keep showing up`
-                    : 'Connections form through shared presence over time'}
-              </Text>
+          {revealSuggestions.length > 0 && (
+            <View style={styles.revealStack}>
+              {revealSuggestions.map((suggestion, idx) => (
+                <TouchableOpacity
+                  key={suggestion.connectionId}
+                  style={styles.revealBanner}
+                  onPress={() => router.push(`/reveal?connectionId=${suggestion.connectionId}`)}
+                  activeOpacity={0.88}
+                >
+                  <View style={styles.revealLeft}>
+                    <Text style={styles.revealEyebrow}>
+                      ✨  New Introduction{idx === 0 && revealSuggestions.length > 1 ? ` • ${revealSuggestions.length} waiting` : ''}
+                    </Text>
+                    <Text style={styles.revealTitle}>
+                      {`You and ${suggestion.matchName} might connect`}
+                    </Text>
+                    <Text style={styles.revealSub}>
+                      {`via ${suggestion.groupName}`}
+                    </Text>
+                  </View>
+                  <View style={styles.revealImgWrap}>
+                    {suggestion.matchPhoto ? (
+                      <Image source={{ uri: suggestion.matchPhoto }} style={styles.revealImg} />
+                    ) : (
+                      <View style={[styles.revealImg, styles.revealImgFallback]}>
+                        <Ionicons name="people-outline" size={26} color={C.brownLight} />
+                      </View>
+                    )}
+                    <View style={styles.revealImgBorder} />
+                  </View>
+                </TouchableOpacity>
+              ))}
             </View>
-            <View style={styles.revealImgWrap}>
-              {revealSuggestion?.matchPhoto ? (
-                <Image source={{ uri: revealSuggestion.matchPhoto }} style={styles.revealImg} />
-              ) : (
-                <View style={[styles.revealImg, styles.revealImgFallback]}>
-                  <Ionicons name="people-outline" size={26} color={C.brownLight} />
-                </View>
-              )}
-              <View style={styles.revealImgBorder} />
-            </View>
-          </TouchableOpacity>
+          )}
 
           {eventsThisMonth > 0 && (
             <View style={styles.momentumStrip}>
@@ -525,13 +544,10 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: Spacing.sm,
   },
-  wordmark: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: C.terracotta,
-    letterSpacing: 3,
-    textTransform: 'uppercase',
-    marginBottom: 4,
+  wordmarkLogo: {
+    width: 96,
+    height: 24,
+    marginBottom: 6,
   },
   greeting: {
     fontSize: 22,
@@ -570,6 +586,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden',
   },
+  revealStack: { gap: 0 },
   revealLeft: { flex: 1, paddingRight: Spacing.md },
   revealEyebrow: {
     fontSize: 11,
