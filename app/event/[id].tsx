@@ -2,11 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
+  Alert,
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  TextInput,
+  Switch,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,6 +21,8 @@ import {
   fetchGroupsByIds,
   getSessionUserId,
   upsertEventRsvp,
+  updateEventByOwner,
+  deleteEventByOwner,
   type EventRsvpRow,
   type EventRow,
   type GroupRow,
@@ -137,12 +142,22 @@ export default function EventDetailScreen() {
   const [groupRow, setGroupRow] = useState<GroupRow | null>(null);
   const [myStatus, setMyStatus] = useState<MyStatus | null>(null);
   const [goingCount, setGoingCount] = useState(0);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [showEdit, setShowEdit] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [dateDraft, setDateDraft] = useState('');
+  const [timeDraft, setTimeDraft] = useState('');
+  const [locationDraft, setLocationDraft] = useState('');
+  const [isVirtualDraft, setIsVirtualDraft] = useState(false);
 
   const load = async () => {
     if (!id) return;
     setLoading(true);
 
     const uid = await getSessionUserId();
+    setUserId(uid);
     if (!uid) { setLoading(false); return; }
 
     const { data: eventData, error: eventError } = await fetchEventById(id);
@@ -200,6 +215,84 @@ export default function EventDetailScreen() {
     return eventRow.is_virtual ? 'Virtual' : (eventRow.location_name || 'Location TBA');
   }, [eventRow]);
 
+  const isOwner = Boolean(userId && eventRow?.created_by && eventRow.created_by === userId);
+
+  const openEdit = () => {
+    if (!eventRow) return;
+    const d = new Date(eventRow.starts_at);
+    setTitleDraft(eventRow.title);
+    setDescriptionDraft(eventRow.description ?? '');
+    setDateDraft(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    setTimeDraft(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+    setLocationDraft(eventRow.location_name ?? '');
+    setIsVirtualDraft(eventRow.is_virtual);
+    setShowEdit(true);
+  };
+
+  const saveEdit = async () => {
+    if (!eventRow || !userId || savingEdit) return;
+    const title = titleDraft.trim();
+    if (!title) {
+      Alert.alert('Missing title', 'Event title is required.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateDraft.trim()) || !/^\d{2}:\d{2}$/.test(timeDraft.trim())) {
+      Alert.alert('Invalid date/time', 'Use YYYY-MM-DD and HH:MM format.');
+      return;
+    }
+
+    const startsAt = new Date(`${dateDraft.trim()}T${timeDraft.trim()}:00`);
+    if (Number.isNaN(startsAt.getTime())) {
+      Alert.alert('Invalid date/time', 'Please enter a valid date and time.');
+      return;
+    }
+
+    setSavingEdit(true);
+    const { data, error } = await updateEventByOwner({
+      eventId: eventRow.id,
+      ownerUserId: userId,
+      title,
+      description: descriptionDraft.trim() || null,
+      starts_at: startsAt.toISOString(),
+      location_name: isVirtualDraft ? null : (locationDraft.trim() || null),
+      is_virtual: isVirtualDraft,
+    });
+    setSavingEdit(false);
+
+    if (error || !data) {
+      Alert.alert('Could not update event', error?.message || 'Unknown error');
+      return;
+    }
+
+    setEventRow(data as EventRow);
+    setShowEdit(false);
+  };
+
+  const cancelEvent = () => {
+    if (!eventRow || !userId) return;
+    Alert.alert(
+      'Cancel event?',
+      'This will delete the event and RSVPs tied to it.',
+      [
+        { text: 'Keep event', style: 'cancel' },
+        {
+          text: 'Cancel event',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const { error } = await deleteEventByOwner(eventRow.id, userId);
+              if (error) {
+                Alert.alert('Could not cancel event', error.message);
+                return;
+              }
+              router.back();
+            })();
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.container}>
@@ -238,6 +331,16 @@ export default function EventDetailScreen() {
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.8}>
             <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.9)" />
           </TouchableOpacity>
+          {isOwner && (
+            <View style={styles.heroOwnerActions}>
+              <TouchableOpacity style={styles.heroActionBtn} onPress={openEdit} activeOpacity={0.8}>
+                <Ionicons name="create-outline" size={16} color="rgba(255,255,255,0.92)" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.heroActionBtnDanger} onPress={cancelEvent} activeOpacity={0.8}>
+                <Ionicons name="close-circle-outline" size={16} color="rgba(255,255,255,0.95)" />
+              </TouchableOpacity>
+            </View>
+          )}
 
           <View style={styles.heroBody}>
             <View style={styles.heroEmojiWrap}>
@@ -275,6 +378,76 @@ export default function EventDetailScreen() {
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
         >
+          {/* ── Owner edit form (top section) ── */}
+          {isOwner && showEdit && (
+            <View style={styles.editCard}>
+              <Text style={styles.ownerTitle}>Edit Event</Text>
+              <View style={styles.editWrap}>
+                <TextInput
+                  style={styles.editInput}
+                  value={titleDraft}
+                  onChangeText={setTitleDraft}
+                  placeholder="Event title"
+                  placeholderTextColor={Colors.muted}
+                />
+                <TextInput
+                  style={[styles.editInput, styles.editTextarea]}
+                  value={descriptionDraft}
+                  onChangeText={setDescriptionDraft}
+                  placeholder="Description"
+                  placeholderTextColor={Colors.muted}
+                  multiline
+                />
+                <View style={styles.editRow}>
+                  <TextInput
+                    style={[styles.editInput, styles.editHalf]}
+                    value={dateDraft}
+                    onChangeText={setDateDraft}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor={Colors.muted}
+                  />
+                  <TextInput
+                    style={[styles.editInput, styles.editHalf]}
+                    value={timeDraft}
+                    onChangeText={setTimeDraft}
+                    placeholder="HH:MM"
+                    placeholderTextColor={Colors.muted}
+                  />
+                </View>
+                {!isVirtualDraft && (
+                  <TextInput
+                    style={styles.editInput}
+                    value={locationDraft}
+                    onChangeText={setLocationDraft}
+                    placeholder="Location"
+                    placeholderTextColor={Colors.muted}
+                  />
+                )}
+                <View style={styles.editSwitchRow}>
+                  <Text style={styles.editSwitchLabel}>Virtual event</Text>
+                  <Switch
+                    value={isVirtualDraft}
+                    onValueChange={setIsVirtualDraft}
+                    trackColor={{ false: Colors.border, true: Colors.olive }}
+                    thumbColor={Colors.white}
+                  />
+                </View>
+                <View style={styles.editActionRow}>
+                  <TouchableOpacity style={styles.editCancelBtn} onPress={() => setShowEdit(false)} activeOpacity={0.85}>
+                    <Text style={styles.editCancelText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.editSaveBtn} onPress={saveEdit} activeOpacity={0.85} disabled={savingEdit}>
+                    {savingEdit ? (
+                      <ActivityIndicator size="small" color={Colors.white} />
+                    ) : (
+                      <Text style={styles.editSaveText}>Save changes</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+
           {/* ── Details card ── */}
           <View style={styles.detailCard}>
             <View style={styles.detailRow}>
@@ -378,6 +551,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
+  },
+  heroOwnerActions: {
+    position: 'absolute',
+    top: 14,
+    right: 16,
+    flexDirection: 'row',
+    gap: 8,
+    zIndex: 10,
+  },
+  heroActionBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroActionBtnDanger: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(217,79,79,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heroBody: {
     alignItems: 'center',
@@ -505,6 +702,90 @@ const styles = StyleSheet.create({
   },
   aboutText: { fontSize: 14, color: Colors.brownMid, lineHeight: 22 },
   aboutEmpty: { color: Colors.muted, fontStyle: 'italic' },
+
+  // ── Owner controls ──
+  editCard: {
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    gap: 10,
+  },
+  ownerTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  ownerActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  ownerBtn: {
+    flex: 1,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.terracotta,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  ownerBtnDanger: {
+    flex: 1,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.error,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  ownerBtnText: { color: Colors.white, fontSize: 13, fontWeight: '700' },
+  editWrap: { gap: 8 },
+  editInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.paper,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: Colors.ink,
+  },
+  editTextarea: { minHeight: 86, textAlignVertical: 'top' },
+  editRow: { flexDirection: 'row', gap: 8 },
+  editHalf: { flex: 1 },
+  editSwitchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  editSwitchLabel: { fontSize: 13, color: Colors.brownMid, fontWeight: '600' },
+  editActionRow: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  editCancelBtn: {
+    flex: 1,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.borderDark,
+    backgroundColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  editCancelText: { fontSize: 13, color: Colors.brownMid, fontWeight: '700' },
+  editSaveBtn: {
+    flex: 1,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  editSaveText: { fontSize: 13, color: Colors.white, fontWeight: '700' },
 
   // ── RSVP ──
   rsvpCard: {

@@ -110,6 +110,7 @@ type EventRsvpRow = {
   status: 'going' | 'interested' | 'not_going';
   attended_at: string | null;
 };
+const REACTION_CHOICES = ['❤️', '👍', '🔥', '👏', '😂', '🎉', '💯', '🙏'];
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -146,6 +147,7 @@ export default function GroupDetailScreen() {
   const [editingDescription, setEditingDescription] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [savingDescription, setSavingDescription] = useState(false);
+  const [reactionPickerPostId, setReactionPickerPostId] = useState<string | null>(null);
 
   const visuals = useMemo(
     () => getGroupVisuals(group?.category ?? 'other', group?.icon_emoji),
@@ -155,6 +157,7 @@ export default function GroupDetailScreen() {
   const tabFade = useRef(new Animated.Value(1)).current;
   const switchTab = (t: typeof activeTab) => {
     if (t === activeTab) return;
+    setReactionPickerPostId(null);
     Animated.timing(tabFade, { toValue: 0, duration: 80, useNativeDriver: true }).start(() => {
       setActiveTab(t);
       Animated.timing(tabFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
@@ -765,7 +768,12 @@ export default function GroupDetailScreen() {
           <View style={styles.tabContent}>
             <View style={styles.aboutCard}>
               <View style={styles.aboutHeaderRow}>
-                <Text style={styles.aboutLabel}>About</Text>
+                <View style={styles.aboutTitleWrap}>
+                  <View style={styles.aboutTitleIcon}>
+                    <Ionicons name="information-circle-outline" size={14} color={Colors.terracotta} />
+                  </View>
+                  <Text style={styles.aboutLabel}>About this group</Text>
+                </View>
                 {canEditGroupDescription && !editingDescription ? (
                   <TouchableOpacity
                     style={styles.aboutEditBtn}
@@ -813,9 +821,19 @@ export default function GroupDetailScreen() {
                   </View>
                 </>
               ) : (
-                <Text style={styles.aboutText}>
-                  {group.description || 'No description provided yet.'}
-                </Text>
+                group.description ? (
+                  <Text style={styles.aboutText}>{group.description}</Text>
+                ) : (
+                  <View style={styles.aboutEmptyWrap}>
+                    <Ionicons name="document-text-outline" size={16} color={Colors.borderDark} />
+                    <Text style={styles.aboutEmptyText}>
+                      No group description yet.
+                    </Text>
+                    {canEditGroupDescription ? (
+                      <Text style={styles.aboutEmptyHint}>Add one to help members understand the vibe.</Text>
+                    ) : null}
+                  </View>
+                )
               )}
             </View>
 
@@ -909,7 +927,12 @@ export default function GroupDetailScreen() {
                   const info = memberNames[m.user_id];
                   const initial = (info?.name?.[0] || 'M').toUpperCase();
                   return (
-                    <View key={m.user_id} style={[styles.memberRow, i > 0 && styles.memberRowDivider]}>
+                    <TouchableOpacity
+                      key={m.user_id}
+                      style={[styles.memberRow, i > 0 && styles.memberRowDivider]}
+                      activeOpacity={0.82}
+                      onPress={() => router.push(`/member/${m.user_id}?groupId=${group.id}`)}
+                    >
                       {info?.avatar ? (
                         <Image source={{ uri: info.avatar }} style={styles.memberAvatar} />
                       ) : (
@@ -930,7 +953,8 @@ export default function GroupDetailScreen() {
                           </Text>
                         )}
                       </View>
-                    </View>
+                      <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
+                    </TouchableOpacity>
                   );
                 })
               )}
@@ -1080,34 +1104,9 @@ export default function GroupDetailScreen() {
                       <Text style={styles.postText}>{p.content}</Text>
                       <View style={styles.reactionsWrap}>
                         {(() => {
-                          const PINNED = ['❤️', '👍', '🔥'];
-                          const extraReactions = reactionTypes.filter((r) => !PINNED.includes(r));
                           return (
                             <>
-                              {PINNED.map((reaction) => {
-                                const count = reactionsForPost.filter((r) => r.reaction === reaction).length;
-                                const mine = reactionsForPost.some(
-                                  (r) => r.reaction === reaction && r.user_id === userId
-                                );
-                                const isPending = pendingReactions.has(`${p.id}-${reaction}`);
-                                return (
-                                  <TouchableOpacity
-                                    key={`${p.id}-${reaction}`}
-                                    style={[
-                                      styles.reactionChip,
-                                      mine && styles.reactionChipActive,
-                                      isPending && styles.reactionChipPending,
-                                    ]}
-                                    onPress={() => void handleReactionToggle(p.id, reaction)}
-                                    disabled={!membership || isPending}
-                                  >
-                                    <Text style={[styles.reactionText, mine && styles.reactionTextActive]}>
-                                      {reaction}{count > 0 ? ` ${count}` : ''}
-                                    </Text>
-                                  </TouchableOpacity>
-                                );
-                              })}
-                              {extraReactions.map((reaction) => {
+                              {reactionTypes.map((reaction) => {
                                 const count = reactionsForPost.filter((r) => r.reaction === reaction).length;
                                 const mine = reactionsForPost.some(
                                   (r) => r.reaction === reaction && r.user_id === userId
@@ -1130,10 +1129,41 @@ export default function GroupDetailScreen() {
                                   </TouchableOpacity>
                                 );
                               })}
+                              <TouchableOpacity
+                                style={styles.reactTrigger}
+                                onPress={() => setReactionPickerPostId((prev) => (prev === p.id ? null : p.id))}
+                                disabled={!membership}
+                              >
+                                <Ionicons name="happy-outline" size={14} color={Colors.terracotta} />
+                                <Text style={styles.reactTriggerText}>React</Text>
+                              </TouchableOpacity>
                             </>
                           );
                         })()}
                       </View>
+                      {reactionPickerPostId === p.id && (
+                        <View style={styles.reactionPicker}>
+                          {REACTION_CHOICES.map((reaction) => {
+                            const mine = reactionsForPost.some(
+                              (r) => r.reaction === reaction && r.user_id === userId
+                            );
+                            const isPending = pendingReactions.has(`${p.id}-${reaction}`);
+                            return (
+                              <TouchableOpacity
+                                key={`${p.id}-picker-${reaction}`}
+                                style={[styles.reactionPickerOption, mine && styles.reactionPickerOptionActive]}
+                                onPress={() => {
+                                  setReactionPickerPostId(null);
+                                  void handleReactionToggle(p.id, reaction);
+                                }}
+                                disabled={!membership || isPending}
+                              >
+                                <Text style={styles.reactionPickerEmoji}>{reaction}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
                     </View>
                   );
                 })}
@@ -1790,6 +1820,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
   },
+  aboutTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  aboutTitleIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(196,98,45,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.22)',
+  },
   aboutLabel: {
     fontSize: 11,
     fontWeight: '700',
@@ -1860,6 +1905,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   aboutText: { fontSize: 14, color: Colors.brownMid, lineHeight: 22 },
+  aboutEmptyWrap: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+    borderRadius: Radius.md,
+    backgroundColor: Colors.paper,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    alignItems: 'flex-start',
+    gap: 5,
+  },
+  aboutEmptyText: {
+    fontSize: 13,
+    color: Colors.muted,
+    fontWeight: '600',
+  },
+  aboutEmptyHint: {
+    fontSize: 12,
+    color: Colors.borderDark,
+  },
 
   // ── Shared Card Wrapper ──
   membersCard: {
@@ -2237,4 +2302,41 @@ const styles = StyleSheet.create({
   reactionChipPending: { opacity: 0.5 },
   reactionText: { fontSize: 11, fontWeight: '600', color: Colors.brownMid },
   reactionTextActive: { color: Colors.terracotta },
+  reactTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.35)',
+    backgroundColor: 'rgba(196,98,45,0.08)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  reactTriggerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.terracotta,
+  },
+  reactionPicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+  },
+  reactionPickerOption: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reactionPickerOptionActive: {
+    borderColor: Colors.terracotta,
+    backgroundColor: 'rgba(196,98,45,0.12)',
+  },
+  reactionPickerEmoji: { fontSize: 18 },
 });
