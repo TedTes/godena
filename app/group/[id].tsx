@@ -1133,9 +1133,13 @@ export default function GroupDetailScreen() {
                                 style={styles.reactTrigger}
                                 onPress={() => setReactionPickerPostId((prev) => (prev === p.id ? null : p.id))}
                                 disabled={!membership}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                               >
-                                <Ionicons name="happy-outline" size={14} color={Colors.terracotta} />
-                                <Text style={styles.reactTriggerText}>React</Text>
+                                <Ionicons
+                                  name={reactionPickerPostId === p.id ? 'happy' : 'happy-outline'}
+                                  size={16}
+                                  color={reactionPickerPostId === p.id ? Colors.terracotta : Colors.brownMid}
+                                />
                               </TouchableOpacity>
                             </>
                           );
@@ -2303,20 +2307,14 @@ const styles = StyleSheet.create({
   reactionText: { fontSize: 11, fontWeight: '600', color: Colors.brownMid },
   reactionTextActive: { color: Colors.terracotta },
   reactTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderRadius: Radius.full,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(196,98,45,0.35)',
-    backgroundColor: 'rgba(196,98,45,0.08)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  reactTriggerText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.terracotta,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reactionPicker: {
     flexDirection: 'row',
