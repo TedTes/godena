@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
+  Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import RAnimated, { FadeIn, FadeInDown, FadeOut, useReducedMotion } from 'react-native-reanimated';
@@ -94,10 +95,15 @@ type ProfileData = {
   preferred_age_min: number | null;
   preferred_age_max: number | null;
   is_open_to_connections: boolean | null;
+  dating_mode_enabled: boolean | null;
   verification_status: string | null;
   avatar_url: string | null;
   photo_urls: string[] | null;
 };
+
+const PROFILE_BASE_SELECT =
+  'full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, verification_status, avatar_url, photo_urls';
+const PROFILE_SELECT_WITH_DATING_MODE = `${PROFILE_BASE_SELECT}, dating_mode_enabled`;
 
 function AvatarImage({ uri, style, onError }: { uri: string; style: object; onError: () => void }) {
   const opacity = React.useRef(new Animated.Value(0)).current;
@@ -152,15 +158,25 @@ export default function ProfileScreen() {
     const resolvedUserId = uid ?? userId;
     if (!resolvedUserId) return;
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
-      .select('full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, verification_status, avatar_url, photo_urls')
+      .select(PROFILE_SELECT_WITH_DATING_MODE)
       .eq('user_id', resolvedUserId)
       .maybeSingle();
 
-    setProfile(data ?? null);
+    let profileData = data as ProfileData | null;
+    if (error?.message?.toLowerCase().includes('dating_mode_enabled')) {
+      const { data: fallbackData } = await supabase
+        .from('profiles')
+        .select(PROFILE_BASE_SELECT)
+        .eq('user_id', resolvedUserId)
+        .maybeSingle();
+      profileData = fallbackData ? ({ ...fallbackData, dating_mode_enabled: false } as ProfileData) : null;
+    }
 
-    const avatarValue = data?.avatar_url ?? null;
+    setProfile(profileData ?? null);
+
+    const avatarValue = profileData?.avatar_url ?? null;
     if (avatarValue) {
       const uri = await resolvePhotoUri(avatarValue);
       setAvatarUri(uri ?? null);
@@ -169,8 +185,8 @@ export default function ProfileScreen() {
     }
 
     const mergedPaths = [
-      ...(data?.avatar_url ? [data.avatar_url] : []),
-      ...(data?.photo_urls ?? []),
+      ...(profileData?.avatar_url ? [profileData.avatar_url] : []),
+      ...(profileData?.photo_urls ?? []),
     ].filter((v, i, arr): v is string => Boolean(v) && arr.indexOf(v) === i);
 
     if (mergedPaths.length > 0) {
@@ -179,7 +195,7 @@ export default function ProfileScreen() {
         .map((path, index) => ({
           path,
           uri: resolved[index],
-          isAvatar: Boolean(data?.avatar_url && path === data.avatar_url),
+          isAvatar: Boolean(profileData?.avatar_url && path === profileData.avatar_url),
         }))
         .filter((p): p is { uri: string; path: string; isAvatar: boolean } => Boolean(p.uri));
       setGalleryPhotos(photos);
@@ -214,7 +230,7 @@ export default function ProfileScreen() {
     return new Date().getFullYear() - birthYear;
   }, [profile?.birth_date]);
 
-  const name            = profile?.full_name ?? 'New Member';
+  const name            = profile?.full_name?.trim() || 'Complete Profile';
   const city            = profile?.city ?? 'Unknown city';
   const ethnicity       = profile?.ethnicity ?? null;
   const religion        = profile?.religion ?? null;
@@ -267,6 +283,7 @@ export default function ProfileScreen() {
   // Toggle thumb position (off=0, on=18)
   const isOpen  = profile?.is_open_to_connections ?? true;
   const thumbStyle = { transform: [{ translateX: isOpen ? 18 : 0 }] as const };
+  const datingModeOn = profile?.dating_mode_enabled ?? false;
 
   // Profile completeness
   const completenessScore = [
@@ -516,6 +533,32 @@ export default function ProfileScreen() {
       setProfile((prev) => (prev ? { ...prev, is_open_to_connections: prevValue } : prev));
       Alert.alert('Update failed', error.message);
     }
+    setUpdatingGlobalOpen(false);
+  };
+
+  const toggleDatingMode = async (value: boolean) => {
+    if (!userId || updatingGlobalOpen) return;
+    const prevValue = profile?.dating_mode_enabled ?? false;
+
+    setUpdatingGlobalOpen(true);
+    setProfile((prev) => (prev ? { ...prev, dating_mode_enabled: value } : prev));
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ dating_mode_enabled: value })
+      .eq('user_id', userId);
+
+    if (error) {
+      setProfile((prev) => (prev ? { ...prev, dating_mode_enabled: prevValue } : prev));
+      if (error.message?.toLowerCase().includes('dating_mode_enabled')) {
+        Alert.alert('Update failed', 'Dating Mode is not available yet. Please run the latest database migration.');
+      } else {
+        Alert.alert('Update failed', error.message);
+      }
+    } else if (value) {
+      router.push('/dating-mode');
+    }
+
     setUpdatingGlobalOpen(false);
   };
 
@@ -1101,6 +1144,37 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Account</Text>
             <View style={[styles.card, styles.cardNoPad]}>
+              <View style={[styles.settingsRow, styles.settingsRowDivider]}>
+                <View style={styles.settingsIcon}>
+                  <Ionicons name="heart-outline" size={18} color={C.brownMid} />
+                </View>
+                <View style={styles.settingsToggleLabelWrap}>
+                  <Text style={styles.settingsLabel}>Dating Mode</Text>
+                  <Text style={styles.settingsSubLabel}>
+                    {datingModeOn ? 'On' : 'Off'}
+                  </Text>
+                </View>
+                <Switch
+                  value={datingModeOn}
+                  onValueChange={(value) => { void toggleDatingMode(value); }}
+                  disabled={updatingGlobalOpen}
+                  thumbColor={Platform.OS === 'android' ? C.white : undefined}
+                  trackColor={{ false: C.borderDark, true: C.olive }}
+                />
+              </View>
+              {datingModeOn ? (
+                <TouchableOpacity
+                  style={[styles.settingsRow, styles.settingsRowDivider]}
+                  onPress={() => router.push('/dating-mode')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.settingsIcon, { backgroundColor: 'rgba(122,140,92,0.14)' }]}>
+                    <Ionicons name="flame-outline" size={18} color={C.olive} />
+                  </View>
+                  <Text style={styles.settingsLabel}>Open Dating Mode</Text>
+                  <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity
                 style={[styles.settingsRow, styles.settingsRowDivider]}
                 onPress={() => router.push('/verify-identity')}
@@ -1662,6 +1736,8 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   settingsIconAccent: { backgroundColor: 'rgba(201,168,76,0.12)' },
   settingsIconDanger: { backgroundColor: 'rgba(217,79,79,0.1)' },
   settingsLabel: { flex: 1, fontSize: 14, color: C.ink, fontWeight: '500' },
+  settingsToggleLabelWrap: { flex: 1, gap: 2 },
+  settingsSubLabel: { fontSize: 12, color: C.muted, fontWeight: '500' },
   settingsLabelDanger: { color: C.error },
   settingsLabelAccent: { color: C.gold, fontWeight: '600' },
   premiumBadge: {
