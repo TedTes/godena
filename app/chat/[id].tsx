@@ -35,6 +35,19 @@ import {
   type GroupRow,
   type ProfileRow,
 } from '../../lib/services/connectionChat';
+import {
+  fetchDatingCounterpartProfile,
+  fetchDatingMatch,
+  fetchDatingMessages,
+  insertDatingMessage,
+  markDatingRead,
+  reportDatingUser,
+  subscribeToDatingMessages,
+  updateDatingMatchStatus,
+  type DatingMatchRow,
+  type DatingMessageRow,
+} from '../../lib/services/datingChat';
+import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 
 type MessageItem = {
   id: string;
@@ -61,27 +74,30 @@ function formatTime(iso: string) {
 }
 
 export default function ConnectionChatScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, source } = useLocalSearchParams<{ id: string; source?: string }>();
   const router = useRouter();
   const listRef = useRef<FlatList>(null);
+  const isDating = source === 'dating';
 
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [connection, setConnection] = useState<ConnectionRow | null>(null);
+  const [datingMatch, setDatingMatch] = useState<DatingMatchRow | null>(null);
   const [group, setGroup] = useState<GroupRow | null>(null);
   const [counterpart, setCounterpart] = useState<ProfileRow | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [draft, setDraft] = useState('');
   const [safetyBusy, setSafetyBusy] = useState(false);
 
-  const canChat = connection?.status === 'accepted';
+  const canChat = isDating ? datingMatch?.status === 'matched' : connection?.status === 'accepted';
 
   const title = useMemo(() => counterpart?.full_name || 'Conversation', [counterpart]);
   const subtitle = useMemo(() => {
+    if (isDating) return 'Dating match';
     if (!group) return 'Private connection';
     return `${groupEmoji(group.category)} ${group.name}`;
-  }, [group]);
+  }, [group, isDating]);
 
   useEffect(() => {
     const load = async () => {
@@ -95,26 +111,54 @@ export default function ConnectionChatScreen() {
         return;
       }
 
-      const connectionRes = await fetchConnection(id);
-      const row = (connectionRes.data as ConnectionRow | null) ?? null;
-      setConnection(row);
-      if (!row) {
-        setLoading(false);
-        return;
+      let messageRows: Array<ConnectionMessageRow | DatingMessageRow> = [];
+      if (isDating) {
+        const matchRes = await fetchDatingMatch(id);
+        const matchRow = (matchRes.data as DatingMatchRow | null) ?? null;
+        setDatingMatch(matchRow);
+        setConnection(null);
+        setGroup(null);
+        if (!matchRow) {
+          setLoading(false);
+          return;
+        }
+
+        const otherId = matchRow.user_a_id === uid ? matchRow.user_b_id : matchRow.user_a_id;
+        const [profileRes, datingMessagesRes] = await Promise.all([
+          fetchDatingCounterpartProfile(otherId),
+          fetchDatingMessages(matchRow.id),
+        ]);
+        const rawProfile = (profileRes.data as ProfileRow | null) ?? null;
+        const resolvedAvatar = await resolveProfilePhotoUrl(rawProfile?.avatar_url);
+        setCounterpart(rawProfile ? { ...rawProfile, avatar_url: resolvedAvatar } : null);
+        messageRows = (datingMessagesRes.data as DatingMessageRow[] | null) ?? [];
+        await markDatingRead(matchRow.id, uid);
+      } else {
+        const connectionRes = await fetchConnection(id);
+        const row = (connectionRes.data as ConnectionRow | null) ?? null;
+        setConnection(row);
+        setDatingMatch(null);
+        if (!row) {
+          setLoading(false);
+          return;
+        }
+
+        const otherId = row.user_a_id === uid ? row.user_b_id : row.user_a_id;
+
+        const [groupRes, profileRes, connectionMessagesRes] = await Promise.all([
+          fetchGroup(row.group_id),
+          fetchProfile(otherId),
+          fetchConnectionMessages(row.id),
+        ]);
+
+        setGroup((groupRes.data as GroupRow | null) ?? null);
+        const rawProfile = (profileRes.data as ProfileRow | null) ?? null;
+        const resolvedAvatar = await resolveProfilePhotoUrl(rawProfile?.avatar_url);
+        setCounterpart(rawProfile ? { ...rawProfile, avatar_url: resolvedAvatar } : null);
+        messageRows = (connectionMessagesRes.data as ConnectionMessageRow[] | null) ?? [];
+        await markConnectionRead(row.id, uid);
       }
 
-      const otherId = row.user_a_id === uid ? row.user_b_id : row.user_a_id;
-
-      const [groupRes, profileRes, messageRes] = await Promise.all([
-        fetchGroup(row.group_id),
-        fetchProfile(otherId),
-        fetchConnectionMessages(row.id),
-      ]);
-
-      setGroup((groupRes.data as GroupRow | null) ?? null);
-      setCounterpart((profileRes.data as ProfileRow | null) ?? null);
-
-      const messageRows = (messageRes.data as ConnectionMessageRow[] | null) ?? [];
       setMessages(
         messageRows.map((m) => ({
           id: m.id,
@@ -125,19 +169,20 @@ export default function ConnectionChatScreen() {
         }))
       );
 
-      await markConnectionRead(row.id, uid);
       setLoading(false);
     };
 
     void load();
-  }, [id]);
+  }, [id, isDating]);
 
   useEffect(() => {
     if (!id || !userId) return;
 
     const syncLatest = async () => {
-      const { data } = await fetchConnectionMessages(id);
-      const rows = (data as ConnectionMessageRow[] | null) ?? [];
+      const { data } = isDating
+        ? await fetchDatingMessages(id)
+        : await fetchConnectionMessages(id);
+      const rows = (data as Array<ConnectionMessageRow | DatingMessageRow> | null) ?? [];
       if (rows.length === 0) return;
       const mappedRows: MessageItem[] = rows.map((m) => ({
         id: m.id,
@@ -155,7 +200,7 @@ export default function ConnectionChatScreen() {
       });
     };
 
-    const channel = subscribeToConnectionMessages(id, async (row) => {
+    const onInsert = async (row: ConnectionMessageRow | DatingMessageRow) => {
       setMessages((prev) => {
         if (prev.some((m) => m.id === row.id)) return prev;
         return [
@@ -171,15 +216,25 @@ export default function ConnectionChatScreen() {
       });
 
       if (row.sender_id !== userId) {
-        await markConnectionRead(id, userId);
+        if (isDating) {
+          await markDatingRead(id, userId);
+        } else {
+          await markConnectionRead(id, userId);
+        }
       }
 
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-    }, (status) => {
+    };
+
+    const onStatus = (status: string) => {
       if (status === 'SUBSCRIBED') {
         void syncLatest();
       }
-    });
+    };
+
+    const channel = isDating
+      ? subscribeToDatingMessages(id, onInsert, onStatus)
+      : subscribeToConnectionMessages(id, onInsert, onStatus);
 
     // Fallback: keep receiver up-to-date if realtime packet is missed/delayed.
     const fallbackSync = setInterval(() => {
@@ -190,7 +245,7 @@ export default function ConnectionChatScreen() {
       clearInterval(fallbackSync);
       void removeChannel(channel);
     };
-  }, [id, userId]);
+  }, [id, userId, isDating]);
 
   const send = () => {
     void (async () => {
@@ -214,9 +269,11 @@ export default function ConnectionChatScreen() {
       ]);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 20);
 
-      const { data } = await insertConnectionMessage(id, userId, content);
+      const { data } = isDating
+        ? await insertDatingMessage(id, userId, content)
+        : await insertConnectionMessage(id, userId, content);
       if (data) {
-        const row = data as ConnectionMessageRow;
+        const row = data as ConnectionMessageRow | DatingMessageRow;
         setMessages((prev) => {
           const withoutOptimistic = prev.filter((m) => m.id !== optimisticId);
           if (withoutOptimistic.some((m) => m.id === row.id)) return withoutOptimistic;
@@ -231,8 +288,10 @@ export default function ConnectionChatScreen() {
             },
           ];
         });
-        // Best-effort push to the other participant.
-        void triggerConnectionMessagePush(id, row.id);
+        // Best-effort push is only wired for group/event connection chats.
+        if (!isDating) {
+          void triggerConnectionMessagePush(id, row.id);
+        }
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
       } else {
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
@@ -247,7 +306,9 @@ export default function ConnectionChatScreen() {
     void (async () => {
       if (!id || safetyBusy) return;
       setSafetyBusy(true);
-      const { error } = await updateConnectionStatus(id, 'unmatched');
+      const { error } = isDating
+        ? await updateDatingMatchStatus(id, 'unmatched')
+        : await updateConnectionStatus(id, 'unmatched');
       setSafetyBusy(false);
       if (error) {
         Alert.alert('Something went wrong', "We couldn't end this connection. Please try again.");
@@ -263,7 +324,7 @@ export default function ConnectionChatScreen() {
       setSafetyBusy(true);
       const [blockRes, closeRes] = await Promise.all([
         blockUser(userId, counterpart.user_id, 'Blocked from private connection chat'),
-        updateConnectionStatus(id, 'closed'),
+        isDating ? updateDatingMatchStatus(id, 'blocked') : updateConnectionStatus(id, 'closed'),
       ]);
       setSafetyBusy(false);
 
@@ -279,13 +340,21 @@ export default function ConnectionChatScreen() {
     void (async () => {
       if (!id || !userId || !counterpart?.user_id || safetyBusy) return;
       setSafetyBusy(true);
-      const { error } = await reportUser({
-        reporterId: userId,
-        reportedUserId: counterpart.user_id,
-        connectionId: id,
-        reason: 'Inappropriate behavior in private connection chat',
-        details: 'Submitted from 1:1 connection chat safety menu.',
-      });
+      const { error } = isDating
+        ? await reportDatingUser({
+            reporterId: userId,
+            reportedUserId: counterpart.user_id,
+            matchId: id,
+            reason: 'Inappropriate behavior in dating chat',
+            details: 'Submitted from dating chat safety menu.',
+          })
+        : await reportUser({
+            reporterId: userId,
+            reportedUserId: counterpart.user_id,
+            connectionId: id,
+            reason: 'Inappropriate behavior in private connection chat',
+            details: 'Submitted from 1:1 connection chat safety menu.',
+          });
       setSafetyBusy(false);
 
       if (error) {
@@ -362,7 +431,7 @@ export default function ConnectionChatScreen() {
     );
   }
 
-  if (!connection || !userId) {
+  if ((!isDating && !connection) || (isDating && !datingMatch) || !userId) {
     return (
       <View style={styles.container}>
         <SafeAreaView style={styles.safe}>
@@ -416,9 +485,11 @@ export default function ConnectionChatScreen() {
         {!canChat && (
           <View style={styles.waitingBanner}>
             <Text style={styles.waitingText}>
-              {connection.status === 'pending'
-                ? "Chat opens once you've both accepted. No pressure — take your time."
-                : 'This conversation has ended.'}
+              {isDating
+                ? 'This dating chat is no longer active.'
+                : connection?.status === 'pending'
+                  ? "Chat opens once you've both accepted. No pressure — take your time."
+                  : 'This conversation has ended.'}
             </Text>
           </View>
         )}
@@ -447,7 +518,7 @@ export default function ConnectionChatScreen() {
               </View>
             )}
             ListHeaderComponent={
-              messages.length > 0 && group ? (
+              !isDating && messages.length > 0 && group ? (
                 <View style={styles.convoOriginBar}>
                   <Text style={styles.convoOriginText}>
                     {groupEmoji(group.category)} Connected through {group.name}
@@ -462,7 +533,9 @@ export default function ConnectionChatScreen() {
                 <Text style={styles.emptySub}>
                   {group
                     ? `You were introduced through ${group.name}. Be the first to say hello.`
-                    : 'This is the beginning of your conversation. Send the first message.'}
+                    : isDating
+                      ? 'You matched in Dating Mode. Say hello.'
+                      : 'This is the beginning of your conversation. Send the first message.'}
                 </Text>
               </View>
             }
