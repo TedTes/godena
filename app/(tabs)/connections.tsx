@@ -43,6 +43,20 @@ type MessageRow = {
   sent_at: string;
 };
 
+type DatingMatchRow = {
+  id: string;
+  user_a_id: string;
+  user_b_id: string;
+  status: 'matched' | 'unmatched' | 'blocked' | 'expired';
+  matched_at: string;
+};
+
+type DatingMessageRow = {
+  match_id: string;
+  content: string;
+  sent_at: string;
+};
+
 type PendingReveal = {
   id: string;
   matchName: string;
@@ -54,6 +68,7 @@ type PendingReveal = {
 
 type ActiveConnection = {
   id: string;
+  source: 'connection' | 'dating';
   name: string;
   photo: string;
   groupName: string;
@@ -97,46 +112,75 @@ export default function ConnectionsScreen() {
           return;
         }
 
-        const { data: connectionsData } = await supabase
-          .from('connections')
-          .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
-          .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
-          .order('revealed_at', { ascending: false });
-
-        const rows = (connectionsData ?? []) as ConnectionRow[];
-        if (rows.length === 0) {
-          setPendingReveal(null);
-          setActiveConnections([]);
-          setLoading(false);
-          return;
-        }
-
-        const counterpartIds = Array.from(
-          new Set(rows.map((c) => (c.user_a_id === uid ? c.user_b_id : c.user_a_id)))
-        );
-        const groupIds = Array.from(new Set(rows.map((c) => c.group_id)));
-        const connectionIds = rows.map((c) => c.id);
-
-        const [profilesRes, groupsRes, messagesRes] = await Promise.all([
-          supabase.rpc('get_connection_profiles', { p_user_ids: counterpartIds }),
-          supabase.from('groups').select('id, name, category').in('id', groupIds),
+        const [connectionsRes, datingMatchesRes] = await Promise.all([
           supabase
-            .from('connection_messages')
-            .select('connection_id, content, sent_at')
-            .in('connection_id', connectionIds)
-            .is('deleted_at', null)
-            .order('sent_at', { ascending: false }),
+            .from('connections')
+            .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
+            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
+            .order('revealed_at', { ascending: false }),
+          supabase
+            .from('dating_matches')
+            .select('id, user_a_id, user_b_id, status, matched_at')
+            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
+            .eq('status', 'matched')
+            .order('matched_at', { ascending: false }),
         ]);
 
-        const profileRows = (profilesRes.data ?? []) as ProfileRow[];
+        const rows = (connectionsRes.data ?? []) as ConnectionRow[];
+        const datingMatches = (datingMatchesRes.data ?? []) as DatingMatchRow[];
+
+        const connectionCounterpartIds = rows.map((c) => (c.user_a_id === uid ? c.user_b_id : c.user_a_id));
+        const datingCounterpartIds = datingMatches.map((m) => (m.user_a_id === uid ? m.user_b_id : m.user_a_id));
+        const counterpartIds = Array.from(new Set([...connectionCounterpartIds, ...datingCounterpartIds]));
+        const groupIds = Array.from(new Set(rows.map((c) => c.group_id)));
+        const connectionIds = rows.map((c) => c.id);
+        const datingMatchIds = datingMatches.map((m) => m.id);
+
+        const [connectionProfilesRes, datingProfilesRes, groupsRes, messagesRes, datingMessagesRes] = await Promise.all([
+          counterpartIds.length > 0
+            ? supabase.rpc('get_connection_profiles', { p_user_ids: counterpartIds })
+            : Promise.resolve({ data: [], error: null } as any),
+          counterpartIds.length > 0
+            ? supabase.rpc('get_dating_match_profiles', { p_user_ids: counterpartIds })
+            : Promise.resolve({ data: [], error: null } as any),
+          groupIds.length > 0
+            ? supabase.from('groups').select('id, name, category').in('id', groupIds)
+            : Promise.resolve({ data: [], error: null } as any),
+          connectionIds.length > 0
+            ? supabase
+                .from('connection_messages')
+                .select('connection_id, content, sent_at')
+                .in('connection_id', connectionIds)
+                .is('deleted_at', null)
+                .order('sent_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null } as any),
+          datingMatchIds.length > 0
+            ? supabase
+                .from('dating_messages')
+                .select('match_id, content, sent_at')
+                .in('match_id', datingMatchIds)
+                .is('deleted_at', null)
+                .order('sent_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null } as any),
+        ]);
+
+        const profileRows = [
+          ...((connectionProfilesRes.data ?? []) as ProfileRow[]),
+          ...((datingProfilesRes.data ?? []) as ProfileRow[]),
+        ];
+        const dedupedProfileRows = profileRows.filter(
+          (row, i, arr) => arr.findIndex((p) => p.user_id === row.user_id) === i
+        );
+
         const profiles = await Promise.all(
-          profileRows.map(async (p) => ({
+          dedupedProfileRows.map(async (p) => ({
             ...p,
             avatar_url: await resolveProfilePhotoUrl(p.avatar_url),
           }))
         );
         const groups = (groupsRes.data ?? []) as GroupRow[];
         const messages = (messagesRes.data ?? []) as MessageRow[];
+        const datingMessages = (datingMessagesRes.data ?? []) as DatingMessageRow[];
 
         const profileByUser = new Map(profiles.map((p) => [p.user_id, p]));
         const groupById = new Map(groups.map((g) => [g.id, g]));
@@ -144,6 +188,12 @@ export default function ConnectionsScreen() {
         for (const m of messages) {
           if (!lastMsgByConnection.has(m.connection_id)) {
             lastMsgByConnection.set(m.connection_id, m);
+          }
+        }
+        const lastMsgByDatingMatch = new Map<string, DatingMessageRow>();
+        for (const m of datingMessages) {
+          if (!lastMsgByDatingMatch.has(m.match_id)) {
+            lastMsgByDatingMatch.set(m.match_id, m);
           }
         }
 
@@ -167,14 +217,14 @@ export default function ConnectionsScreen() {
           setPendingReveal(null);
         }
 
-        setActiveConnections(
-          accepted.map((c) => {
+        const connectionCards: ActiveConnection[] = accepted.map((c) => {
             const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
             const p = profileByUser.get(otherId);
             const g = groupById.get(c.group_id);
             const m = lastMsgByConnection.get(c.id);
             return {
               id: c.id,
+              source: 'connection',
               name: p?.full_name || 'Connection',
               photo: p?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=200&q=80',
               groupName: g?.name || 'Group',
@@ -182,8 +232,27 @@ export default function ConnectionsScreen() {
               lastMessage: m?.content || 'No messages yet',
               lastAt: m?.sent_at ? new Date(m.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
             };
-          })
-        );
+          });
+
+        const datingCards: ActiveConnection[] = datingMatches.map((m) => {
+          const otherId = m.user_a_id === uid ? m.user_b_id : m.user_a_id;
+          const p = profileByUser.get(otherId);
+          const lastDatingMessage = lastMsgByDatingMatch.get(m.id);
+          return {
+            id: m.id,
+            source: 'dating',
+            name: p?.full_name || 'Dating match',
+            photo: p?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=200&q=80',
+            groupName: 'Dating Mode',
+            groupEmoji: '💘',
+            lastMessage: lastDatingMessage?.content || 'Say hello to your match',
+            lastAt: lastDatingMessage?.sent_at
+              ? new Date(lastDatingMessage.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              : '',
+          };
+        });
+
+        setActiveConnections([...datingCards, ...connectionCards]);
 
         setLoading(false);
       };
@@ -304,7 +373,7 @@ export default function ConnectionsScreen() {
                       <TouchableOpacity
                         key={c.id}
                         style={styles.connectionCard}
-                        onPress={() => router.push(`/chat/${c.id}`)}
+                        onPress={() => router.push(c.source === 'dating' ? `/chat/${c.id}?source=dating` : `/chat/${c.id}`)}
                         activeOpacity={0.85}
                       >
                         <Image source={{ uri: c.photo }} style={styles.connPhoto} />
