@@ -42,7 +42,6 @@ type SelectedPhoto = {
 
 const PROFILE_SETUP_BASE_SELECT =
   'full_name, city, birth_date, bio, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections';
-const PROFILE_SETUP_SELECT_WITH_DATING_MODE = `${PROFILE_SETUP_BASE_SELECT}, dating_mode_enabled`;
 
 export default function ProfileSetupScreen() {
   const router = useRouter();
@@ -104,23 +103,11 @@ export default function ProfileSetupScreen() {
         return;
       }
 
-      let { data: existingProfile, error: profileError } = await supabase
+      const { data: existingProfile, error: profileError } = await supabase
         .from('profiles')
-        .select(PROFILE_SETUP_SELECT_WITH_DATING_MODE)
+        .select(PROFILE_SETUP_BASE_SELECT)
         .eq('user_id', user.id)
         .maybeSingle();
-
-      if (profileError?.message?.toLowerCase().includes('dating_mode_enabled')) {
-        const fallback = await supabase
-          .from('profiles')
-          .select(PROFILE_SETUP_BASE_SELECT)
-          .eq('user_id', user.id)
-          .maybeSingle();
-        existingProfile = fallback.data
-          ? ({ ...fallback.data, dating_mode_enabled: false } as typeof existingProfile)
-          : null;
-        profileError = fallback.error;
-      }
 
       if (profileError || !existingProfile) {
         setInitialLoading(false);
@@ -142,7 +129,12 @@ export default function ProfileSetupScreen() {
       setPreferredAgeMin(existingProfile.preferred_age_min?.toString() ?? '');
       setPreferredAgeMax(existingProfile.preferred_age_max?.toString() ?? '');
       setIsOpenToConnections(existingProfile.is_open_to_connections ?? true);
-      setDatingModeEnabled(existingProfile.dating_mode_enabled ?? false);
+      const { data: datingProfile } = await supabase
+        .from('dating_profiles')
+        .select('is_enabled')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setDatingModeEnabled(datingProfile?.is_enabled ?? false);
       setInitialLoading(false);
     };
 
@@ -307,7 +299,7 @@ export default function ProfileSetupScreen() {
         ? uploadedPhotoPaths[0]
         : (existingProfile?.avatar_url ?? null);
 
-    let { error: upsertError } = await supabase.from('profiles').upsert({
+    const { error: upsertError } = await supabase.from('profiles').upsert({
       user_id: user.id,
       full_name: fullName.trim(),
       city: city.trim(),
@@ -322,39 +314,23 @@ export default function ProfileSetupScreen() {
       preferred_age_min: minAge,
       preferred_age_max: maxAge,
       is_open_to_connections: isOpenToConnections,
-      dating_mode_enabled: datingModeEnabled,
       avatar_url: nextAvatarUrl,
       photo_urls: nextPhotoUrls,
       last_active_at: new Date().toISOString(),
     });
 
-    if (upsertError?.message?.toLowerCase().includes('dating_mode_enabled')) {
-      const fallback = await supabase.from('profiles').upsert({
-        user_id: user.id,
-        full_name: fullName.trim(),
-        city: city.trim(),
-        birth_date: normalizedBirthDate || null,
-        bio: bio.trim() || null,
-        ethnicity: ethnicity.trim(),
-        religion: religion.trim() || null,
-        languages: parsedLanguages,
-        intent,
-        gender,
-        preferred_genders: preferredGenders,
-        preferred_age_min: minAge,
-        preferred_age_max: maxAge,
-        is_open_to_connections: isOpenToConnections,
-        avatar_url: nextAvatarUrl,
-        photo_urls: nextPhotoUrls,
-        last_active_at: new Date().toISOString(),
-      });
-      upsertError = fallback.error;
-    }
-
     setSaving(false);
 
     if (upsertError) {
       setError(upsertError.message);
+      return;
+    }
+
+    const { error: datingProfileError } = await supabase
+      .from('dating_profiles')
+      .upsert({ user_id: user.id, is_enabled: datingModeEnabled }, { onConflict: 'user_id' });
+    if (datingProfileError) {
+      setError(datingProfileError.message);
       return;
     }
 

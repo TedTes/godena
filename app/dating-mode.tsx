@@ -17,18 +17,18 @@ import { Colors, Radius, Spacing } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 import { resolveProfilePhotoUrl } from '../lib/services/photoUrls';
 
-type ProfileRow = {
+type DatingCandidateRow = {
   user_id: string;
   full_name: string | null;
   city: string | null;
   bio: string | null;
-  intent: string | null;
+  intent: 'friendship' | 'dating' | 'long_term' | 'marriage' | null;
   languages: string[] | null;
   birth_date: string | null;
   avatar_url: string | null;
   photo_urls: string[] | null;
-  dating_mode_enabled?: boolean | null;
-  is_open_to_connections: boolean | null;
+  dating_about: string | null;
+  dating_photos: string[] | null;
 };
 
 type DatingCardProfile = {
@@ -41,10 +41,6 @@ type DatingCardProfile = {
   languages: string[];
   images: string[];
 };
-
-const PROFILE_BASE_SELECT =
-  'user_id, full_name, city, bio, intent, languages, birth_date, avatar_url, photo_urls, is_open_to_connections';
-const PROFILE_SELECT_WITH_DATING = `${PROFILE_BASE_SELECT}, dating_mode_enabled`;
 
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=1200&q=80';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -61,7 +57,7 @@ function ageFromBirthDate(birthDate: string | null): number | null {
   return age >= 18 && age <= 99 ? age : null;
 }
 
-function formatIntent(intent: string | null): string {
+function formatIntent(intent: DatingCandidateRow['intent']): string {
   if (!intent) return 'Not set';
   if (intent === 'long_term') return 'Long-term';
   return intent.replace('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase());
@@ -75,6 +71,7 @@ export default function DatingModeScreen() {
   const [likedCount, setLikedCount] = useState(0);
   const [headerName, setHeaderName] = useState('You');
   const [photoIndexByProfile, setPhotoIndexByProfile] = useState<Record<string, number>>({});
+  const [submittingSwipe, setSubmittingSwipe] = useState(false);
   const position = useRef(new Animated.ValueXY()).current;
 
   const currentProfile = profiles[index] ?? null;
@@ -94,6 +91,12 @@ export default function DatingModeScreen() {
     extrapolate: 'clamp',
   });
 
+  const moveToNext = (liked: boolean) => {
+    if (liked) setLikedCount((prev) => prev + 1);
+    position.setValue({ x: 0, y: 0 });
+    setIndex((prev) => prev + 1);
+  };
+
   useEffect(() => {
     let active = true;
 
@@ -110,37 +113,16 @@ export default function DatingModeScreen() {
         return;
       }
 
-      const { data: me } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('user_id', uid)
-        .maybeSingle();
+      const [{ data: me }, candidatesRes] = await Promise.all([
+        supabase.from('profiles').select('full_name').eq('user_id', uid).maybeSingle(),
+        supabase.rpc('get_dating_candidates', { p_limit: 40 }),
+      ]);
+
       const myName = me?.full_name?.trim();
       if (myName && active) setHeaderName(myName.split(' ')[0] || myName);
 
-      const primaryQuery = await supabase
-        .from('profiles')
-        .select(PROFILE_SELECT_WITH_DATING)
-        .neq('user_id', uid)
-        .eq('is_open_to_connections', true)
-        .eq('dating_mode_enabled', true)
-        .limit(40);
-
-      let rows = primaryQuery.data as ProfileRow[] | null;
-      let error = primaryQuery.error;
-
-      if (error?.message?.toLowerCase().includes('dating_mode_enabled')) {
-        const fallback = await supabase
-          .from('profiles')
-          .select(PROFILE_BASE_SELECT)
-          .neq('user_id', uid)
-          .eq('is_open_to_connections', true)
-          .limit(40);
-        rows = fallback.data as ProfileRow[] | null;
-        error = fallback.error;
-      }
-
-      if (error || !rows) {
+      const rows = (candidatesRes.data ?? []) as DatingCandidateRow[];
+      if (candidatesRes.error || !rows) {
         if (active) {
           setProfiles([]);
           setLoading(false);
@@ -149,10 +131,12 @@ export default function DatingModeScreen() {
       }
 
       const prepared = await Promise.all(
-        (rows as ProfileRow[]).map(async (row) => {
-          const allPaths = [row.avatar_url, ...(row.photo_urls ?? [])].filter(
-            (value, i, arr): value is string => Boolean(value) && arr.indexOf(value) === i
-          );
+        rows.map(async (row) => {
+          const allPaths = [
+            row.avatar_url,
+            ...(row.photo_urls ?? []),
+            ...(row.dating_photos ?? []),
+          ].filter((value, i, arr): value is string => Boolean(value) && arr.indexOf(value) === i);
           const resolved = await Promise.all(allPaths.map((path) => resolveProfilePhotoUrl(path)));
           const images = resolved.filter((url): url is string => Boolean(url));
 
@@ -161,7 +145,7 @@ export default function DatingModeScreen() {
             name: row.full_name?.trim() || 'Member',
             age: ageFromBirthDate(row.birth_date),
             city: row.city?.trim() || 'City not set',
-            bio: row.bio?.trim() || 'No bio yet.',
+            bio: row.dating_about?.trim() || row.bio?.trim() || 'No bio yet.',
             intent: formatIntent(row.intent),
             languages: row.languages ?? [],
             images: images.length > 0 ? images : [FALLBACK_IMAGE],
@@ -186,19 +170,38 @@ export default function DatingModeScreen() {
     };
   }, []);
 
-  const moveToNext = (liked: boolean) => {
-    if (liked) setLikedCount((prev) => prev + 1);
-    position.setValue({ x: 0, y: 0 });
-    setIndex((prev) => prev + 1);
+  const submitSwipe = async (direction: 'left' | 'right') => {
+    if (!currentProfile || submittingSwipe) return;
+    setSubmittingSwipe(true);
+
+    const decision = direction === 'right' ? 'like' : 'pass';
+    const { data, error } = await supabase.rpc('submit_dating_swipe', {
+      p_target_id: currentProfile.id,
+      p_decision: decision,
+    });
+
+    setSubmittingSwipe(false);
+
+    if (error) return;
+
+    const result = (data as Array<{ matched: boolean; match_id: string | null }> | null)?.[0] ?? null;
+    moveToNext(direction === 'right');
+
+    if (direction === 'right' && result?.matched && result.match_id) {
+      router.push(`/chat/${result.match_id}?source=dating`);
+    }
   };
 
   const forceSwipe = (direction: 'left' | 'right') => {
+    if (submittingSwipe || !currentProfile) return;
     const toValue = direction === 'right' ? SCREEN_WIDTH * 1.2 : -SCREEN_WIDTH * 1.2;
     Animated.timing(position, {
       toValue: { x: toValue, y: 0 },
       duration: 220,
       useNativeDriver: false,
-    }).start(() => moveToNext(direction === 'right'));
+    }).start(() => {
+      void submitSwipe(direction);
+    });
   };
 
   const cyclePhoto = (profileId: string, imageCount: number, direction: 'next' | 'prev') => {
@@ -215,7 +218,7 @@ export default function DatingModeScreen() {
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) > 5 || Math.abs(gesture.dy) > 5,
+          !submittingSwipe && (Math.abs(gesture.dx) > 5 || Math.abs(gesture.dy) > 5),
         onPanResponderMove: (_, gesture) => {
           position.setValue({ x: gesture.dx, y: gesture.dy * 0.15 });
         },
@@ -235,7 +238,7 @@ export default function DatingModeScreen() {
           }).start();
         },
       }),
-    [position]
+    [position, submittingSwipe, currentProfile]
   );
 
   if (loading) {
@@ -351,11 +354,11 @@ export default function DatingModeScreen() {
         </View>
 
         <View style={styles.actions}>
-          <TouchableOpacity style={[styles.actionBtn, styles.passBtn]} onPress={() => forceSwipe('left')}>
+          <TouchableOpacity style={[styles.actionBtn, styles.passBtn]} onPress={() => forceSwipe('left')} disabled={submittingSwipe}>
             <Ionicons name="close" size={24} color={Colors.error} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.actionBtn, styles.likeBtn]} onPress={() => forceSwipe('right')}>
-            <Ionicons name="heart" size={22} color={Colors.white} />
+          <TouchableOpacity style={[styles.actionBtn, styles.likeBtn, submittingSwipe && styles.actionBtnDisabled]} onPress={() => forceSwipe('right')} disabled={submittingSwipe}>
+            {submittingSwipe ? <ActivityIndicator size="small" color={Colors.white} /> : <Ionicons name="heart" size={22} color={Colors.white} />}
           </TouchableOpacity>
         </View>
 
@@ -493,6 +496,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  actionBtnDisabled: {
+    opacity: 0.7,
   },
   passBtn: { backgroundColor: Colors.warmWhite },
   likeBtn: { backgroundColor: Colors.terracotta, borderColor: Colors.terracotta },
