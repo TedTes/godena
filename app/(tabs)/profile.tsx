@@ -95,7 +95,6 @@ type ProfileData = {
   preferred_age_min: number | null;
   preferred_age_max: number | null;
   is_open_to_connections: boolean | null;
-  dating_mode_enabled: boolean | null;
   verification_status: string | null;
   avatar_url: string | null;
   photo_urls: string[] | null;
@@ -103,7 +102,6 @@ type ProfileData = {
 
 const PROFILE_BASE_SELECT =
   'full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, verification_status, avatar_url, photo_urls';
-const PROFILE_SELECT_WITH_DATING_MODE = `${PROFILE_BASE_SELECT}, dating_mode_enabled`;
 
 function AvatarImage({ uri, style, onError }: { uri: string; style: object; onError: () => void }) {
   const opacity = React.useRef(new Animated.Value(0)).current;
@@ -139,6 +137,7 @@ export default function ProfileScreen() {
   const [editingMultiValue, setEditingMultiValue] = useState<string[]>([]);
   const [editingDate, setEditingDate] = useState<Date>(new Date());
   const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
+  const [datingModeOn, setDatingModeOn] = useState(false);
 
   const resolvePhotoUri = async (value: string): Promise<string | null> => {
     if (value.startsWith('http://') || value.startsWith('https://')) {
@@ -158,21 +157,20 @@ export default function ProfileScreen() {
     const resolvedUserId = uid ?? userId;
     if (!resolvedUserId) return;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('profiles')
-      .select(PROFILE_SELECT_WITH_DATING_MODE)
+      .select(PROFILE_BASE_SELECT)
       .eq('user_id', resolvedUserId)
       .maybeSingle();
 
-    let profileData = data as ProfileData | null;
-    if (error?.message?.toLowerCase().includes('dating_mode_enabled')) {
-      const { data: fallbackData } = await supabase
-        .from('profiles')
-        .select(PROFILE_BASE_SELECT)
-        .eq('user_id', resolvedUserId)
-        .maybeSingle();
-      profileData = fallbackData ? ({ ...fallbackData, dating_mode_enabled: false } as ProfileData) : null;
-    }
+    const profileData = data as ProfileData | null;
+
+    const { data: datingProfile } = await supabase
+      .from('dating_profiles')
+      .select('is_enabled')
+      .eq('user_id', resolvedUserId)
+      .maybeSingle();
+    setDatingModeOn(datingProfile?.is_enabled ?? false);
 
     setProfile(profileData ?? null);
 
@@ -283,7 +281,6 @@ export default function ProfileScreen() {
   // Toggle thumb position (off=0, on=18)
   const isOpen  = profile?.is_open_to_connections ?? true;
   const thumbStyle = { transform: [{ translateX: isOpen ? 18 : 0 }] as const };
-  const datingModeOn = profile?.dating_mode_enabled ?? false;
 
   // Profile completeness
   const completenessScore = [
@@ -538,23 +535,18 @@ export default function ProfileScreen() {
 
   const toggleDatingMode = async (value: boolean) => {
     if (!userId || updatingGlobalOpen) return;
-    const prevValue = profile?.dating_mode_enabled ?? false;
+    const prevValue = datingModeOn;
 
     setUpdatingGlobalOpen(true);
-    setProfile((prev) => (prev ? { ...prev, dating_mode_enabled: value } : prev));
+    setDatingModeOn(value);
 
     const { error } = await supabase
-      .from('profiles')
-      .update({ dating_mode_enabled: value })
-      .eq('user_id', userId);
+      .from('dating_profiles')
+      .upsert({ user_id: userId, is_enabled: value }, { onConflict: 'user_id' });
 
     if (error) {
-      setProfile((prev) => (prev ? { ...prev, dating_mode_enabled: prevValue } : prev));
-      if (error.message?.toLowerCase().includes('dating_mode_enabled')) {
-        Alert.alert('Update failed', 'Dating Mode is not available yet. Please run the latest database migration.');
-      } else {
-        Alert.alert('Update failed', error.message);
-      }
+      setDatingModeOn(prevValue);
+      Alert.alert('Update failed', error.message);
     } else if (value) {
       router.push('/dating-mode');
     }
