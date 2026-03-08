@@ -505,9 +505,25 @@ export default function GroupsScreen() {
               </TouchableOpacity>
             );
           })}
-          {tab === 'discover' && cityOptions.length > 0 && (
+          {tab === 'discover' && (
             <>
               <View style={styles.filterDivider} />
+              <TouchableOpacity
+                style={[styles.cityChip, activeCity === ALL_CITIES_LABEL && styles.cityChipActive]}
+                onPress={() => setActiveCity(ALL_CITIES_LABEL)}
+              >
+                <Text style={[styles.cityChipText, activeCity === ALL_CITIES_LABEL && styles.cityChipTextActive]}>
+                  🌍 All Cities
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.cityChip, activeCity === VIRTUAL_CITY_LABEL && styles.cityChipActive]}
+                onPress={() => setActiveCity(activeCity === VIRTUAL_CITY_LABEL ? ALL_CITIES_LABEL : VIRTUAL_CITY_LABEL)}
+              >
+                <Text style={[styles.cityChipText, activeCity === VIRTUAL_CITY_LABEL && styles.cityChipTextActive]}>
+                  💻 Virtual
+                </Text>
+              </TouchableOpacity>
               {cityOptions.map((city) => {
                 const active = activeCity === city;
                 return (
