@@ -108,13 +108,24 @@ begin
   v_limit := greatest(1, least(coalesce(p_limit, 20), 100));
 
   return query
-  with me as (
+  with cfg as (
+    select
+      coalesce(
+        (select mc.reveal_threshold from public.matching_config mc where mc.id = 1),
+        25
+      ) as reveal_threshold,
+      coalesce(
+        (select mc.lookback_days from public.matching_config mc where mc.id = 1),
+        30
+      ) as lookback_days
+  ),
+  me as (
     select
       p.user_id,
       p.gender,
       p.intent,
       p.birth_date,
-      dp.is_enabled as dating_enabled,
+      dp.is_enabled,
       pref.preferred_genders,
       pref.preferred_intents,
       pref.preferred_age_min,
@@ -125,6 +136,18 @@ begin
     left join public.dating_preferences pref on pref.user_id = p.user_id
     where p.user_id = v_actor
     limit 1
+  ),
+  scored as (
+    select
+      case when s.user_a_id = v_actor then s.user_b_id else s.user_a_id end as candidate_user_id,
+      max(s.score) as score,
+      max(s.last_interaction_at) as last_interaction_at
+    from public.interaction_scores s
+    join cfg on true
+    where (s.user_a_id = v_actor or s.user_b_id = v_actor)
+      and s.last_interaction_at >= now() - (cfg.lookback_days || ' days')::interval
+      and s.score >= cfg.reveal_threshold
+    group by 1
   )
   select
     p.user_id,
@@ -139,10 +162,12 @@ begin
     dp.about as dating_about,
     dp.photos as dating_photos
   from public.profiles p
+  join scored s on s.candidate_user_id = p.user_id
   join public.dating_profiles dp on dp.user_id = p.user_id and dp.is_enabled = true
   left join public.dating_preferences pref_t on pref_t.user_id = p.user_id
   join me on true
   where p.user_id <> v_actor
+    and coalesce(me.is_enabled, false) = true
     and coalesce(me.is_globally_visible, true) = true
     and coalesce(pref_t.is_globally_visible, true) = true
     and (
@@ -183,9 +208,9 @@ begin
     )
     and not exists (
       select 1
-      from public.dating_swipes s
-      where s.swiper_id = v_actor
-        and s.target_id = p.user_id
+      from public.dating_swipes ds
+      where ds.swiper_id = v_actor
+        and ds.target_id = p.user_id
     )
     and not exists (
       select 1
@@ -205,7 +230,7 @@ begin
       where (r.reporter_id = v_actor and r.reported_user_id = p.user_id)
          or (r.reporter_id = p.user_id and r.reported_user_id = v_actor)
     )
-  order by p.last_active_at desc nulls last, p.created_at desc
+  order by s.score desc, s.last_interaction_at desc nulls last
   limit v_limit;
 end;
 $$;
