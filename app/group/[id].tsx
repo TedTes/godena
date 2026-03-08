@@ -17,6 +17,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { GroupDetailSkeleton } from '../../components/Skeleton';
+import RAnimated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { GROUP_ICON_CHOICES } from '../../lib/services/groupIcons';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import {
@@ -155,12 +157,17 @@ export default function GroupDetailScreen() {
   );
 
   const tabFade = useRef(new Animated.Value(1)).current;
+  const tabSlide = useRef(new Animated.Value(0)).current;
   const switchTab = (t: typeof activeTab) => {
     if (t === activeTab) return;
     setReactionPickerPostId(null);
-    Animated.timing(tabFade, { toValue: 0, duration: 80, useNativeDriver: true }).start(() => {
+    Animated.timing(tabFade, { toValue: 0, duration: 70, useNativeDriver: true }).start(() => {
       setActiveTab(t);
-      Animated.timing(tabFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      tabSlide.setValue(10);
+      Animated.parallel([
+        Animated.timing(tabFade, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.spring(tabSlide, { toValue: 0, friction: 8, tension: 100, useNativeDriver: true }),
+      ]).start();
     });
   };
 
@@ -184,7 +191,7 @@ export default function GroupDetailScreen() {
     }
   }, [isOpen, openCardScale]);
   const canEditGroupIcon = membership?.role === 'organizer' || membership?.role === 'moderator';
-  const canEditGroupDescription = membership?.role === 'organizer';
+  const canEditGroupDescription = membership?.role === 'organizer' || membership?.role === 'moderator';
   const displayMemberCount = membership ? members.length : group?.member_count ?? 0;
   const lockedPreviewCount = group?.member_count ?? 0;
 
@@ -604,15 +611,11 @@ export default function GroupDetailScreen() {
   };
 
   if (loading || !group) {
-    return (
-      <View style={styles.loadingWrap}>
-        <ActivityIndicator color={Colors.terracotta} size="large" />
-      </View>
-    );
+    return <GroupDetailSkeleton />;
   }
 
   return (
-    <View style={styles.container}>
+    <RAnimated.View entering={FadeIn.duration(260)} style={styles.container}>
 
       {/* ── Hero ── */}
       <View style={[styles.hero, { backgroundColor: visuals.coverColor }]}>
@@ -710,82 +713,69 @@ export default function GroupDetailScreen() {
         )}
 
         {/* ── Openness Signal ── */}
-        <Animated.View style={{ transform: [{ scale: openCardScale }] }}>
-        <View style={[styles.openCard, isOpen && styles.openCardActive]}>
-          <View style={styles.openLeft}>
-            <Text style={styles.openTitle}>
-              {isOpen ? '🌱 Open to connect here' : 'Open to a connection?'}
-            </Text>
-            <Text style={styles.openDesc}>
-              {isOpen
-                ? "Your signal is private. We'll introduce you when both of you have been genuinely active here together."
-                : 'Signal quietly. Introductions only happen when both of you are open — and have been showing up together recently.'}
-            </Text>
-          </View>
-          <Switch
-            value={isOpen}
-            onValueChange={handleOpenToggle}
-            disabled={!membership}
-            trackColor={{ false: Colors.border, true: Colors.olive }}
-            thumbColor={Colors.white}
-          />
-        </View>
-        </Animated.View>
+        <RAnimated.View entering={FadeInDown.delay(60).duration(300)}>
+          <Animated.View style={{ transform: [{ scale: openCardScale }] }}>
+            <View style={[styles.openCard, isOpen && styles.openCardActive]}>
+              <View style={styles.openLeft}>
+                <Text style={styles.openTitle}>
+                  {isOpen ? '🌱 Open to connect here' : 'Open to a connection?'}
+                </Text>
+                <Text style={styles.openDesc}>
+                  {isOpen
+                    ? "Your signal is private. We'll introduce you when both of you have been genuinely active here together."
+                    : 'Signal quietly. Introductions only happen when both of you are open — and have been showing up together recently.'}
+                </Text>
+              </View>
+              <Switch
+                value={isOpen}
+                onValueChange={handleOpenToggle}
+                disabled={!membership}
+                trackColor={{ false: Colors.border, true: Colors.olive }}
+                thumbColor={Colors.white}
+              />
+            </View>
+          </Animated.View>
+        </RAnimated.View>
 
         {/* ── Chat CTA ── */}
-        <TouchableOpacity
-          style={[styles.chatCta, !membership && styles.chatCtaDisabled]}
-          onPress={() => router.push(`/group/chat/${group.id}`)}
-          disabled={!membership}
-          activeOpacity={0.85}
-        >
-          <View style={styles.chatCtaIcon}>
-            <Ionicons name="chatbubbles-outline" size={18} color={Colors.terracotta} />
-          </View>
-          <Text style={styles.chatCtaText}>Group Chat</Text>
-          <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
-        </TouchableOpacity>
+        <RAnimated.View entering={FadeInDown.delay(140).duration(300)}>
+          <TouchableOpacity
+            style={[styles.chatCta, !membership && styles.chatCtaDisabled]}
+            onPress={() => router.push(`/group/chat/${group.id}`)}
+            disabled={!membership}
+            activeOpacity={0.85}
+          >
+            <View style={styles.chatCtaIcon}>
+              <Ionicons name="chatbubbles-outline" size={18} color={Colors.terracotta} />
+            </View>
+            <Text style={styles.chatCtaText}>Group Chat</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
+          </TouchableOpacity>
+        </RAnimated.View>
 
         {/* ── Tabs ── */}
-        <View style={styles.tabs}>
-          {(['about', 'members', 'events', 'activity'] as const).map((t) => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.tab, activeTab === t && styles.tabActive]}
-              onPress={() => switchTab(t)}
-            >
-              <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <RAnimated.View entering={FadeInDown.delay(220).duration(300)}>
+          <View style={styles.tabs}>
+            {(['about', 'members', 'events', 'activity'] as const).map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[styles.tab, activeTab === t && styles.tabActive]}
+                onPress={() => switchTab(t)}
+              >
+                <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </RAnimated.View>
 
-        <Animated.View style={{ opacity: tabFade }}>
+        <Animated.View style={{ opacity: tabFade, transform: [{ translateY: tabSlide }] }}>
 
         {/* ── About ── */}
         {activeTab === 'about' && (
           <View style={styles.tabContent}>
             <View style={styles.aboutCard}>
-              <View style={styles.aboutHeaderRow}>
-                <View style={styles.aboutTitleWrap}>
-                  <View style={styles.aboutTitleIcon}>
-                    <Ionicons name="information-circle-outline" size={14} color={Colors.terracotta} />
-                  </View>
-                  <Text style={styles.aboutLabel}>About this group</Text>
-                </View>
-                {canEditGroupDescription && !editingDescription ? (
-                  <TouchableOpacity
-                    style={styles.aboutEditBtn}
-                    onPress={startEditDescription}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  >
-                    <Ionicons name="create-outline" size={14} color={Colors.terracotta} />
-                    <Text style={styles.aboutEditBtnText}>Edit</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
               {editingDescription ? (
                 <>
                   <TextInput
@@ -821,19 +811,27 @@ export default function GroupDetailScreen() {
                   </View>
                 </>
               ) : (
-                group.description ? (
-                  <Text style={styles.aboutText}>{group.description}</Text>
-                ) : (
-                  <View style={styles.aboutEmptyWrap}>
-                    <Ionicons name="document-text-outline" size={16} color={Colors.borderDark} />
-                    <Text style={styles.aboutEmptyText}>
-                      No group description yet.
-                    </Text>
-                    {canEditGroupDescription ? (
-                      <Text style={styles.aboutEmptyHint}>Add one to help members understand the vibe.</Text>
-                    ) : null}
+                <>
+                  <View style={styles.aboutDescBox}>
+                    {group.description ? (
+                      <Text style={styles.aboutText}>{group.description}</Text>
+                    ) : (
+                      <Text style={styles.aboutEmptyText}>
+                        {canEditGroupDescription ? 'Share what this group is about...' : 'No description yet.'}
+                      </Text>
+                    )}
                   </View>
-                )
+                  {canEditGroupDescription && (
+                    <TouchableOpacity
+                      style={styles.aboutEditBtn}
+                      onPress={startEditDescription}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Ionicons name="create-outline" size={13} color={Colors.terracotta} />
+                      <Text style={styles.aboutEditBtnText}>{group.description ? 'Edit' : 'Add description'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
             </View>
 
@@ -1433,7 +1431,7 @@ export default function GroupDetailScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+    </RAnimated.View>
   );
 }
 
@@ -1787,7 +1785,7 @@ const styles = StyleSheet.create({
   },
   tab: {
     flex: 1,
-    paddingBottom: 10,
+    paddingVertical: 12,
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
@@ -1811,12 +1809,16 @@ const styles = StyleSheet.create({
 
   // About
   aboutCard: {
+    marginBottom: Spacing.lg,
+    gap: 10,
+  },
+  aboutDescBox: {
     backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderRadius: Radius.lg,
     padding: Spacing.md,
-    marginBottom: Spacing.lg,
+    minHeight: 200,
   },
   aboutHeaderRow: {
     flexDirection: 'row',
@@ -1849,13 +1851,14 @@ const styles = StyleSheet.create({
   aboutEditBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-start',
     gap: 4,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.full,
-    backgroundColor: Colors.paper,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    backgroundColor: Colors.warmWhite,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
   aboutEditBtnText: {
     fontSize: 12,
@@ -1908,7 +1911,7 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontWeight: '700',
   },
-  aboutText: { fontSize: 14, color: Colors.brownMid, lineHeight: 22 },
+  aboutText: { fontSize: 14, color: Colors.ink, lineHeight: 22, textAlignVertical: 'top' },
   aboutEmptyWrap: {
     borderWidth: 1,
     borderColor: Colors.border,
@@ -1921,9 +1924,9 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   aboutEmptyText: {
-    fontSize: 13,
+    fontSize: 14,
     color: Colors.muted,
-    fontWeight: '600',
+    lineHeight: 22,
   },
   aboutEmptyHint: {
     fontSize: 12,

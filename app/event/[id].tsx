@@ -15,6 +15,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { EventDetailSkeleton } from '../../components/Skeleton';
+import RAnimated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import {
   fetchEventById,
   fetchEventRsvps,
@@ -297,9 +299,7 @@ export default function EventDetailScreen() {
     return (
       <View style={styles.container}>
         <SafeAreaView style={styles.safe}>
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={Colors.terracotta} size="large" />
-          </View>
+          <EventDetailSkeleton />
         </SafeAreaView>
       </View>
     );
@@ -323,7 +323,7 @@ export default function EventDetailScreen() {
   const { emoji, color: heroColor } = getCategoryMeta(groupRow?.category);
 
   return (
-    <View style={styles.container}>
+    <RAnimated.View entering={FadeIn.duration(260)} style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
 
         {/* ── Hero ── */}
@@ -449,7 +449,7 @@ export default function EventDetailScreen() {
           )}
 
           {/* ── Details card ── */}
-          <View style={styles.detailCard}>
+          <RAnimated.View entering={FadeInDown.delay(60).duration(300)} style={styles.detailCard}>
             <View style={styles.detailRow}>
               <View style={[styles.detailIconBox, { backgroundColor: 'rgba(196,98,45,0.1)' }]}>
                 <Ionicons name="calendar" size={16} color={Colors.terracotta} />
@@ -486,18 +486,18 @@ export default function EventDetailScreen() {
                 </Text>
               </View>
             </View>
-          </View>
+          </RAnimated.View>
 
           {/* ── About ── */}
-          <View style={styles.aboutCard}>
+          <RAnimated.View entering={FadeInDown.delay(140).duration(300)} style={styles.aboutCard}>
             <Text style={styles.aboutTitle}>About</Text>
             <Text style={[styles.aboutText, !eventRow.description?.trim() && styles.aboutEmpty]}>
               {eventRow.description?.trim() || 'No description provided.'}
             </Text>
-          </View>
+          </RAnimated.View>
 
           {/* ── RSVP ── */}
-          <View style={styles.rsvpCard}>
+          <RAnimated.View entering={FadeInDown.delay(220).duration(300)} style={styles.rsvpCard}>
             <Text style={styles.rsvpHeading}>Will you attend?</Text>
             {RSVP_OPTIONS.map((opt, i) => (
               <RsvpRow
@@ -509,12 +509,12 @@ export default function EventDetailScreen() {
                 onPress={() => handleSetStatus(opt.status)}
               />
             ))}
-          </View>
+          </RAnimated.View>
 
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
-    </View>
+    </RAnimated.View>
   );
 }
 
