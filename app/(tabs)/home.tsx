@@ -335,27 +335,31 @@ export default function HomeScreen() {
       <SafeAreaView edges={['top']} style={styles.safe}>
         <Animated.View style={[{ flex: 1 }, enterStyle]}>
           <View style={styles.header}>
-            <View>
-              <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
-              <Text style={styles.greeting}>
-                {loadingProfile ? '...' : `${getGreetingWord()}, ${firstName} ${getGreetingEmoji()}`}
-              </Text>
-              {!loadingProfile && (
-                <Text style={styles.greetingSub}>{getGreetingSub()}</Text>
-              )}
+            {/* Top row: logo */}
+            <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+            {/* Greeting row: text + bell on same line */}
+            <View style={styles.greetingRow}>
+              <View style={styles.greetingLeft}>
+                <Text style={styles.greeting}>
+                  {loadingProfile ? '...' : `${getGreetingWord()}, ${firstName} ${getGreetingEmoji()}`}
+                </Text>
+                {!loadingProfile && (
+                  <Text style={styles.greetingSub}>{getGreetingSub()}</Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={styles.notifBtn}
+                onPress={() => router.push('/notification-inbox')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="notifications-outline" size={22} color={C.brown} />
+                {notificationCount > 0 && (
+                  <View style={styles.notifDot}>
+                    <Text style={styles.notifCountText}>{notificationCount > 9 ? '9+' : `${notificationCount}`}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={styles.notifBtn}
-              onPress={() => router.push('/notification-inbox')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="notifications-outline" size={22} color={C.brown} />
-              {notificationCount > 0 && (
-                <View style={styles.notifDot}>
-                  <Text style={styles.notifCountText}>{notificationCount > 9 ? '9+' : `${notificationCount}`}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
           </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -537,9 +541,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   container: { flex: 1, backgroundColor: C.cream },
   safe: { flex: 1 },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     paddingBottom: Spacing.lg,
@@ -547,19 +548,27 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   wordmarkLogo: {
     width: 96,
     height: 24,
-    marginBottom: 6,
+    marginBottom: 10,
   },
+  greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  greetingLeft: { flex: 1, paddingRight: 8 },
   greeting: {
     fontSize: 22,
     fontWeight: '800',
     color: C.ink,
+    lineHeight: 28,
   },
   greetingSub: {
     fontSize: 13,
     color: C.muted,
-    marginTop: 4,
+    marginTop: 3,
+    lineHeight: 18,
   },
-  notifBtn: { position: 'relative', padding: 6 },
+  notifBtn: { position: 'relative', padding: 6, marginTop: -2 },
   notifDot: {
     position: 'absolute',
     top: 1,
@@ -574,7 +583,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     justifyContent: 'center',
   },
   notifCountText: { fontSize: 9, color: C.white, fontWeight: '800', lineHeight: 10 },
-  scroll: { paddingTop: 36 },
+  scroll: { paddingTop: 8 },
 
   revealBanner: {
     marginHorizontal: Spacing.lg,
