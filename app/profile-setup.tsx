@@ -4,6 +4,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,6 +17,8 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 
@@ -66,19 +69,15 @@ export default function ProfileSetupScreen() {
   const [pickingPhoto, setPickingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [step, setStep] = useState<1 | 2>(1);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const canSubmit =
     fullName.trim().length >= 2 &&
     city.trim().length >= 2 &&
     birthDate.trim().length > 0 &&
     ethnicity.trim().length >= 2 &&
+    !!gender &&
     !saving;
-  const canProceedStep1 =
-    fullName.trim().length >= 2 &&
-    city.trim().length >= 2 &&
-    birthDate.trim().length > 0 &&
-    !!gender;
 
   const parsedLanguages = languagesInput
     .split(',')
@@ -349,6 +348,15 @@ export default function ProfileSetupScreen() {
       }
     }
 
+    if (isEditMode) {
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(tabs)/profile');
+      }
+      return;
+    }
+
     router.replace(datingModeEnabled ? '/dating-mode' : '/(tabs)/home');
   };
 
@@ -364,358 +372,348 @@ export default function ProfileSetupScreen() {
     );
   }
 
+  const birthDateObj = birthDate
+    ? new Date(`${birthDate}T00:00:00.000Z`)
+    : new Date(new Date().setFullYear(new Date().getFullYear() - 25));
+
+  const displayBirthDate = birthDate
+    ? new Date(`${birthDate}T00:00:00.000Z`).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    : '';
+
   return (
     <View style={styles.container}>
 
-      {/* ── Fixed header (never scrolls) ─────────────────── */}
+      {/* ── Fixed header ── */}
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.fixedHeaderSafe}>
         <View style={styles.fixedHeader}>
-          <Text style={styles.wordmark}>Godena</Text>
-          <Text style={styles.title}>
-            {isEditMode ? 'Edit your profile' : 'Set up your profile'}
-          </Text>
-          <Text style={styles.subtitle}>
-            {isEditMode
-              ? 'Update your details. Avatar and gallery are managed on Profile.'
-              : 'This is your private foundation. You can edit everything later.'}
-          </Text>
-          <View style={styles.stepRow}>
-            <View style={[styles.stepPill, step === 1 && styles.stepPillActive]}>
-              <Text style={[styles.stepPillText, step === 1 && styles.stepPillTextActive]}>
-                Step 1 · Basics
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={handleBack} style={styles.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="chevron-back" size={22} color={Colors.ink} />
+            </TouchableOpacity>
+            <View style={styles.headerCenter}>
+              <Text style={styles.wordmark}>Godena</Text>
+              <Text style={styles.title}>
+                {isEditMode ? 'Edit profile' : 'Set up profile'}
               </Text>
             </View>
-            <View style={[styles.stepPill, step === 2 && styles.stepPillActive]}>
-              <Text style={[styles.stepPillText, step === 2 && styles.stepPillTextActive]}>
-                Step 2 · Preferences
-              </Text>
-            </View>
+            <TouchableOpacity
+              style={[styles.saveHeaderBtn, !canSubmit && styles.saveHeaderBtnDisabled]}
+              onPress={saveProfile}
+              disabled={!canSubmit}
+              activeOpacity={0.85}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color={Colors.white} />
+              ) : (
+                <Text style={styles.saveHeaderBtnText}>{isEditMode ? 'Save' : 'Done'}</Text>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </SafeAreaView>
 
-      {/* ── Keyboard-aware body: scroll + pinned bottom bar ── */}
+      {/* ── Keyboard-aware body ── */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
         <ScrollView
           style={styles.flex}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          {step === 1 ? (
-            <>
-              <View style={styles.field}>
-                <Text style={styles.label}>Full name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={fullName}
-                  onChangeText={setFullName}
-                  placeholder="Tigist Haile"
-                  placeholderTextColor={Colors.muted}
-                  autoCapitalize="words"
-                />
-              </View>
+          {/* ── Basic Info ── */}
+          <Text style={styles.sectionHeader}>Basic Info</Text>
 
-              <View style={styles.field}>
-                <Text style={styles.label}>City</Text>
-                <TextInput
-                  style={styles.input}
-                  value={city}
-                  onChangeText={setCity}
-                  placeholder="Washington, DC"
-                  placeholderTextColor={Colors.muted}
-                  autoCapitalize="words"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Birth date</Text>
-                <TextInput
-                  style={styles.input}
-                  value={birthDate}
-                  onChangeText={setBirthDate}
-                  placeholder="YYYY-MM-DD *"
-                  placeholderTextColor={Colors.muted}
-                  keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Bio (optional)</Text>
-                <TextInput
-                  style={[styles.input, styles.inputMultiline]}
-                  value={bio}
-                  onChangeText={setBio}
-                  placeholder="Tell people a little about yourself..."
-                  placeholderTextColor={Colors.muted}
-                  multiline
-                  maxLength={300}
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Ethnicity</Text>
-                <TextInput
-                  style={styles.input}
-                  value={ethnicity}
-                  onChangeText={setEthnicity}
-                  placeholder="Ethiopian, Eritrean, Habesha..."
-                  placeholderTextColor={Colors.muted}
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Religion (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={religion}
-                  onChangeText={setReligion}
-                  placeholder="Orthodox Christian, Muslim..."
-                  placeholderTextColor={Colors.muted}
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Languages (comma separated)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={languagesInput}
-                  onChangeText={setLanguagesInput}
-                  placeholder="Amharic, English, Tigrinya"
-                  placeholderTextColor={Colors.muted}
-                  autoCapitalize="words"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Intent</Text>
-                <View style={styles.intentRow}>
-                  {INTENT_OPTIONS.map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      style={[
-                        styles.intentChip,
-                        intent === option.value && styles.intentChipActive,
-                      ]}
-                      onPress={() => setIntent(option.value)}
-                      activeOpacity={0.85}
-                    >
-                      <Text
-                        style={[
-                          styles.intentChipText,
-                          intent === option.value && styles.intentChipTextActive,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Gender</Text>
-                <View style={styles.intentRow}>
-                  {GENDER_OPTIONS.map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      style={[
-                        styles.intentChip,
-                        gender === option.value && styles.intentChipActive,
-                      ]}
-                      onPress={() => setGender(option.value)}
-                      activeOpacity={0.85}
-                    >
-                      <Text
-                        style={[
-                          styles.intentChipText,
-                          gender === option.value && styles.intentChipTextActive,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </>
-          ) : (
-            <>
-              <View style={styles.field}>
-                <Text style={styles.label}>Preferred genders</Text>
-                <View style={styles.intentRow}>
-                  {GENDER_OPTIONS.map((option) => {
-                    const selected = preferredGenders.includes(option.value);
-                    return (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[
-                          styles.intentChip,
-                          selected && styles.intentChipActive,
-                        ]}
-                        onPress={() =>
-                          setPreferredGenders((prev) =>
-                            selected
-                              ? prev.filter((g) => g !== option.value)
-                              : [...prev, option.value]
-                          )
-                        }
-                        activeOpacity={0.85}
-                      >
-                        <Text
-                          style={[
-                            styles.intentChipText,
-                            selected && styles.intentChipTextActive,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Preferred age range</Text>
-                <View style={styles.ageRow}>
-                  <TextInput
-                    style={[styles.input, styles.ageInput]}
-                    value={preferredAgeMin}
-                    onChangeText={setPreferredAgeMin}
-                    keyboardType="number-pad"
-                    placeholder="Min"
-                    placeholderTextColor={Colors.muted}
-                    maxLength={2}
-                  />
-                  <Text style={styles.ageDash}>—</Text>
-                  <TextInput
-                    style={[styles.input, styles.ageInput]}
-                    value={preferredAgeMax}
-                    onChangeText={setPreferredAgeMax}
-                    keyboardType="number-pad"
-                    placeholder="Max"
-                    placeholderTextColor={Colors.muted}
-                    maxLength={2}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.switchRow}>
-                <View style={styles.switchInfo}>
-                  <Text style={styles.switchTitle}>Open to connections</Text>
-                  <Text style={styles.switchSub}>
-                    Used for group and event-based matching.
-                  </Text>
-                </View>
-                <Switch
-                  value={isOpenToConnections}
-                  onValueChange={setIsOpenToConnections}
-                  trackColor={{ false: Colors.border, true: Colors.olive }}
-                  thumbColor={Colors.white}
-                />
-              </View>
-              <View style={styles.switchRow}>
-                <View style={styles.switchInfo}>
-                  <Text style={styles.switchTitle}>Dating Mode</Text>
-                  <Text style={styles.switchSub}>
-                    Turns on swipe-based dating profiles.
-                  </Text>
-                </View>
-                <Switch
-                  value={datingModeEnabled}
-                  onValueChange={setDatingModeEnabled}
-                  trackColor={{ false: Colors.border, true: Colors.olive }}
-                  thumbColor={Colors.white}
-                />
-              </View>
-
-              {!isEditMode ? (
-                <View style={styles.field}>
-                  <View style={styles.photoHeader}>
-                    <Text style={styles.label}>Photos</Text>
-                    <Text style={styles.photoCount}>{photos.length}/4</Text>
-                  </View>
-                  <View style={styles.photoRow}>
-                    {photos.map((photo) => (
-                      <View key={photo.uri} style={styles.photoWrap}>
-                        <Image source={{ uri: photo.uri }} style={styles.photo} />
-                        <TouchableOpacity
-                          style={styles.removePhotoBtn}
-                          onPress={() => removePhoto(photo.uri)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.removePhotoText}>×</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                    {photos.length < 4 ? (
-                      <TouchableOpacity
-                        style={[styles.addPhotoBtn, pickingPhoto && styles.addPhotoBtnDisabled]}
-                        onPress={addPhoto}
-                        activeOpacity={0.85}
-                        disabled={pickingPhoto}
-                      >
-                        {pickingPhoto ? (
-                          <ActivityIndicator size="small" color={Colors.terracotta} />
-                        ) : (
-                          <Text style={styles.addPhotoText}>+ Add</Text>
-                        )}
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                </View>
-              ) : null}
-
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            </>
-          )}
-        </ScrollView>
-
-        {/* ── Pinned bottom action bar (always above keyboard) ── */}
-        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 8 }]}>
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={[styles.secondaryBtn, styles.actionFlex1]}
-              onPress={step === 1 ? handleBack : () => setStep(1)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.secondaryBtnText}>
-                {step === 1 ? 'Back' : 'Step 1'}
-              </Text>
-            </TouchableOpacity>
-
-            {step === 1 ? (
-              <TouchableOpacity
-                style={[styles.btn, styles.actionFlex2, !canProceedStep1 && styles.btnDisabled]}
-                onPress={() => setStep(2)}
-                disabled={!canProceedStep1}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.btnText}>Continue</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.btn, styles.actionFlex2, !canSubmit && styles.btnDisabled]}
-                onPress={saveProfile}
-                disabled={!canSubmit}
-                activeOpacity={0.85}
-              >
-                {saving ? (
-                  <ActivityIndicator color={Colors.white} />
-                ) : (
-                  <Text style={styles.btnText}>{isEditMode ? 'Save Changes' : 'Save & Continue'}</Text>
-                )}
-              </TouchableOpacity>
-            )}
+          <View style={styles.field}>
+            <Text style={styles.label}>Full name <Text style={styles.required}>*</Text></Text>
+            <TextInput
+              style={styles.input}
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Tigist Haile"
+              placeholderTextColor={Colors.muted}
+              autoCapitalize="words"
+            />
           </View>
-        </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>City <Text style={styles.required}>*</Text></Text>
+            <TextInput
+              style={styles.input}
+              value={city}
+              onChangeText={setCity}
+              placeholder="Washington, DC"
+              placeholderTextColor={Colors.muted}
+              autoCapitalize="words"
+            />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Birth date <Text style={styles.required}>*</Text></Text>
+            <TouchableOpacity
+              style={styles.dateInput}
+              onPress={() => setShowDatePicker(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.dateInputText, !displayBirthDate && styles.dateInputPlaceholder]}>
+                {displayBirthDate || 'Select your birth date'}
+              </Text>
+              <Ionicons name="calendar-outline" size={18} color={Colors.muted} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.field}>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Bio</Text>
+              <Text style={styles.charCount}>{bio.length}/300</Text>
+            </View>
+            <TextInput
+              style={[styles.input, styles.inputMultiline]}
+              value={bio}
+              onChangeText={setBio}
+              placeholder="Tell people a little about yourself..."
+              placeholderTextColor={Colors.muted}
+              multiline
+              maxLength={300}
+            />
+          </View>
+
+          {/* ── Culture & Identity ── */}
+          <Text style={styles.sectionHeader}>Culture &amp; Identity</Text>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Ethnicity <Text style={styles.required}>*</Text></Text>
+            <TextInput
+              style={styles.input}
+              value={ethnicity}
+              onChangeText={setEthnicity}
+              placeholder="Ethiopian, Eritrean, Habesha..."
+              placeholderTextColor={Colors.muted}
+            />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Religion</Text>
+            <TextInput
+              style={styles.input}
+              value={religion}
+              onChangeText={setReligion}
+              placeholder="Orthodox Christian, Muslim..."
+              placeholderTextColor={Colors.muted}
+            />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Languages</Text>
+            <TextInput
+              style={styles.input}
+              value={languagesInput}
+              onChangeText={setLanguagesInput}
+              placeholder="Amharic, English, Tigrinya"
+              placeholderTextColor={Colors.muted}
+              autoCapitalize="words"
+            />
+          </View>
+
+          {/* ── Preferences ── */}
+          <Text style={styles.sectionHeader}>Preferences</Text>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Intent <Text style={styles.required}>*</Text></Text>
+            <View style={styles.intentRow}>
+              {INTENT_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.intentChip, intent === option.value && styles.intentChipActive]}
+                  onPress={() => setIntent(option.value)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.intentChipText, intent === option.value && styles.intentChipTextActive]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Gender <Text style={styles.required}>*</Text></Text>
+            <View style={styles.intentRow}>
+              {GENDER_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.intentChip, gender === option.value && styles.intentChipActive]}
+                  onPress={() => setGender(option.value)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.intentChipText, gender === option.value && styles.intentChipTextActive]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Interested in</Text>
+            <View style={styles.intentRow}>
+              {GENDER_OPTIONS.map((option) => {
+                const selected = preferredGenders.includes(option.value);
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[styles.intentChip, selected && styles.intentChipActive]}
+                    onPress={() =>
+                      setPreferredGenders((prev) =>
+                        selected ? prev.filter((g) => g !== option.value) : [...prev, option.value]
+                      )
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.intentChipText, selected && styles.intentChipTextActive]}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Preferred age range</Text>
+            <View style={styles.ageRow}>
+              <TextInput
+                style={[styles.input, styles.ageInput]}
+                value={preferredAgeMin}
+                onChangeText={setPreferredAgeMin}
+                keyboardType="number-pad"
+                placeholder="Min"
+                placeholderTextColor={Colors.muted}
+                maxLength={2}
+              />
+              <Text style={styles.ageDash}>—</Text>
+              <TextInput
+                style={[styles.input, styles.ageInput]}
+                value={preferredAgeMax}
+                onChangeText={setPreferredAgeMax}
+                keyboardType="number-pad"
+                placeholder="Max"
+                placeholderTextColor={Colors.muted}
+                maxLength={2}
+              />
+            </View>
+          </View>
+
+          {/* ── Privacy ── */}
+          <Text style={styles.sectionHeader}>Privacy</Text>
+
+          <View style={styles.switchRow}>
+            <View style={styles.switchIconWrap}>
+              <Ionicons name="git-network-outline" size={18} color={Colors.olive} />
+            </View>
+            <View style={styles.switchInfo}>
+              <Text style={styles.switchTitle}>Open to connections</Text>
+              <Text style={styles.switchSub}>Used for group and event-based matching.</Text>
+            </View>
+            <Switch
+              value={isOpenToConnections}
+              onValueChange={setIsOpenToConnections}
+              trackColor={{ false: Colors.border, true: Colors.olive }}
+              thumbColor={Colors.white}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={[styles.switchIconWrap, { backgroundColor: 'rgba(196,98,45,0.1)' }]}>
+              <Ionicons name="flame-outline" size={18} color={Colors.terracotta} />
+            </View>
+            <View style={styles.switchInfo}>
+              <Text style={styles.switchTitle}>Dating Mode</Text>
+              <Text style={styles.switchSub}>Turns on swipe-based dating profiles.</Text>
+            </View>
+            <Switch
+              value={datingModeEnabled}
+              onValueChange={setDatingModeEnabled}
+              trackColor={{ false: Colors.border, true: Colors.terracotta }}
+              thumbColor={Colors.white}
+            />
+          </View>
+
+          {!isEditMode && (
+            <View style={styles.field}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>Photos</Text>
+                <Text style={styles.charCount}>{photos.length}/4</Text>
+              </View>
+              <View style={styles.photoRow}>
+                {photos.map((photo) => (
+                  <View key={photo.uri} style={styles.photoWrap}>
+                    <Image source={{ uri: photo.uri }} style={styles.photo} />
+                    <TouchableOpacity
+                      style={styles.removePhotoBtn}
+                      onPress={() => removePhoto(photo.uri)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.removePhotoText}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {photos.length < 4 && (
+                  <TouchableOpacity
+                    style={[styles.addPhotoBtn, pickingPhoto && styles.addPhotoBtnDisabled]}
+                    onPress={addPhoto}
+                    activeOpacity={0.85}
+                    disabled={pickingPhoto}
+                  >
+                    {pickingPhoto ? (
+                      <ActivityIndicator size="small" color={Colors.terracotta} />
+                    ) : (
+                      <Text style={styles.addPhotoText}>+ Add</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* ── Date picker modal ── */}
+      {showDatePicker && (
+        <Modal transparent animationType="fade" onRequestClose={() => setShowDatePicker(false)}>
+          <TouchableOpacity style={styles.datePickerBackdrop} activeOpacity={1} onPress={() => setShowDatePicker(false)} />
+          <View style={[styles.datePickerSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.datePickerHandle} />
+            <View style={styles.datePickerHeader}>
+              <Text style={styles.datePickerTitle}>Birth date</Text>
+              <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                <Text style={styles.datePickerDone}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <DateTimePicker
+              value={birthDateObj}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              maximumDate={new Date(new Date().setFullYear(new Date().getFullYear() - 18))}
+              onChange={(event, date) => {
+                if (Platform.OS === 'android') setShowDatePicker(false);
+                if (event.type === 'set' && date) {
+                  const y = date.getUTCFullYear();
+                  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+                  const d = String(date.getUTCDate()).padStart(2, '0');
+                  setBirthDate(`${y}-${m}-${d}`);
+                }
+              }}
+              style={styles.datePicker}
+            />
+          </View>
+        </Modal>
+      )}
 
     </View>
   );
@@ -736,60 +734,68 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCenter: { flex: 1 },
   wordmark: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.terracotta,
     letterSpacing: 2,
     textTransform: 'uppercase',
-    marginBottom: 6,
+    marginBottom: 2,
   },
   title: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '900',
     color: Colors.ink,
-    marginBottom: 4,
   },
-  subtitle: {
-    fontSize: 13,
-    color: Colors.muted,
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  stepPill: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.warmWhite,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  stepPillActive: {
-    borderColor: Colors.terracotta,
+  saveHeaderBtn: {
     backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 64,
   },
-  stepPillText: {
-    fontSize: 11,
-    color: Colors.brownMid,
-    fontWeight: '700',
-  },
-  stepPillTextActive: {
-    color: Colors.white,
-  },
+  saveHeaderBtnDisabled: { backgroundColor: Colors.border },
+  saveHeaderBtnText: { fontSize: 14, fontWeight: '700', color: Colors.white },
 
   // Scrollable form area
   scrollContent: {
     padding: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.xl,
     flexGrow: 1,
+  },
+  sectionHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.terracotta,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    marginTop: 20,
+    marginBottom: 12,
   },
   field: { marginBottom: 14 },
   label: { fontSize: 12, color: Colors.brownMid, fontWeight: '600', marginBottom: 6 },
+  required: { color: Colors.terracotta },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  charCount: { fontSize: 11, color: Colors.muted, fontWeight: '500' },
   input: {
     height: 52,
     backgroundColor: Colors.warmWhite,
@@ -806,6 +812,19 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
+  dateInput: {
+    height: 52,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dateInputText: { fontSize: 15, color: Colors.ink },
+  dateInputPlaceholder: { color: Colors.muted },
   intentRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -816,15 +835,15 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     backgroundColor: Colors.warmWhite,
     borderRadius: Radius.full,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   intentChipActive: {
     backgroundColor: Colors.terracotta,
     borderColor: Colors.terracotta,
   },
   intentChipText: {
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.brownMid,
     fontWeight: '600',
   },
@@ -845,7 +864,7 @@ const styles = StyleSheet.create({
   },
   switchRow: {
     marginTop: 4,
-    marginBottom: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.warmWhite,
@@ -854,6 +873,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  switchIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(122,140,92,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   switchInfo: { flex: 1 },
   switchTitle: {
@@ -866,16 +893,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.muted,
     lineHeight: 16,
-  },
-  photoHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  photoCount: {
-    color: Colors.muted,
-    fontSize: 12,
-    fontWeight: '600',
   },
   photoRow: {
     marginTop: 8,
@@ -919,9 +936,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addPhotoBtnDisabled: {
-    opacity: 0.6,
-  },
+  addPhotoBtnDisabled: { opacity: 0.6 },
   addPhotoText: {
     fontSize: 12,
     color: Colors.terracotta,
@@ -931,20 +946,40 @@ const styles = StyleSheet.create({
     color: Colors.error,
     fontSize: 12,
     marginBottom: 12,
+    marginTop: 4,
   },
 
-  // Pinned bottom action bar
-  bottomBar: {
+  // Date picker sheet
+  datePickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  datePickerSheet: {
+    backgroundColor: Colors.warmWhite,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.cream,
   },
-  actionsRow: {
+  datePickerHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  datePickerHeader: {
     flexDirection: 'row',
-    gap: 10,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
   },
+  datePickerTitle: { fontSize: 16, fontWeight: '700', color: Colors.ink },
+  datePickerDone: { fontSize: 15, fontWeight: '700', color: Colors.terracotta },
+  datePicker: { width: '100%' },
+
+  // Unused legacy styles kept for compatibility
   actionFlex1: { flex: 1 },
   actionFlex2: { flex: 2 },
   btn: {
