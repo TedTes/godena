@@ -25,9 +25,6 @@ export default function AuthChoiceScreen() {
   const [loadingProvider, setLoadingProvider] = useState<Provider | null>(null);
   const [error, setError] = useState('');
 
-  // In Expo Go the godena:// scheme is not registered, so deep links back to it won't
-  // open the app. Instead use Linking.createURL which generates the correct exp:// URL.
-  // In dev-client / standalone, godena:// is registered so we use it directly.
   const isExpoGo = Constants.executionEnvironment === 'storeClient';
   const oauthRedirectTo =
     process.env.EXPO_PUBLIC_OAUTH_REDIRECT?.trim() ??
@@ -37,10 +34,7 @@ export default function AuthChoiceScreen() {
     console.log('[Auth] OAuth redirectTo:', oauthRedirectTo);
   }
 
-
-
   const continueWithAppleNative = async () => {
-    // Use runtime require so app can still compile even before package install.
     let AppleAuthentication: any;
     try {
       AppleAuthentication = require('expo-apple-authentication');
@@ -137,25 +131,19 @@ export default function AuthChoiceScreen() {
 
       if (__DEV__) console.log('[Auth] opening OAuth URL:', data.url);
 
-      // openAuthSessionAsync opens an in-app Safari sheet and intercepts the redirect
-      // URL at the browser level — no deep link registration needed. Works in Expo Go,
-      // dev client, and standalone. The code is returned directly in result.url.
       const result = await WebBrowser.openAuthSessionAsync(data.url, oauthRedirectTo);
 
       if (__DEV__) console.log('[Auth] OAuth result:', result.type, (result as any).url ?? '');
 
       if (result.type !== 'success') {
-        // User cancelled or dismissed the browser — not an error.
         setLoadingProvider(null);
         return;
       }
 
-      // Parse the code / tokens from the callback URL.
       const callbackUrl = result.url;
       const parsed = Linking.parse(callbackUrl);
       const q = (parsed.queryParams ?? {}) as Record<string, string | undefined>;
 
-      // Also check hash fragment (implicit flow fallback).
       const hash = callbackUrl.includes('#') ? callbackUrl.slice(callbackUrl.indexOf('#') + 1) : '';
       const hp = new URLSearchParams(hash);
 
@@ -213,73 +201,125 @@ export default function AuthChoiceScreen() {
     })();
   };
 
+  const isLoading = loadingProvider !== null;
+
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+
+        {/* Top: branding + buttons */}
         <View style={styles.content}>
           <View style={styles.header}>
-            <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+            <Image
+              source={require('../../assets/logo-temp.png')}
+              style={styles.wordmarkLogo}
+              resizeMode="contain"
+            />
             <Text style={styles.title}>Sign in</Text>
-            <Text style={styles.subtitle}>
-              Choose the fastest way to continue.
-            </Text>
+            <Text style={styles.subtitle}>Choose the fastest way to continue.</Text>
           </View>
 
-          {Platform.OS === 'ios' ? (
+          <View style={styles.buttons}>
+            {/* Apple — iOS only */}
+            {Platform.OS === 'ios' ? (
+              <TouchableOpacity
+                style={[styles.primaryBtn, isLoading && loadingProvider !== 'apple' && styles.btnDisabled]}
+                activeOpacity={0.85}
+                onPress={() => continueWithOAuth('apple')}
+                disabled={isLoading}
+                accessibilityLabel="Continue with Apple"
+                accessibilityRole="button"
+              >
+                {loadingProvider === 'apple' ? (
+                  <ActivityIndicator color={Colors.white} />
+                ) : (
+                  <>
+                    <Ionicons name="logo-apple" size={18} color={Colors.white} />
+                    <Text style={styles.primaryBtnText}>Continue with Apple</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : null}
+
+            {/* Google */}
             <TouchableOpacity
-              style={styles.primaryBtn}
+              style={[styles.secondaryBtn, isLoading && loadingProvider !== 'google' && styles.btnDisabled]}
               activeOpacity={0.85}
-              onPress={() => continueWithOAuth('apple')}
-              disabled={loadingProvider !== null}
+              onPress={() => continueWithOAuth('google')}
+              disabled={isLoading}
+              accessibilityLabel="Continue with Google"
+              accessibilityRole="button"
             >
-              {loadingProvider === 'apple' ? (
-                <ActivityIndicator color={Colors.white} />
+              {loadingProvider === 'google' ? (
+                <ActivityIndicator color={Colors.ink} />
               ) : (
                 <>
-                  <Ionicons name="logo-apple" size={18} color={Colors.white} />
-                  <Text style={styles.primaryBtnText}>Continue with Apple</Text>
+                  <Ionicons name="logo-google" size={18} color={Colors.ink} />
+                  <Text style={styles.secondaryBtnText}>Continue with Google</Text>
                 </>
               )}
             </TouchableOpacity>
-          ) : null}
 
-          <TouchableOpacity
-            style={styles.secondaryBtn}
-            activeOpacity={0.85}
-            onPress={() => continueWithOAuth('google')}
-            disabled={loadingProvider !== null}
-          >
-            {loadingProvider === 'google' ? (
-              <ActivityIndicator color={Colors.ink} />
-            ) : (
-              <>
-                <Ionicons name="logo-google" size={18} color={Colors.ink} />
-                <Text style={styles.secondaryBtnText}>Continue with Google</Text>
-              </>
-            )}
-          </TouchableOpacity>
+            {/* Phone */}
+            <TouchableOpacity
+              style={[styles.secondaryBtn, isLoading && styles.btnDisabled]}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(auth)/phone')}
+              disabled={isLoading}
+              accessibilityLabel="Continue with Phone"
+              accessibilityRole="button"
+            >
+              <Ionicons name="call-outline" size={18} color={Colors.ink} />
+              <Text style={styles.secondaryBtnText}>Continue with Phone</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryBtn}
-            activeOpacity={0.85}
-            onPress={() => router.push('/(auth)/phone')}
-            disabled={loadingProvider !== null}
-          >
-            <Ionicons name="call-outline" size={18} color={Colors.ink} />
-            <Text style={styles.secondaryBtnText}>Continue with Phone</Text>
-          </TouchableOpacity>
+            {/* Divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
-          <TouchableOpacity
-            style={styles.tertiaryBtn}
-            activeOpacity={0.75}
-            onPress={() => router.push('/(auth)/email')}
-            disabled={loadingProvider !== null}
-          >
-            <Text style={styles.tertiaryBtnText}>Continue with Email</Text>
-          </TouchableOpacity>
+            {/* Email */}
+            <TouchableOpacity
+              style={[styles.emailBtn, isLoading && styles.btnDisabled]}
+              activeOpacity={0.75}
+              onPress={() => router.push('/(auth)/email')}
+              disabled={isLoading}
+              accessibilityLabel="Continue with Email"
+              accessibilityRole="button"
+            >
+              <Ionicons name="mail-outline" size={16} color={Colors.muted} />
+              <Text style={styles.emailBtnText}>Continue with Email</Text>
+            </TouchableOpacity>
+          </View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
+
+        {/* Bottom: legal footer */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>
+            By continuing, you agree to our{' '}
+            <Text
+              style={styles.footerLink}
+              onPress={() => router.push('/terms')}
+              accessibilityRole="link"
+            >
+              Terms of Service
+            </Text>
+            {' '}and{' '}
+            <Text
+              style={styles.footerLink}
+              onPress={() => router.push('/privacy-policy')}
+              accessibilityRole="link"
+            >
+              Privacy Policy
+            </Text>
+            .
+          </Text>
+        </View>
+
       </SafeAreaView>
     </View>
   );
@@ -287,16 +327,23 @@ export default function AuthChoiceScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
-  safe: { flex: 1 },
-  content: { flex: 1, paddingHorizontal: Spacing.lg, paddingTop: Spacing.xl },
-  header: { marginBottom: 28 },
-  wordmarkLogo: {
-    width: 120,
-    height: 30,
-    marginBottom: 20,
+  safe: { flex: 1, justifyContent: 'space-between' },
+
+  // Content block — vertically centered in the available space
+  content: {
+    flex: 1,
+    paddingHorizontal: Spacing.lg,
+    justifyContent: 'center',
   },
+
+  header: { marginBottom: 28 },
+  wordmarkLogo: { width: 120, height: 30, marginBottom: 20 },
   title: { fontSize: 34, fontWeight: '900', color: Colors.ink, marginBottom: 8 },
-  subtitle: { fontSize: 15, color: Colors.muted, lineHeight: 24 },
+  subtitle: { fontSize: 15, color: Colors.muted, lineHeight: 22 },
+
+  buttons: { gap: 10 },
+
+  // Apple (dark primary)
   primaryBtn: {
     height: 56,
     borderRadius: Radius.full,
@@ -305,9 +352,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 10,
   },
   primaryBtnText: { color: Colors.white, fontSize: 15, fontWeight: '700' },
+
+  // Google / Phone (outlined)
   secondaryBtn: {
     height: 56,
     borderRadius: Radius.full,
@@ -318,19 +366,55 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 10,
   },
   secondaryBtnText: { color: Colors.ink, fontSize: 15, fontWeight: '700' },
-  tertiaryBtn: {
+
+  // Disabled overlay (non-active buttons while another is loading)
+  btnDisabled: { opacity: 0.4 },
+
+  // "or" divider
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 2,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
+  dividerText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
+
+  // Email (ghost text button with icon)
+  emailBtn: {
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    marginTop: 4,
+    flexDirection: 'row',
+    gap: 6,
   },
-  tertiaryBtnText: { color: Colors.muted, fontSize: 14, fontWeight: '600' },
+  emailBtnText: { color: Colors.muted, fontSize: 14, fontWeight: '600' },
+
   errorText: {
-    marginTop: 8,
+    marginTop: 12,
     color: Colors.error,
     fontSize: 12,
+    textAlign: 'center',
+  },
+
+  // Legal footer — pinned to bottom via SafeAreaView bottom edge
+  footer: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: 12,
+    paddingBottom: 8,
+    alignItems: 'center',
+  },
+  footerText: {
+    fontSize: 12,
+    color: Colors.muted,
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 300,
+  },
+  footerLink: {
+    color: Colors.terracotta,
+    fontWeight: '600',
   },
 });
