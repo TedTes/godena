@@ -128,12 +128,26 @@ export default function ProfileSetupScreen() {
       setPreferredAgeMin(existingProfile.preferred_age_min?.toString() ?? '');
       setPreferredAgeMax(existingProfile.preferred_age_max?.toString() ?? '');
       setIsOpenToConnections(existingProfile.is_open_to_connections ?? true);
-      const { data: datingProfile } = await supabase
-        .from('dating_profiles')
-        .select('is_enabled')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      const [{ data: datingProfile }, { data: datingPreferences }] = await Promise.all([
+        supabase
+          .from('dating_profiles')
+          .select('is_enabled')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('dating_preferences')
+          .select('preferred_genders, preferred_age_min, preferred_age_max')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ]);
       setDatingModeEnabled(datingProfile?.is_enabled ?? false);
+      if (datingPreferences) {
+        const allowedGenders = new Set(GENDER_OPTIONS.map((g) => g.value));
+        const prefGenders = (datingPreferences.preferred_genders as GenderValue[] | null) ?? [];
+        setPreferredGenders(prefGenders.filter((g) => allowedGenders.has(g)));
+        setPreferredAgeMin(datingPreferences.preferred_age_min?.toString() ?? '');
+        setPreferredAgeMax(datingPreferences.preferred_age_max?.toString() ?? '');
+      }
       setInitialLoading(false);
     };
 
@@ -330,6 +344,23 @@ export default function ProfileSetupScreen() {
       .upsert({ user_id: user.id, is_enabled: datingModeEnabled }, { onConflict: 'user_id' });
     if (datingProfileError) {
       setError(datingProfileError.message);
+      return;
+    }
+
+    const { error: datingPreferencesError } = await supabase
+      .from('dating_preferences')
+      .upsert(
+        {
+          user_id: user.id,
+          preferred_genders: preferredGenders,
+          preferred_intents: intent ? [intent] : [],
+          preferred_age_min: minAge,
+          preferred_age_max: maxAge,
+        },
+        { onConflict: 'user_id' }
+      );
+    if (datingPreferencesError) {
+      setError(datingPreferencesError.message);
       return;
     }
 

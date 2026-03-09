@@ -102,6 +102,7 @@ type ProfileData = {
 
 const PROFILE_BASE_SELECT =
   'full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, verification_status, avatar_url, photo_urls';
+const ALLOWED_GENDER_VALUES = new Set(GENDER_OPTIONS.map((g) => g.value));
 
 function AvatarImage({ uri, style, onError }: { uri: string; style: object; onError: () => void }) {
   const opacity = React.useRef(new Animated.Value(0)).current;
@@ -157,24 +158,42 @@ export default function ProfileScreen() {
     const resolvedUserId = uid ?? userId;
     if (!resolvedUserId) return;
 
-    const { data } = await supabase
-      .from('profiles')
-      .select(PROFILE_BASE_SELECT)
-      .eq('user_id', resolvedUserId)
-      .maybeSingle();
+    const [{ data }, { data: datingProfile }, { data: datingPreferences }] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select(PROFILE_BASE_SELECT)
+        .eq('user_id', resolvedUserId)
+        .maybeSingle(),
+      supabase
+        .from('dating_profiles')
+        .select('is_enabled')
+        .eq('user_id', resolvedUserId)
+        .maybeSingle(),
+      supabase
+        .from('dating_preferences')
+        .select('preferred_genders, preferred_intents, preferred_age_min, preferred_age_max')
+        .eq('user_id', resolvedUserId)
+        .maybeSingle(),
+    ]);
 
     const profileData = data as ProfileData | null;
-
-    const { data: datingProfile } = await supabase
-      .from('dating_profiles')
-      .select('is_enabled')
-      .eq('user_id', resolvedUserId)
-      .maybeSingle();
+    const mergedProfileData = profileData
+      ? {
+          ...profileData,
+          intent: (datingPreferences?.preferred_intents?.[0] as string | undefined) ?? profileData.intent,
+          preferred_genders:
+            (datingPreferences?.preferred_genders as string[] | null | undefined)?.filter((g) =>
+              ALLOWED_GENDER_VALUES.has(g as (typeof GENDER_OPTIONS)[number]['value'])
+            ) ?? profileData.preferred_genders,
+          preferred_age_min: datingPreferences?.preferred_age_min ?? profileData.preferred_age_min,
+          preferred_age_max: datingPreferences?.preferred_age_max ?? profileData.preferred_age_max,
+        }
+      : null;
     setDatingModeOn(datingProfile?.is_enabled ?? false);
 
-    setProfile(profileData ?? null);
+    setProfile(mergedProfileData ?? null);
 
-    const avatarValue = profileData?.avatar_url ?? null;
+    const avatarValue = mergedProfileData?.avatar_url ?? null;
     if (avatarValue) {
       const uri = await resolvePhotoUri(avatarValue);
       setAvatarUri(uri ?? null);
@@ -183,8 +202,8 @@ export default function ProfileScreen() {
     }
 
     const mergedPaths = [
-      ...(profileData?.avatar_url ? [profileData.avatar_url] : []),
-      ...(profileData?.photo_urls ?? []),
+      ...(mergedProfileData?.avatar_url ? [mergedProfileData.avatar_url] : []),
+      ...(mergedProfileData?.photo_urls ?? []),
     ].filter((v, i, arr): v is string => Boolean(v) && arr.indexOf(v) === i);
 
     if (mergedPaths.length > 0) {
@@ -193,7 +212,7 @@ export default function ProfileScreen() {
         .map((path, index) => ({
           path,
           uri: resolved[index],
-          isAvatar: Boolean(profileData?.avatar_url && path === profileData.avatar_url),
+          isAvatar: Boolean(mergedProfileData?.avatar_url && path === mergedProfileData.avatar_url),
         }))
         .filter((p): p is { uri: string; path: string; isAvatar: boolean } => Boolean(p.uri));
       setGalleryPhotos(photos);
@@ -301,13 +320,43 @@ export default function ProfileScreen() {
   const updateProfilePatch = async (patch: Partial<ProfileData>) => {
     if (!userId || !profile) return false;
     const prev = profile;
-    setProfile({ ...prev, ...patch });
+    const next = { ...prev, ...patch };
+    setProfile(next);
     const { error } = await supabase.from('profiles').update(patch).eq('user_id', userId);
     if (error) {
       setProfile(prev);
       Alert.alert('Update failed', error.message);
       return false;
     }
+
+    const containsDatingPreferencePatch =
+      Object.prototype.hasOwnProperty.call(patch, 'intent') ||
+      Object.prototype.hasOwnProperty.call(patch, 'preferred_genders') ||
+      Object.prototype.hasOwnProperty.call(patch, 'preferred_age_min') ||
+      Object.prototype.hasOwnProperty.call(patch, 'preferred_age_max');
+
+    if (containsDatingPreferencePatch) {
+      const preferredGenders = (next.preferred_genders ?? []).filter((g) =>
+        ALLOWED_GENDER_VALUES.has(g as (typeof GENDER_OPTIONS)[number]['value'])
+      );
+      const preferredIntent = next.intent ? [next.intent] : [];
+      const { error: datingPrefError } = await supabase
+        .from('dating_preferences')
+        .upsert(
+          {
+            user_id: userId,
+            preferred_genders: preferredGenders,
+            preferred_intents: preferredIntent,
+            preferred_age_min: next.preferred_age_min ?? null,
+            preferred_age_max: next.preferred_age_max ?? null,
+          },
+          { onConflict: 'user_id' }
+        );
+      if (datingPrefError) {
+        Alert.alert('Update warning', `Profile saved, but dating preferences failed to sync: ${datingPrefError.message}`);
+      }
+    }
+
     return true;
   };
 
@@ -529,6 +578,26 @@ export default function ProfileScreen() {
     if (error) {
       setProfile((prev) => (prev ? { ...prev, is_open_to_connections: prevValue } : prev));
       Alert.alert('Update failed', error.message);
+      setUpdatingGlobalOpen(false);
+      return;
+    }
+
+    if (!value) {
+      const { error: clearSignalsError } = await supabase
+        .from('group_memberships')
+        .update({ is_open_to_connect: false, openness_set_at: null })
+        .eq('user_id', userId)
+        .eq('is_open_to_connect', true);
+      if (clearSignalsError) {
+        setProfile((prev) => (prev ? { ...prev, is_open_to_connections: prevValue } : prev));
+        await supabase
+          .from('profiles')
+          .update({ is_open_to_connections: prevValue })
+          .eq('user_id', userId);
+        Alert.alert('Update failed', clearSignalsError.message);
+        setUpdatingGlobalOpen(false);
+        return;
+      }
     }
     setUpdatingGlobalOpen(false);
   };
