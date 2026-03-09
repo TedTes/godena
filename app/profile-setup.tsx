@@ -204,6 +204,21 @@ export default function ProfileSetupScreen() {
     setPhotos((prev) => prev.filter((p) => p.uri !== uri));
   };
 
+  const handleDatingModeToggle = (value: boolean) => {
+    if (value && !datingModeEnabled) {
+      Alert.alert(
+        'Enable Dating Mode?',
+        'Dating Mode uses your dating preferences to show swipe candidates and create matches.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Enable', onPress: () => setDatingModeEnabled(true) },
+        ]
+      );
+      return;
+    }
+    setDatingModeEnabled(value);
+  };
+
   const saveProfile = async () => {
     if (!canSubmit) {
       return;
@@ -667,7 +682,7 @@ export default function ProfileSetupScreen() {
             </View>
             <Switch
               value={datingModeEnabled}
-              onValueChange={setDatingModeEnabled}
+              onValueChange={handleDatingModeToggle}
               trackColor={{ false: Colors.border, true: Colors.terracotta }}
               thumbColor={Colors.white}
             />

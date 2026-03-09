@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Colors, Radius, Spacing } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 import { resolveProfilePhotoUrl } from '../lib/services/photoUrls';
