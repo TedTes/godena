@@ -248,6 +248,10 @@ export default function EventDetailScreen() {
       Alert.alert('Invalid date/time', 'Please enter a valid date and time.');
       return;
     }
+    if (startsAt.getTime() < Date.now() - 60 * 1000) {
+      Alert.alert('Invalid date/time', 'Event date/time cannot be in the past.');
+      return;
+    }
 
     setSavingEdit(true);
     const { data, error } = await updateEventByOwner({

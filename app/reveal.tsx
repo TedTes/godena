@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../constants/theme';
@@ -47,6 +47,7 @@ function ageFromBirthDate(birthDate: string | null) {
 }
 
 export default function RevealScreen() {
+  const { connectionId } = useLocalSearchParams<{ connectionId?: string }>();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -75,7 +76,10 @@ export default function RevealScreen() {
       setUserId(uid);
 
       const { data: pendingRows } = await fetchPendingConnections(uid);
-      const pending = ((pendingRows ?? []) as PendingConnection[])[0] ?? null;
+      const pendingList = (pendingRows ?? []) as PendingConnection[];
+      const pending = connectionId
+        ? (pendingList.find((row) => row.id === connectionId) ?? null)
+        : (pendingList[0] ?? null);
       if (!pending) {
         setConnection(null);
         setCounterpart(null);
@@ -111,7 +115,7 @@ export default function RevealScreen() {
     return {
       matchName,
       matchAge,
-      matchPhoto: counterpart?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=300&q=80',
+      matchPhoto: counterpart?.avatar_url || null,
       groupName,
       groupEmoji,
       message: `You and ${matchName} have both been showing up in ${groupName}. Want a gentle introduction?`,
@@ -240,7 +244,15 @@ export default function RevealScreen() {
             <View style={styles.photoRing3} />
             <View style={styles.photoRing2} />
             <View style={styles.photoRing1} />
-            <Image source={{ uri: revealData.matchPhoto }} style={styles.photo} />
+            {revealData.matchPhoto ? (
+              <Image source={{ uri: revealData.matchPhoto }} style={styles.photo} />
+            ) : (
+              <View style={styles.photoPlaceholder}>
+                <Text style={styles.photoInitial}>
+                  {(revealData.matchName?.trim()?.[0] || '?').toUpperCase()}
+                </Text>
+              </View>
+            )}
             <View style={styles.sparkle}>
               <Text style={styles.sparkleText}>✨</Text>
             </View>
@@ -403,6 +415,21 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
+  },
+  photoPlaceholder: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: Colors.cream,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoInitial: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: Colors.brown,
   },
   sparkle: {
     position: 'absolute',
