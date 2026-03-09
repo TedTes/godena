@@ -602,7 +602,7 @@ export default function ProfileScreen() {
     setUpdatingGlobalOpen(false);
   };
 
-  const toggleDatingMode = async (value: boolean) => {
+  const persistDatingMode = async (value: boolean) => {
     if (!userId || updatingGlobalOpen) return;
     const prevValue = datingModeOn;
 
@@ -621,6 +621,22 @@ export default function ProfileScreen() {
     }
 
     setUpdatingGlobalOpen(false);
+  };
+
+  const toggleDatingMode = async (value: boolean) => {
+    if (!userId || updatingGlobalOpen) return;
+    if (value && !datingModeOn) {
+      Alert.alert(
+        'Enable Dating Mode?',
+        'Dating Mode uses your dating preferences to show swipe candidates and create matches.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Enable', onPress: () => { void persistDatingMode(true); } },
+        ]
+      );
+      return;
+    }
+    await persistDatingMode(value);
   };
 
   const deleteAccount = async () => {
