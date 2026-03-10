@@ -204,7 +204,7 @@ export default function AuthChoiceScreen() {
   };
 
   const isLoading = loadingProvider !== null;
-  const { logoStyle, subtitleStyle, buttonsStyle } = useAuthEntrance();
+  const { logoStyle, titleStyle, subtitleStyle, buttonsStyle } = useAuthEntrance();
 
   return (
     <View style={styles.container}>
@@ -220,6 +220,7 @@ export default function AuthChoiceScreen() {
                 resizeMode="contain"
               />
             </Animated.View>
+            <Animated.Text style={[styles.title, titleStyle]}>Sign in</Animated.Text>
             <Animated.Text style={[styles.subtitle, subtitleStyle]}>Choose the fastest way to continue.</Animated.Text>
           </View>
 
@@ -333,16 +334,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   safe: { flex: 1, justifyContent: 'space-between' },
 
-  // Content block — vertically centered in the available space
   content: {
     flex: 1,
     paddingHorizontal: Spacing.lg,
-    justifyContent: 'center',
+    paddingTop: 52,
+    justifyContent: 'flex-start',
   },
 
-  header: { marginBottom: 28 },
-  wordmarkLogo: { width: 120, height: 30, marginBottom: 20 },
-  title: { fontSize: 34, fontWeight: '900', color: Colors.ink, marginBottom: 8 },
+  header: { marginBottom: 34 },
+  wordmarkLogo: { width: 152, height: 152, marginBottom: 14 },
+  title: { fontSize: 30, fontWeight: '900', color: Colors.ink, marginBottom: 8, letterSpacing: -0.5 },
   subtitle: { fontSize: 15, color: Colors.muted, lineHeight: 22 },
 
   buttons: { gap: 10 },
