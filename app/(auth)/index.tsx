@@ -8,6 +8,7 @@ import {
   View,
   Image,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
@@ -17,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolvePostAuthRoute } from '../../lib/services/auth';
+import { useAuthEntrance } from '../../hooks/useAuthEntrance';
 
 type Provider = 'google' | 'apple';
 
@@ -202,6 +204,7 @@ export default function AuthChoiceScreen() {
   };
 
   const isLoading = loadingProvider !== null;
+  const { logoStyle, subtitleStyle, buttonsStyle } = useAuthEntrance();
 
   return (
     <View style={styles.container}>
@@ -210,16 +213,17 @@ export default function AuthChoiceScreen() {
         {/* Top: branding + buttons */}
         <View style={styles.content}>
           <View style={styles.header}>
-            <Image
-              source={require('../../assets/logo-temp.png')}
-              style={styles.wordmarkLogo}
-              resizeMode="contain"
-            />
-            <Text style={styles.title}>Sign in</Text>
-            <Text style={styles.subtitle}>Choose the fastest way to continue.</Text>
+            <Animated.View style={logoStyle}>
+              <Image
+                source={require('../../assets/godena-logo.png')}
+                style={styles.wordmarkLogo}
+                resizeMode="contain"
+              />
+            </Animated.View>
+            <Animated.Text style={[styles.subtitle, subtitleStyle]}>Choose the fastest way to continue.</Animated.Text>
           </View>
 
-          <View style={styles.buttons}>
+          <Animated.View style={[styles.buttons, buttonsStyle]}>
             {/* Apple — iOS only */}
             {Platform.OS === 'ios' ? (
               <TouchableOpacity
@@ -292,7 +296,7 @@ export default function AuthChoiceScreen() {
               <Ionicons name="mail-outline" size={16} color={Colors.muted} />
               <Text style={styles.emailBtnText}>Continue with Email</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>

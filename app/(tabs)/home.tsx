@@ -336,7 +336,7 @@ export default function HomeScreen() {
         <Animated.View style={[{ flex: 1 }, enterStyle]}>
           <View style={styles.header}>
             {/* Top row: logo */}
-            <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+            <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
             {/* Greeting row: text + bell on same line */}
             <View style={styles.greetingRow}>
               <View style={styles.greetingLeft}>

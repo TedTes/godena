@@ -62,7 +62,7 @@ export default function PhoneScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+              <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
               <Text style={styles.title}>What's your{'\n'}phone number?</Text>
               <Text style={styles.subtitle}>
                 We'll send a one-time code. Your number is never shown to other members.

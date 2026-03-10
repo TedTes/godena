@@ -121,7 +121,7 @@ export default function EmailAuthScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+              <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
               <Text style={styles.title}>
                 {mode === 'signin' ? 'Welcome back' : 'Create your account'}
               </Text>

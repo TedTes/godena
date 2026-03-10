@@ -103,7 +103,7 @@ export default function OtpScreen() {
               <Text style={styles.backText}>← Back</Text>
             </TouchableOpacity>
 
-            <Image source={require('../../assets/logo-temp.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+            <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
             <Text style={styles.title}>Enter the code</Text>
             <Text style={styles.subtitle}>
               We sent a 6-digit code to your number. It expires in 10 minutes.
