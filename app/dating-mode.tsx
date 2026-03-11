@@ -26,7 +26,7 @@ import { resolveProfilePhotoUrl } from '../lib/services/photoUrls';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type DatingState = 'loading' | 'error' | 'disabled' | 'caught_up' | 'active';
-type DatingTab   = 'discover' | 'profile' | 'preferences';
+type DatingTab   = 'discover' | 'matches' | 'messages' | 'profile';
 
 type DatingCandidateRow = {
   user_id: string;
@@ -74,24 +74,32 @@ type PrefDraft = {
   isGloballyVisible: boolean;
 };
 
+type DatingMatchRow = {
+  matchId: string;
+  otherUserId: string;
+  name: string;
+  city: string;
+  photoUrl: string | null;
+  matchedAt: string;
+};
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SCREEN_WIDTH   = Dimensions.get('window').width;
+const SCREEN_WIDTH    = Dimensions.get('window').width;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
-const PHOTO_SIZE     = 58;
-const PHOTO_ASPECT   = 1.25;
+const PHOTO_W         = 96;
+const PHOTO_H         = Math.round(PHOTO_W * 1.3);
 
-const GENDER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'man',       label: 'Men' },
-  { value: 'woman',     label: 'Women' },
+const GENDER_OPTIONS = [
+  { value: 'man',        label: 'Men'        },
+  { value: 'woman',      label: 'Women'      },
   { value: 'non_binary', label: 'Non-binary' },
 ];
-
-const INTENT_OPTIONS: { value: string; label: string }[] = [
+const INTENT_OPTIONS = [
   { value: 'friendship', label: 'Friendship' },
-  { value: 'dating',     label: 'Dating' },
-  { value: 'long_term',  label: 'Long-term' },
-  { value: 'marriage',   label: 'Marriage' },
+  { value: 'dating',     label: 'Dating'     },
+  { value: 'long_term',  label: 'Long-term'  },
+  { value: 'marriage',   label: 'Marriage'   },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -119,25 +127,24 @@ function getInitials(name: string): string {
   return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase();
 }
 
-function labelFor(value: string, options: { value: string; label: string }[]): string {
-  return options.find((o) => o.value === value)?.label ?? value.replace('_', ' ');
-}
-
 function toggle<T>(arr: T[], item: T): T[] {
   return arr.includes(item) ? arr.filter((v) => v !== item) : [...arr, item];
 }
 
-// ── Shared components ─────────────────────────────────────────────────────────
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7)  return `${days}d ago`;
+  return `${Math.floor(days / 7)}w ago`;
+}
+
+// ── DatingHeader ──────────────────────────────────────────────────────────────
 
 function DatingHeader({
-  name,
-  likedCount,
-  onBack,
-}: {
-  name: string;
-  likedCount: number;
-  onBack: () => void;
-}) {
+  name, onBack,
+}: { name: string; likedCount: number; onBack: () => void }) {
   return (
     <View style={styles.header}>
       <TouchableOpacity
@@ -148,30 +155,28 @@ function DatingHeader({
         <Ionicons name="chevron-back" size={20} color={Colors.brown} />
       </TouchableOpacity>
       <Text style={styles.headerTitle}>{name}</Text>
-      <View style={styles.headerBadge}>
-        <Ionicons name="heart" size={10} color={Colors.terracotta} />
-        <Text style={styles.headerBadgeText}>{likedCount}</Text>
-      </View>
+      <View style={styles.headerSpacer} />
     </View>
   );
 }
 
+// ── TabBar ────────────────────────────────────────────────────────────────────
+
+const TAB_CONFIG: { id: DatingTab; icon: string; label: string }[] = [
+  { id: 'discover',  icon: 'compass',  label: 'Discover' },
+  { id: 'matches',   icon: 'heart',    label: 'Matches'  },
+  { id: 'messages',  icon: 'chatbubble', label: 'Messages' },
+  { id: 'profile',   icon: 'person',   label: 'Profile'  },
+];
+
 function TabBar({
-  active,
-  onSelect,
-}: {
-  active: DatingTab;
-  onSelect: (tab: DatingTab) => void;
-}) {
-  const tabs: { id: DatingTab; icon: string; label: string }[] = [
-    { id: 'discover',    icon: 'compass-outline',  label: 'Discover' },
-    { id: 'profile',     icon: 'person-outline',   label: 'Profile'  },
-    { id: 'preferences', icon: 'options-outline',  label: 'Prefs'    },
-  ];
+  active, onSelect, matchCount,
+}: { active: DatingTab; onSelect: (t: DatingTab) => void; matchCount: number }) {
   return (
     <View style={styles.tabBar}>
-      {tabs.map((t) => {
+      {TAB_CONFIG.map((t) => {
         const isActive = active === t.id;
+        const showBadge = t.id === 'matches' && matchCount > 0 && !isActive;
         return (
           <TouchableOpacity
             key={t.id}
@@ -179,15 +184,17 @@ function TabBar({
             onPress={() => onSelect(t.id)}
             activeOpacity={0.7}
           >
-            <Ionicons
-              name={isActive ? (t.icon.replace('-outline', '') as never) : (t.icon as never)}
-              size={22}
-              color={isActive ? Colors.terracotta : Colors.muted}
-            />
+            <View style={styles.tabIconWrap}>
+              <Ionicons
+                name={`${t.icon}${isActive ? '' : '-outline'}` as never}
+                size={22}
+                color={isActive ? Colors.terracotta : Colors.muted}
+              />
+              {showBadge ? <View style={styles.tabBadge} /> : null}
+            </View>
             <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
               {t.label}
             </Text>
-            {isActive ? <View style={styles.tabDot} /> : null}
           </TouchableOpacity>
         );
       })}
@@ -195,7 +202,8 @@ function TabBar({
   );
 }
 
-/** No-photo placeholder inside swipe card */
+// ── NoPhotoCard ───────────────────────────────────────────────────────────────
+
 function NoPhotoCard({
   profile,
   likeOpacity,
@@ -235,139 +243,253 @@ function NoPhotoCard({
   );
 }
 
-// ── Discover tab ──────────────────────────────────────────────────────────────
+// ── DiscoverEmpty ─────────────────────────────────────────────────────────────
 
 function DiscoverEmpty({
-  datingState,
-  loadError,
-  onRefresh,
-  onGoToPrefs,
-  onGoToProfile,
+  datingState, loadError, onRefresh, onAdjustPrefs, onGoToProfile,
 }: {
   datingState: DatingState;
   loadError: string;
   onRefresh: () => void;
-  onGoToPrefs: () => void;
+  onAdjustPrefs: () => void;
   onGoToProfile: () => void;
 }) {
   if (datingState === 'loading') {
     return (
-      <View style={styles.discoverEmpty}>
-        <View style={styles.discoverEmptyIcon}>
+      <View style={styles.emptyWrap}>
+        <View style={styles.emptyIconWrap}>
           <ActivityIndicator size="large" color={Colors.terracotta} />
         </View>
-        <Text style={styles.discoverEmptyTitle}>Finding profiles</Text>
-        <Text style={styles.discoverEmptySub}>Looking for people in your groups…</Text>
+        <Text style={styles.emptyTitle}>Finding profiles</Text>
+        <Text style={styles.emptySub}>Looking for people in your groups…</Text>
       </View>
     );
   }
-
   if (datingState === 'error') {
     return (
-      <View style={styles.discoverEmpty}>
-        <View style={[styles.discoverEmptyIcon, { backgroundColor: 'rgba(217,79,79,0.09)' }]}>
+      <View style={styles.emptyWrap}>
+        <View style={[styles.emptyIconWrap, { backgroundColor: 'rgba(217,79,79,0.09)' }]}>
           <Ionicons name="cloud-offline-outline" size={32} color={Colors.error} />
         </View>
-        <Text style={styles.discoverEmptyTitle}>Couldn't load profiles</Text>
-        <Text style={styles.discoverEmptySub}>{loadError}</Text>
-        <TouchableOpacity style={styles.emptyPrimaryBtn} onPress={onRefresh} activeOpacity={0.85}>
-          <Text style={styles.emptyPrimaryBtnText}>Try again</Text>
+        <Text style={styles.emptyTitle}>Couldn't load profiles</Text>
+        <Text style={styles.emptySub}>{loadError}</Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={onRefresh} activeOpacity={0.85}>
+          <Text style={styles.primaryBtnText}>Try again</Text>
         </TouchableOpacity>
       </View>
     );
   }
-
   if (datingState === 'disabled') {
     return (
-      <View style={styles.discoverEmpty}>
-        <View style={[styles.discoverEmptyIcon, { backgroundColor: 'rgba(196,98,45,0.10)' }]}>
+      <View style={styles.emptyWrap}>
+        <View style={[styles.emptyIconWrap, { backgroundColor: 'rgba(196,98,45,0.10)' }]}>
           <Ionicons name="heart-dislike-outline" size={32} color={Colors.terracotta} />
         </View>
-        <Text style={styles.discoverEmptyTitle}>Dating Mode is off</Text>
-        <Text style={styles.discoverEmptySub}>
-          Enable Dating Mode in your profile to start connecting with people from your groups.
+        <Text style={styles.emptyTitle}>Dating Mode is off</Text>
+        <Text style={styles.emptySub}>
+          Enable Dating Mode in your profile settings to start connecting with people in your groups.
         </Text>
-        <TouchableOpacity style={styles.emptyPrimaryBtn} onPress={onGoToProfile} activeOpacity={0.85}>
-          <Text style={styles.emptyPrimaryBtnText}>Go to Profile tab</Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={onGoToProfile} activeOpacity={0.85}>
+          <Text style={styles.primaryBtnText}>Go to Profile</Text>
         </TouchableOpacity>
       </View>
     );
   }
-
   // caught_up
   return (
-    <View style={styles.discoverEmpty}>
-      <View style={[styles.discoverEmptyIcon, { backgroundColor: 'rgba(90,158,111,0.10)' }]}>
+    <View style={styles.emptyWrap}>
+      <View style={[styles.emptyIconWrap, { backgroundColor: 'rgba(90,158,111,0.10)' }]}>
         <Ionicons name="checkmark-circle-outline" size={32} color="#5a9e6f" />
       </View>
-      <Text style={styles.discoverEmptyTitle}>No new suggestions</Text>
-      <Text style={styles.discoverEmptySub}>
+      <Text style={styles.emptyTitle}>No new suggestions</Text>
+      <Text style={styles.emptySub}>
         You've seen everyone available right now. Adjust your preferences or check back later.
       </Text>
-      <TouchableOpacity style={styles.emptyPrimaryBtn} onPress={onGoToPrefs} activeOpacity={0.85}>
+      <TouchableOpacity style={styles.primaryBtn} onPress={onAdjustPrefs} activeOpacity={0.85}>
         <Ionicons name="options-outline" size={15} color={Colors.white} />
-        <Text style={styles.emptyPrimaryBtnText}>Adjust preferences</Text>
+        <Text style={styles.primaryBtnText}>Adjust preferences</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.emptySecondaryBtn} onPress={onRefresh} activeOpacity={0.7}>
-        <Text style={styles.emptySecondaryBtnText}>Refresh</Text>
+      <TouchableOpacity style={styles.secondaryBtn} onPress={onRefresh} activeOpacity={0.7}>
+        <Text style={styles.secondaryBtnText}>Refresh</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-// ── Profile tab ───────────────────────────────────────────────────────────────
+// ── MatchesTab ────────────────────────────────────────────────────────────────
+
+function MatchesTab({
+  matches, loading, onChat,
+}: { matches: DatingMatchRow[]; loading: boolean; onChat: (matchId: string) => void }) {
+  if (loading) {
+    return (
+      <View style={styles.emptyWrap}>
+        <ActivityIndicator color={Colors.terracotta} />
+        <Text style={styles.emptySub}>Loading matches…</Text>
+      </View>
+    );
+  }
+  if (matches.length === 0) {
+    return (
+      <View style={styles.emptyWrap}>
+        <View style={[styles.emptyIconWrap, { backgroundColor: 'rgba(196,98,45,0.10)' }]}>
+          <Ionicons name="heart-outline" size={32} color={Colors.terracotta} />
+        </View>
+        <Text style={styles.emptyTitle}>No matches yet</Text>
+        <Text style={styles.emptySub}>
+          Keep swiping in Discover — when someone likes you back, they'll appear here.
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <ScrollView
+      contentContainerStyle={styles.matchesGrid}
+      showsVerticalScrollIndicator={false}
+    >
+      <Text style={styles.matchesHeading}>{matches.length} match{matches.length === 1 ? '' : 'es'}</Text>
+      <View style={styles.matchGridRow}>
+        {matches.map((m) => (
+          <TouchableOpacity
+            key={m.matchId}
+            style={styles.matchCard}
+            onPress={() => onChat(m.matchId)}
+            activeOpacity={0.85}
+          >
+            <View style={styles.matchAvatar}>
+              {m.photoUrl ? (
+                <Image source={{ uri: m.photoUrl }} style={styles.matchAvatarImg} />
+              ) : (
+                <View style={styles.matchAvatarFallback}>
+                  <Text style={styles.matchAvatarInitials}>{getInitials(m.name)}</Text>
+                </View>
+              )}
+              <View style={styles.matchNewDot} />
+            </View>
+            <Text style={styles.matchName} numberOfLines={1}>{m.name}</Text>
+            {m.city ? <Text style={styles.matchCity} numberOfLines={1}>{m.city}</Text> : null}
+            <View style={styles.matchChatBtn}>
+              <Ionicons name="chatbubble-outline" size={13} color={Colors.terracotta} />
+              <Text style={styles.matchChatBtnText}>Say hi</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+// ── MessagesTab ───────────────────────────────────────────────────────────────
+
+function MessagesTab({
+  matches, loading, onChat,
+}: { matches: DatingMatchRow[]; loading: boolean; onChat: (matchId: string) => void }) {
+  if (loading) {
+    return (
+      <View style={styles.emptyWrap}>
+        <ActivityIndicator color={Colors.terracotta} />
+        <Text style={styles.emptySub}>Loading…</Text>
+      </View>
+    );
+  }
+  if (matches.length === 0) {
+    return (
+      <View style={styles.emptyWrap}>
+        <View style={[styles.emptyIconWrap, { backgroundColor: 'rgba(196,98,45,0.08)' }]}>
+          <Ionicons name="chatbubbles-outline" size={32} color={Colors.terracotta} />
+        </View>
+        <Text style={styles.emptyTitle}>No conversations yet</Text>
+        <Text style={styles.emptySub}>
+          Once you match with someone, you can start a conversation here.
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <ScrollView showsVerticalScrollIndicator={false}>
+      {matches.map((m, i) => (
+        <TouchableOpacity
+          key={m.matchId}
+          style={[styles.msgRow, i === 0 && styles.msgRowFirst]}
+          onPress={() => onChat(m.matchId)}
+          activeOpacity={0.8}
+        >
+          <View style={styles.msgAvatar}>
+            {m.photoUrl ? (
+              <Image source={{ uri: m.photoUrl }} style={styles.msgAvatarImg} />
+            ) : (
+              <View style={styles.msgAvatarFallback}>
+                <Text style={styles.msgAvatarInitials}>{getInitials(m.name)}</Text>
+              </View>
+            )}
+          </View>
+          <View style={styles.msgBody}>
+            <Text style={styles.msgName}>{m.name}</Text>
+            {m.city ? <Text style={styles.msgCity}>{m.city}</Text> : null}
+            <Text style={styles.msgHint}>Tap to start chatting</Text>
+          </View>
+          <View style={styles.msgRight}>
+            <Text style={styles.msgTime}>{timeAgo(m.matchedAt)}</Text>
+            <Ionicons name="chevron-forward" size={14} color={Colors.muted} />
+          </View>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+}
+
+// ── ProfileTab (profile + preferences merged) ─────────────────────────────────
 
 function ProfileTab({
-  summary,
-  photoPaths,
-  photoUrls,
-  updating,
-  onAdd,
-  onRemove,
-  onEditProfile,
+  summary, photoPaths, photoUrls, updatingPhotos,
+  prefDraft, savingPrefs,
+  onAdd, onRemove, onSaveBio,
+  onPrefUpdate, onPrefSave,
+  scrollRef,
 }: {
   summary: MyDatingSummary | null;
   photoPaths: string[];
   photoUrls: string[];
-  updating: boolean;
+  updatingPhotos: boolean;
+  prefDraft: PrefDraft;
+  savingPrefs: boolean;
   onAdd: () => void;
   onRemove: (path: string, idx: number) => void;
-  onEditProfile: () => void;
+  onSaveBio: (text: string) => Promise<void>;
+  onPrefUpdate: (patch: Partial<PrefDraft>) => void;
+  onPrefSave: () => void;
+  scrollRef: React.RefObject<ScrollView | null>;
 }) {
-  const hasAbout = Boolean(summary?.about?.trim());
+  const [bioText, setBioText] = useState(summary?.about ?? '');
+  const [bioFocused, setBioFocused] = useState(false);
 
+  // Sync bioText when summary loads/changes
+  useEffect(() => { setBioText(summary?.about ?? ''); }, [summary?.about]);
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.tabScroll}
       contentContainerStyle={styles.tabScrollContent}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
     >
-      {/* Identity row */}
+      {/* ── Identity card ─────────────────────────────────────────────────── */}
       <View style={styles.profileCard}>
-        <View style={styles.profileCardHeader}>
-          <View>
-            <Text style={styles.profileName}>{summary?.fullName ?? 'You'}</Text>
-            {summary?.city ? (
-              <View style={styles.metaRow}>
-                <Ionicons name="location-outline" size={12} color={Colors.muted} />
-                <Text style={styles.profileCity}>{summary.city}</Text>
-              </View>
-            ) : null}
+        <Text style={styles.profileName}>{summary?.fullName ?? 'You'}</Text>
+        {summary?.city ? (
+          <View style={styles.metaRow}>
+            <Ionicons name="location-outline" size={12} color={Colors.muted} />
+            <Text style={styles.profileCity}>{summary.city}</Text>
           </View>
-          <View style={styles.profileCardHeaderRight}>
-            {summary?.intent && summary.intent !== 'Not set' ? (
-              <View style={styles.intentBadge}>
-                <Text style={styles.intentBadgeText}>{summary.intent}</Text>
-              </View>
-            ) : null}
-            <TouchableOpacity onPress={onEditProfile} style={styles.editBtn} activeOpacity={0.8}>
-              <Ionicons name="pencil-outline" size={12} color={Colors.terracotta} />
-              <Text style={styles.editBtnText}>Edit</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        ) : null}
+      </View>
 
-        {/* Photo strip */}
+      {/* ── Photos card ──────────────────────────────────────────────────── */}
+      <View style={[styles.profileCard, styles.profileCardSpaced]}>
+        <View style={styles.profileCardSectionHeader}>
+          <Text style={styles.sectionLabel}>Dating photos</Text>
+          <Text style={styles.photoCount}>{photoPaths.length} / 6</Text>
+        </View>
         <View style={styles.photoStrip}>
           {photoUrls.map((url, idx) => (
             <View key={`${photoPaths[idx] ?? idx}`} style={styles.photoWrap}>
@@ -379,10 +501,10 @@ function ProfileTab({
               <TouchableOpacity
                 style={styles.photoRemoveBtn}
                 onPress={() => { const p = photoPaths[idx]; if (p) onRemove(p, idx); }}
-                disabled={updating}
+                disabled={updatingPhotos}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="close-circle" size={18} color={Colors.error} />
+                <Ionicons name="close-circle" size={20} color={Colors.error} />
               </TouchableOpacity>
             </View>
           ))}
@@ -390,14 +512,14 @@ function ProfileTab({
             <TouchableOpacity
               style={styles.photoAddBtn}
               onPress={onAdd}
-              disabled={updating}
+              disabled={updatingPhotos}
               activeOpacity={0.8}
             >
-              {updating ? (
+              {updatingPhotos ? (
                 <ActivityIndicator size="small" color={Colors.terracotta} />
               ) : (
                 <>
-                  <Ionicons name="add" size={20} color={Colors.terracotta} />
+                  <Ionicons name="add" size={22} color={Colors.terracotta} />
                   {photoPaths.length === 0 ? (
                     <Text style={styles.photoAddLabel}>Add photo</Text>
                   ) : null}
@@ -406,67 +528,54 @@ function ProfileTab({
             </TouchableOpacity>
           ) : null}
         </View>
+      </View>
 
-        {/* Bio */}
-        <View style={styles.profileSection}>
-          <Text style={styles.sectionLabel}>About</Text>
-          <Text style={styles.profileBio}>
-            {hasAbout ? summary!.about : 'No bio yet — tap Edit to add one.'}
-          </Text>
-        </View>
-
-        {/* Languages */}
+      {/* ── Bio card ─────────────────────────────────────────────────────── */}
+      <View style={[styles.profileCard, styles.profileCardSpaced]}>
+        <Text style={styles.sectionLabel}>About</Text>
+        <TextInput
+          style={[styles.profileBio, styles.profileBioInput, bioFocused && styles.profileBioInputFocused]}
+          value={bioText}
+          onChangeText={setBioText}
+          onFocus={() => setBioFocused(true)}
+          onBlur={() => {
+            setBioFocused(false);
+            void onSaveBio(bioText.trim());
+          }}
+          multiline
+          placeholder="Write a short bio…"
+          placeholderTextColor={Colors.muted}
+          textAlignVertical="top"
+        />
         {(summary?.languages ?? []).length > 0 ? (
-          <View style={styles.metaRow}>
+          <View style={[styles.metaRow, { marginTop: 4 }]}>
             <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.muted} />
             <Text style={styles.metaText}>{summary!.languages.join(' · ')}</Text>
           </View>
         ) : null}
       </View>
-    </ScrollView>
-  );
-}
 
-// ── Preferences tab ───────────────────────────────────────────────────────────
-
-function PreferencesTab({
-  draft,
-  saving,
-  onUpdate,
-  onSave,
-}: {
-  draft: PrefDraft;
-  saving: boolean;
-  onUpdate: (patch: Partial<PrefDraft>) => void;
-  onSave: () => void;
-}) {
-  return (
-    <ScrollView
-      style={styles.tabScroll}
-      contentContainerStyle={styles.tabScrollContent}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={styles.prefIntro}>
-        Your preferences determine who you see in the Discover feed.
-      </Text>
+      {/* ── Preferences section ──────────────────────────────────────────── */}
+      <View style={styles.prefDivider}>
+        <View style={styles.prefDividerLine} />
+        <Text style={styles.prefDividerLabel}>Preferences</Text>
+        <View style={styles.prefDividerLine} />
+      </View>
 
       {/* Gender */}
       <View style={styles.prefCard}>
         <Text style={styles.sectionLabel}>I'm interested in</Text>
         <View style={styles.chipRow}>
           {GENDER_OPTIONS.map((opt) => {
-            const selected = draft.preferredGenders.includes(opt.value);
+            const sel = prefDraft.preferredGenders.includes(opt.value);
             return (
               <TouchableOpacity
                 key={opt.value}
-                style={[styles.chip, selected && styles.chipActive]}
-                onPress={() => onUpdate({ preferredGenders: toggle(draft.preferredGenders, opt.value) })}
+                style={[styles.chip, sel && styles.chipActive]}
+                onPress={() => onPrefUpdate({ preferredGenders: toggle(prefDraft.preferredGenders, opt.value) })}
                 activeOpacity={0.75}
               >
-                <Text style={[styles.chipText, selected && styles.chipTextActive]}>
-                  {opt.label}
-                </Text>
+                <Text style={[styles.chipText, sel && styles.chipTextActive]}>{opt.label}</Text>
               </TouchableOpacity>
             );
           })}
@@ -478,17 +587,15 @@ function PreferencesTab({
         <Text style={styles.sectionLabel}>Looking for</Text>
         <View style={styles.chipRow}>
           {INTENT_OPTIONS.map((opt) => {
-            const selected = draft.preferredIntents.includes(opt.value);
+            const sel = prefDraft.preferredIntents.includes(opt.value);
             return (
               <TouchableOpacity
                 key={opt.value}
-                style={[styles.chip, selected && styles.chipActive]}
-                onPress={() => onUpdate({ preferredIntents: toggle(draft.preferredIntents, opt.value) })}
+                style={[styles.chip, sel && styles.chipActive]}
+                onPress={() => onPrefUpdate({ preferredIntents: toggle(prefDraft.preferredIntents, opt.value) })}
                 activeOpacity={0.75}
               >
-                <Text style={[styles.chipText, selected && styles.chipTextActive]}>
-                  {opt.label}
-                </Text>
+                <Text style={[styles.chipText, sel && styles.chipTextActive]}>{opt.label}</Text>
               </TouchableOpacity>
             );
           })}
@@ -501,53 +608,52 @@ function PreferencesTab({
         <View style={styles.ageRow}>
           <AgeField
             label="Min"
-            value={draft.preferredAgeMin}
-            min={18}
-            max={draft.preferredAgeMax ?? 99}
-            onChange={(v) => onUpdate({ preferredAgeMin: v })}
+            value={prefDraft.preferredAgeMin}
+            floor={18}
+            ceiling={prefDraft.preferredAgeMax ?? 99}
+            onChange={(v) => onPrefUpdate({ preferredAgeMin: v })}
           />
           <View style={styles.ageDash} />
           <AgeField
             label="Max"
-            value={draft.preferredAgeMax}
-            min={draft.preferredAgeMin ?? 18}
-            max={99}
-            onChange={(v) => onUpdate({ preferredAgeMax: v })}
+            value={prefDraft.preferredAgeMax}
+            floor={prefDraft.preferredAgeMin ?? 18}
+            ceiling={99}
+            onChange={(v) => onPrefUpdate({ preferredAgeMax: v })}
           />
         </View>
-        {(draft.preferredAgeMin == null && draft.preferredAgeMax == null) ? (
-          <Text style={styles.ageHint}>No limit set — you'll see all ages.</Text>
+        {prefDraft.preferredAgeMin == null && prefDraft.preferredAgeMax == null ? (
+          <Text style={styles.ageHint}>No age limit — you'll see everyone.</Text>
         ) : null}
       </View>
 
       {/* Visibility */}
       <View style={styles.prefCard}>
         <View style={styles.visibilityRow}>
-          <View>
+          <View style={{ flex: 1, marginRight: 12 }}>
             <Text style={styles.sectionLabel}>Visible in dating</Text>
             <Text style={styles.visHint}>
-              {draft.isGloballyVisible
-                ? 'Others in your groups can see you.'
-                : "You're hidden \u2014 you can still swipe."}
+              {prefDraft.isGloballyVisible
+                ? 'Others in your groups can discover you.'
+                : "You're hidden — you can still swipe."}
             </Text>
           </View>
           <Switch
-            value={draft.isGloballyVisible}
-            onValueChange={(v) => onUpdate({ isGloballyVisible: v })}
+            value={prefDraft.isGloballyVisible}
+            onValueChange={(v) => onPrefUpdate({ isGloballyVisible: v })}
             trackColor={{ false: Colors.border, true: 'rgba(196,98,45,0.35)' }}
-            thumbColor={draft.isGloballyVisible ? Colors.terracotta : Colors.muted}
+            thumbColor={prefDraft.isGloballyVisible ? Colors.terracotta : Colors.muted}
           />
         </View>
       </View>
 
-      {/* Save */}
       <TouchableOpacity
-        style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-        onPress={onSave}
-        disabled={saving}
+        style={[styles.saveBtn, savingPrefs && styles.saveBtnDisabled]}
+        onPress={onPrefSave}
+        disabled={savingPrefs}
         activeOpacity={0.85}
       >
-        {saving ? (
+        {savingPrefs ? (
           <ActivityIndicator color={Colors.white} />
         ) : (
           <Text style={styles.saveBtnText}>Save Preferences</Text>
@@ -558,44 +664,28 @@ function PreferencesTab({
 }
 
 function AgeField({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  value: number | null;
-  min: number;
-  max: number;
-  onChange: (v: number | null) => void;
-}) {
-  const decrement = () => {
-    if (value == null) return;
-    const next = value - 1;
-    onChange(next < min ? null : next);
-  };
-  const increment = () => {
-    const next = (value ?? min - 1) + 1;
-    onChange(next > max ? max : next);
-  };
-
+  label, value, floor, ceiling, onChange,
+}: { label: string; value: number | null; floor: number; ceiling: number; onChange: (v: number | null) => void }) {
   return (
     <View style={styles.ageField}>
       <Text style={styles.ageFieldLabel}>{label}</Text>
       <View style={styles.ageControl}>
         <TouchableOpacity
-          onPress={decrement}
+          onPress={() => {
+            if (value == null) return;
+            onChange(value - 1 < floor ? null : value - 1);
+          }}
           style={styles.ageStepBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="remove" size={16} color={Colors.brownMid} />
         </TouchableOpacity>
-        <View style={styles.ageValueWrap}>
-          <Text style={styles.ageValue}>{value ?? 'Any'}</Text>
-        </View>
+        <Text style={styles.ageValue}>{value ?? 'Any'}</Text>
         <TouchableOpacity
-          onPress={increment}
+          onPress={() => {
+            const next = (value ?? floor - 1) + 1;
+            onChange(next > ceiling ? ceiling : next);
+          }}
           style={styles.ageStepBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
@@ -611,44 +701,45 @@ function AgeField({
 export default function DatingModeScreen() {
   const router = useRouter();
 
-  // ── State ──────────────────────────────────────────────────────────────────
-
-  // Core fetch
-  const [loading, setLoading]             = useState(true);
-  const [loadError, setLoadError]         = useState('');
+  // ── Core state ──────────────────────────────────────────────────────────────
+  const [loading,        setLoading]        = useState(true);
+  const [loadError,      setLoadError]      = useState('');
   const [datingDisabled, setDatingDisabled] = useState(false);
 
   // Swipe
-  const [profiles, setProfiles]           = useState<DatingCardProfile[]>([]);
-  const [index, setIndex]                 = useState(0);
-  const [likedCount, setLikedCount]       = useState(0);
-  const [photoIndexByProfile, setPhotoIndexByProfile] = useState<Record<string, number>>({});
-  const [submittingSwipe, setSubmittingSwipe] = useState(false);
+  const [profiles,           setProfiles]           = useState<DatingCardProfile[]>([]);
+  const [index,              setIndex]              = useState(0);
+  const [likedCount,         setLikedCount]         = useState(0);
+  const [photoIdxByProfile,  setPhotoIdxByProfile]  = useState<Record<string, number>>({});
+  const [submittingSwipe,    setSubmittingSwipe]    = useState(false);
 
   // My profile
-  const [headerName, setHeaderName]       = useState('You');
-  const [userId, setUserId]               = useState<string | null>(null);
-  const [mySummary, setMySummary]         = useState<MyDatingSummary | null>(null);
-  const [myPhotoPaths, setMyPhotoPaths]   = useState<string[]>([]);
-  const [myPhotoUrls, setMyPhotoUrls]     = useState<string[]>([]);
+  const [headerName,     setHeaderName]     = useState('You');
+  const [userId,         setUserId]         = useState<string | null>(null);
+  const [mySummary,      setMySummary]      = useState<MyDatingSummary | null>(null);
+  const [myPhotoPaths,   setMyPhotoPaths]   = useState<string[]>([]);
+  const [myPhotoUrls,    setMyPhotoUrls]    = useState<string[]>([]);
   const [updatingPhotos, setUpdatingPhotos] = useState(false);
 
-  // Preferences
-  const [prefDraft, setPrefDraft]         = useState<PrefDraft>({
-    preferredGenders: [],
-    preferredIntents: [],
-    preferredAgeMin: null,
-    preferredAgeMax: null,
-    isGloballyVisible: true,
+  // Matches
+  const [datingMatches,  setDatingMatches]  = useState<DatingMatchRow[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [matchesLoaded,  setMatchesLoaded]  = useState(false);
+
+  // Preferences draft
+  const [prefDraft,   setPrefDraft]   = useState<PrefDraft>({
+    preferredGenders: [], preferredIntents: [],
+    preferredAgeMin: null, preferredAgeMax: null, isGloballyVisible: true,
   });
-  const [savingPrefs, setSavingPrefs]     = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
 
-  // Tab
-  const [activeTab, setActiveTab]         = useState<DatingTab>('discover');
+  // Navigation
+  const [activeTab, setActiveTab] = useState<DatingTab>('discover');
 
-  const position = useRef(new Animated.ValueXY()).current;
+  const position      = useRef(new Animated.ValueXY()).current;
+  const profileScroll = useRef<ScrollView>(null);
 
-  // ── Derived ────────────────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────────────────────
 
   const datingState: DatingState = loading
     ? 'loading'
@@ -662,10 +753,10 @@ export default function DatingModeScreen() {
 
   const currentProfile  = profiles[index] ?? null;
   const nextProfile     = profiles[index + 1] ?? null;
-  const currentPhotoIdx = currentProfile ? (photoIndexByProfile[currentProfile.id] ?? 0) : 0;
-  const nextPhotoIdx    = nextProfile    ? (photoIndexByProfile[nextProfile.id]    ?? 0) : 0;
+  const curPhotoIdx     = currentProfile ? (photoIdxByProfile[currentProfile.id] ?? 0) : 0;
+  const nxtPhotoIdx     = nextProfile    ? (photoIdxByProfile[nextProfile.id]    ?? 0) : 0;
 
-  // ── Swipe animations ───────────────────────────────────────────────────────
+  // ── Swipe animations ─────────────────────────────────────────────────────────
 
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
@@ -673,13 +764,13 @@ export default function DatingModeScreen() {
     extrapolate: 'clamp',
   });
   const likeOpacity = position.x.interpolate({
-    inputRange: [0, 60, 120],   outputRange: [0, 0.75, 1], extrapolate: 'clamp',
+    inputRange: [0, 60, 120], outputRange: [0, 0.75, 1], extrapolate: 'clamp',
   });
   const passOpacity = position.x.interpolate({
     inputRange: [-120, -60, 0], outputRange: [1, 0.75, 0], extrapolate: 'clamp',
   });
 
-  // ── Swipe handlers ─────────────────────────────────────────────────────────
+  // ── Swipe handlers ───────────────────────────────────────────────────────────
 
   const resetPosition = () => {
     Animated.spring(position, { toValue: { x: 0, y: 0 }, useNativeDriver: false, friction: 6 }).start();
@@ -719,7 +810,7 @@ export default function DatingModeScreen() {
   };
 
   const cyclePhoto = (id: string, count: number, dir: 'next' | 'prev') => {
-    setPhotoIndexByProfile((prev) => {
+    setPhotoIdxByProfile((prev) => {
       const cur  = prev[id] ?? 0;
       const next = dir === 'next' ? (cur + 1) % count : (cur - 1 + count) % count;
       return { ...prev, [id]: next };
@@ -731,7 +822,7 @@ export default function DatingModeScreen() {
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, g) =>
           !submittingSwipe && (Math.abs(g.dx) > 5 || Math.abs(g.dy) > 5),
-        onPanResponderMove:   (_, g) => { position.setValue({ x: g.dx, y: g.dy * 0.15 }); },
+        onPanResponderMove:    (_, g) => { position.setValue({ x: g.dx, y: g.dy * 0.15 }); },
         onPanResponderRelease: (_, g) => {
           if (g.dx >  SWIPE_THRESHOLD) { forceSwipe('right'); return; }
           if (g.dx < -SWIPE_THRESHOLD) { forceSwipe('left');  return; }
@@ -742,7 +833,7 @@ export default function DatingModeScreen() {
     [position, submittingSwipe, currentProfile]
   );
 
-  // ── Photo management ───────────────────────────────────────────────────────
+  // ── Photo management ─────────────────────────────────────────────────────────
 
   const addPhoto = async () => {
     if (!userId || updatingPhotos) return;
@@ -765,12 +856,9 @@ export default function DatingModeScreen() {
       const contentType = asset.mimeType || 'image/jpeg';
       const ext         = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
       const filePath    = `${userId}/${Date.now()}-dating.${ext}`;
-      let fileData: ArrayBuffer;
-      if (asset.base64) {
-        fileData = await (await fetch(`data:${contentType};base64,${asset.base64}`)).arrayBuffer();
-      } else {
-        fileData = await (await fetch(asset.uri)).arrayBuffer();
-      }
+      const fileData    = asset.base64
+        ? await (await fetch(`data:${contentType};base64,${asset.base64}`)).arrayBuffer()
+        : await (await fetch(asset.uri)).arrayBuffer();
       const { error: upErr } = await supabase.storage
         .from('profile-photos').upload(filePath, fileData, { contentType, upsert: false });
       if (upErr) { Alert.alert('Upload failed', upErr.message); return; }
@@ -802,44 +890,98 @@ export default function DatingModeScreen() {
     setUpdatingPhotos(false);
   };
 
-  // ── Preferences save ───────────────────────────────────────────────────────
+  // ── Preferences save ─────────────────────────────────────────────────────────
 
   const savePreferences = async () => {
     if (!userId || savingPrefs) return;
     setSavingPrefs(true);
     const { error } = await supabase.from('dating_preferences').upsert(
       {
-        user_id:              userId,
-        preferred_genders:    prefDraft.preferredGenders,
-        preferred_intents:    prefDraft.preferredIntents,
-        preferred_age_min:    prefDraft.preferredAgeMin,
-        preferred_age_max:    prefDraft.preferredAgeMax,
-        is_globally_visible:  prefDraft.isGloballyVisible,
+        user_id:             userId,
+        preferred_genders:   prefDraft.preferredGenders,
+        preferred_intents:   prefDraft.preferredIntents,
+        preferred_age_min:   prefDraft.preferredAgeMin,
+        preferred_age_max:   prefDraft.preferredAgeMax,
+        is_globally_visible: prefDraft.isGloballyVisible,
       },
       { onConflict: 'user_id' }
     );
     setSavingPrefs(false);
-    if (error) {
-      Alert.alert('Save failed', error.message);
-      return;
-    }
-    // Update local summary to reflect saved changes
-    setMySummary((prev) =>
-      prev
-        ? {
-            ...prev,
-            preferredGenders: prefDraft.preferredGenders,
-            preferredIntents: prefDraft.preferredIntents,
-            preferredAgeMin:  prefDraft.preferredAgeMin,
-            preferredAgeMax:  prefDraft.preferredAgeMax,
-            isGloballyVisible: prefDraft.isGloballyVisible,
-          }
-        : prev
-    );
+    if (error) { Alert.alert('Save failed', error.message); return; }
+    setMySummary((prev) => prev ? {
+      ...prev,
+      preferredGenders:    prefDraft.preferredGenders,
+      preferredIntents:    prefDraft.preferredIntents,
+      preferredAgeMin:     prefDraft.preferredAgeMin,
+      preferredAgeMax:     prefDraft.preferredAgeMax,
+      isGloballyVisible:   prefDraft.isGloballyVisible,
+    } : prev);
     Alert.alert('Saved', 'Your preferences have been updated.');
   };
 
-  // ── Data loading ───────────────────────────────────────────────────────────
+  // ── Bio save ─────────────────────────────────────────────────────────────────
+
+  const saveDatingBio = async (text: string) => {
+    if (!userId) return;
+    await supabase.from('dating_profiles')
+      .upsert({ user_id: userId, is_enabled: true, about: text }, { onConflict: 'user_id' });
+    setMySummary((prev) => prev ? { ...prev, about: text } : prev);
+  };
+
+  // ── Matches loading ──────────────────────────────────────────────────────────
+
+  const loadMatches = useCallback(async () => {
+    if (!userId || matchesLoading) return;
+    setMatchesLoading(true);
+    const { data: matchData, error: matchErr } = await supabase
+      .from('dating_matches')
+      .select('id, user_a_id, user_b_id, created_at')
+      .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+
+    if (matchErr || !matchData) { setMatchesLoading(false); return; }
+
+    const otherIds = matchData.map((m) => m.user_a_id === userId ? m.user_b_id : m.user_a_id);
+    if (otherIds.length === 0) { setDatingMatches([]); setMatchesLoading(false); setMatchesLoaded(true); return; }
+
+    const { data: profData } = await supabase
+      .from('profiles')
+      .select('user_id, full_name, city, avatar_url')
+      .in('user_id', otherIds);
+
+    const profMap = Object.fromEntries((profData ?? []).map((p) => [p.user_id, p]));
+
+    const resolved: DatingMatchRow[] = await Promise.all(
+      matchData.map(async (m) => {
+        const otherId = m.user_a_id === userId ? m.user_b_id : m.user_a_id;
+        const prof    = profMap[otherId];
+        const photoUrl = prof?.avatar_url
+          ? await resolveProfilePhotoUrl(prof.avatar_url)
+          : null;
+        return {
+          matchId:     m.id,
+          otherUserId: otherId,
+          name:        prof?.full_name?.trim() || 'Member',
+          city:        prof?.city?.trim()       || '',
+          photoUrl:    photoUrl ?? null,
+          matchedAt:   m.created_at,
+        };
+      })
+    );
+
+    setDatingMatches(resolved);
+    setMatchesLoading(false);
+    setMatchesLoaded(true);
+  }, [userId, matchesLoading]);
+
+  // Load matches lazily when switching to matches/messages tab
+  useEffect(() => {
+    if ((activeTab === 'matches' || activeTab === 'messages') && userId && !matchesLoaded) {
+      void loadMatches();
+    }
+  }, [activeTab, userId, matchesLoaded, loadMatches]);
+
+  // ── Candidates loading ───────────────────────────────────────────────────────
 
   const loadCandidates = useCallback(async (resetRound: boolean) => {
     setLoading(true);
@@ -874,34 +1016,25 @@ export default function DatingModeScreen() {
     setMyPhotoPaths(paths);
     setMyPhotoUrls(urls.map((u) => u ?? ''));
 
-    const preferredGenders  = (dprefs?.preferred_genders  as string[] | null | undefined) ?? [];
-    const preferredIntents  = (dprefs?.preferred_intents  as string[] | null | undefined) ?? [];
-    const preferredAgeMin   = dprefs?.preferred_age_min   ?? null;
-    const preferredAgeMax   = dprefs?.preferred_age_max   ?? null;
-    const isGloballyVisible = dprefs?.is_globally_visible ?? true;
+    const pg  = (dprefs?.preferred_genders  as string[] | null | undefined) ?? [];
+    const pi  = (dprefs?.preferred_intents  as string[] | null | undefined) ?? [];
+    const pam = dprefs?.preferred_age_min   ?? null;
+    const pax = dprefs?.preferred_age_max   ?? null;
+    const vis = dprefs?.is_globally_visible ?? true;
 
     setMySummary({
-      fullName:    myName || 'You',
-      city:        me?.city?.trim() || 'City not set',
-      about:       dp?.about?.trim() || me?.bio?.trim() || '',
-      intent:      formatIntent((me?.intent as DatingCandidateRow['intent'] | null | undefined) ?? null),
-      languages:   (me?.languages as string[] | null | undefined) ?? [],
-      preferredGenders,
-      preferredIntents: preferredIntents.map((v) =>
-        v === 'long_term' ? 'Long-term' : v.replace('_', ' ')
-      ),
-      preferredAgeMin,
-      preferredAgeMax,
-      isGloballyVisible,
+      fullName:         myName || 'You',
+      city:             me?.city?.trim() || 'City not set',
+      about:            dp?.about?.trim() || me?.bio?.trim() || '',
+      intent:           formatIntent((me?.intent as DatingCandidateRow['intent'] | null | undefined) ?? null),
+      languages:        (me?.languages as string[] | null | undefined) ?? [],
+      preferredGenders: pg,
+      preferredIntents: pi.map((v) => v === 'long_term' ? 'Long-term' : v.replace('_', ' ')),
+      preferredAgeMin:  pam,
+      preferredAgeMax:  pax,
+      isGloballyVisible: vis,
     });
-
-    setPrefDraft({
-      preferredGenders,
-      preferredIntents,
-      preferredAgeMin,
-      preferredAgeMax,
-      isGloballyVisible,
-    });
+    setPrefDraft({ preferredGenders: pg, preferredIntents: pi, preferredAgeMin: pam, preferredAgeMax: pax, isGloballyVisible: vis });
 
     if ((dp?.is_enabled ?? false) === false) {
       setProfiles([]); setDatingDisabled(true); setLoading(false); return;
@@ -935,7 +1068,7 @@ export default function DatingModeScreen() {
 
     setIndex(0);
     setProfiles(prepared);
-    setPhotoIndexByProfile(
+    setPhotoIdxByProfile(
       prepared.reduce<Record<string, number>>((acc, p) => { acc[p.id] = 0; return acc; }, {})
     );
     setLoading(false);
@@ -949,34 +1082,45 @@ export default function DatingModeScreen() {
     }, [profiles.length, index, loadCandidates])
   );
 
-  const handleRefresh   = () => { setIndex(0); void loadCandidates(false); };
-  const handleGoToPrefs = () => setActiveTab('preferences');
+  // ── Handlers ─────────────────────────────────────────────────────────────────
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const handleRefresh    = () => { setIndex(0); void loadCandidates(false); };
+  const handleAdjustPrefs = () => {
+    setActiveTab('profile');
+    // Small delay to let tab switch render before scrolling to prefs
+    setTimeout(() => profileScroll.current?.scrollToEnd({ animated: true }), 150);
+  };
+  const handleChat = (matchId: string) => router.push(`/chat/${matchId}?source=dating`);
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   const showDeck = datingState === 'active';
 
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <DatingHeader name={headerName} likedCount={likedCount} onBack={() => router.back()} />
+      {/* Header */}
+      <SafeAreaView style={styles.headerSafe} edges={['top']}>
+        <DatingHeader
+          name={headerName}
+          likedCount={likedCount}
+          onBack={() => router.back()}
+        />
       </SafeAreaView>
 
-      {/* ── Tab content ──────────────────────────────────────────────────── */}
+      {/* Tab content */}
       <View style={styles.tabContent}>
 
-        {/* DISCOVER tab */}
+        {/* ── DISCOVER ─────────────────────────────────────────────────────── */}
         {activeTab === 'discover' ? (
           showDeck ? (
-            // ── Active swipe deck (non-scrolling, PanResponder-safe) ──────
             <View style={styles.deckContainer}>
-              {/* Card deck */}
+              {/* Deck */}
               <View style={styles.deckWrap}>
                 {nextProfile ? (
                   <View style={[styles.card, styles.cardUnder]}>
                     {nextProfile.images.length > 0 ? (
                       <ImageBackground
-                        source={{ uri: nextProfile.images[nextPhotoIdx] ?? nextProfile.images[0] }}
+                        source={{ uri: nextProfile.images[nxtPhotoIdx] ?? nextProfile.images[0] }}
                         style={styles.cardImage}
                         imageStyle={styles.cardImageRounded}
                       />
@@ -995,7 +1139,7 @@ export default function DatingModeScreen() {
                 >
                   {currentProfile!.images.length > 0 ? (
                     <ImageBackground
-                      source={{ uri: currentProfile!.images[currentPhotoIdx] ?? currentProfile!.images[0] }}
+                      source={{ uri: currentProfile!.images[curPhotoIdx] ?? currentProfile!.images[0] }}
                       style={styles.cardImage}
                       imageStyle={styles.cardImageRounded}
                     >
@@ -1005,7 +1149,7 @@ export default function DatingModeScreen() {
                             {currentProfile!.images.map((_, i) => (
                               <View
                                 key={`${currentProfile!.id}-${i}`}
-                                style={[styles.dot, i === currentPhotoIdx && styles.dotActive]}
+                                style={[styles.dot, i === curPhotoIdx && styles.dotActive]}
                               />
                             ))}
                           </View>
@@ -1024,7 +1168,6 @@ export default function DatingModeScreen() {
                         </>
                       ) : null}
 
-                      {/* LIKE / PASS badges */}
                       <Animated.View style={[styles.swipeBadge, styles.swipeBadgeLike, { opacity: likeOpacity }]}>
                         <Text style={[styles.swipeBadgeText, { color: '#4caf70' }]}>LIKE</Text>
                       </Animated.View>
@@ -1078,16 +1221,14 @@ export default function DatingModeScreen() {
               </View>
 
               {/* Candidate bio strip */}
-              <View style={styles.candidateBio}>
-                <View style={styles.candidateBioHeader}>
+              <View style={styles.bioBand}>
+                <View style={styles.bioBandHeader}>
                   <Text style={styles.sectionLabel}>About</Text>
                   <View style={styles.intentBadge}>
                     <Text style={styles.intentBadgeText}>{currentProfile!.intent}</Text>
                   </View>
                 </View>
-                <Text style={styles.candidateBioText} numberOfLines={2}>
-                  {currentProfile!.bio}
-                </Text>
+                <Text style={styles.bioBandText} numberOfLines={2}>{currentProfile!.bio}</Text>
                 {currentProfile!.languages.length > 0 ? (
                   <View style={styles.metaRow}>
                     <Ionicons name="chatbubble-ellipses-outline" size={12} color={Colors.muted} />
@@ -1097,44 +1238,60 @@ export default function DatingModeScreen() {
               </View>
             </View>
           ) : (
-            // ── Non-active states (scrollable) ────────────────────────────
             <DiscoverEmpty
               datingState={datingState}
               loadError={loadError}
               onRefresh={handleRefresh}
-              onGoToPrefs={handleGoToPrefs}
+              onAdjustPrefs={handleAdjustPrefs}
               onGoToProfile={() => setActiveTab('profile')}
             />
           )
         ) : null}
 
-        {/* PROFILE tab */}
+        {/* ── MATCHES ──────────────────────────────────────────────────────── */}
+        {activeTab === 'matches' ? (
+          <MatchesTab
+            matches={datingMatches}
+            loading={matchesLoading}
+            onChat={handleChat}
+          />
+        ) : null}
+
+        {/* ── MESSAGES ─────────────────────────────────────────────────────── */}
+        {activeTab === 'messages' ? (
+          <MessagesTab
+            matches={datingMatches}
+            loading={matchesLoading}
+            onChat={handleChat}
+          />
+        ) : null}
+
+        {/* ── PROFILE ──────────────────────────────────────────────────────── */}
         {activeTab === 'profile' ? (
           <ProfileTab
             summary={mySummary}
             photoPaths={myPhotoPaths}
             photoUrls={myPhotoUrls}
-            updating={updatingPhotos}
+            updatingPhotos={updatingPhotos}
+            prefDraft={prefDraft}
+            savingPrefs={savingPrefs}
             onAdd={() => { void addPhoto(); }}
             onRemove={(p, i) => { void removePhoto(p, i); }}
-            onEditProfile={() => router.push('/(tabs)/profile')}
-          />
-        ) : null}
-
-        {/* PREFERENCES tab */}
-        {activeTab === 'preferences' ? (
-          <PreferencesTab
-            draft={prefDraft}
-            saving={savingPrefs}
-            onUpdate={(patch) => setPrefDraft((prev) => ({ ...prev, ...patch }))}
-            onSave={() => { void savePreferences(); }}
+            onSaveBio={(text) => saveDatingBio(text)}
+            onPrefUpdate={(patch) => setPrefDraft((prev) => ({ ...prev, ...patch }))}
+            onPrefSave={() => { void savePreferences(); }}
+            scrollRef={profileScroll}
           />
         ) : null}
       </View>
 
-      {/* ── Tab bar ───────────────────────────────────────────────────────── */}
+      {/* Tab bar — pinned to bottom */}
       <SafeAreaView edges={['bottom']} style={styles.tabBarSafe}>
-        <TabBar active={activeTab} onSelect={setActiveTab} />
+        <TabBar
+          active={activeTab}
+          onSelect={setActiveTab}
+          matchCount={datingMatches.length}
+        />
       </SafeAreaView>
     </View>
   );
@@ -1142,177 +1299,47 @@ export default function DatingModeScreen() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const DECK_HEIGHT = 390;
+const DECK_H = 390;
 
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: Colors.cream },
-  safe:         { backgroundColor: Colors.cream },
-  tabBarSafe:   { backgroundColor: Colors.paper, borderTopWidth: 1, borderTopColor: Colors.border },
+  headerSafe:   { backgroundColor: Colors.cream },
   tabContent:   { flex: 1 },
+  tabBarSafe:   { backgroundColor: Colors.paper, borderTopWidth: 1, borderTopColor: Colors.border },
 
-  // ── Header ─────────────────────────────────────────────────────────────────
+  // Header
   header: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    justifyContent:   'space-between',
-    paddingHorizontal: Spacing.md,
-    paddingTop:        Spacing.sm,
-    paddingBottom:     Spacing.xs,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, paddingBottom: Spacing.xs,
   },
   headerBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.border,
-    alignItems: 'center', justifyContent: 'center',
+    width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.paper,
+    borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
-  headerTitle:    { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  headerBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    borderRadius: Radius.full,
-    backgroundColor: 'rgba(196,98,45,0.10)', borderWidth: 1, borderColor: 'rgba(196,98,45,0.18)',
-    paddingHorizontal: 10, paddingVertical: 5,
-  },
-  headerBadgeText: { fontSize: 12, color: Colors.terracotta, fontWeight: '800' },
+  headerTitle:     { fontSize: 20, fontWeight: '800', color: Colors.ink },
+  headerSpacer: { width: 36 },
 
-  // ── Tab bar ────────────────────────────────────────────────────────────────
+  // Tab bar
   tabBar: {
-    flexDirection:  'row',
-    paddingVertical: 8,
-    paddingHorizontal: Spacing.md,
+    flexDirection: 'row', paddingVertical: 6, paddingHorizontal: Spacing.sm,
   },
-  tabItem: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 4,
+  tabItem:       { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, gap: 2 },
+  tabIconWrap:   { position: 'relative' },
+  tabBadge: {
+    position: 'absolute', top: -1, right: -4,
+    width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.terracotta,
+    borderWidth: 1.5, borderColor: Colors.paper,
   },
-  tabLabel: { fontSize: 11, fontWeight: '600', color: Colors.muted },
+  tabLabel:       { fontSize: 10, fontWeight: '600', color: Colors.muted },
   tabLabelActive: { color: Colors.terracotta },
-  tabDot: {
-    width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.terracotta, marginTop: 1,
-  },
 
-  // ── Discover empty ─────────────────────────────────────────────────────────
-  discoverEmpty: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 32, gap: 10,
-  },
-  discoverEmptyIcon: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: 'rgba(196,98,45,0.08)',
-    alignItems: 'center', justifyContent: 'center', marginBottom: 6,
-  },
-  discoverEmptyTitle: { fontSize: 20, fontWeight: '900', color: Colors.ink, textAlign: 'center' },
-  discoverEmptySub:   { fontSize: 14, color: Colors.muted, textAlign: 'center', lineHeight: 21, maxWidth: 280 },
-  emptyPrimaryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginTop: 12, backgroundColor: Colors.terracotta,
-    borderRadius: Radius.full, paddingHorizontal: 24, paddingVertical: 13,
-  },
-  emptyPrimaryBtnText: { color: Colors.white, fontWeight: '700', fontSize: 15 },
-  emptySecondaryBtn: { paddingHorizontal: 16, paddingVertical: 8 },
-  emptySecondaryBtnText: { color: Colors.muted, fontWeight: '600', fontSize: 13 },
-
-  // ── Swipe deck ─────────────────────────────────────────────────────────────
-  deckContainer: {
-    flex: 1, paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm,
-  },
-  deckWrap: {
-    height: DECK_HEIGHT, justifyContent: 'center', alignItems: 'center',
-  },
-  card: {
-    width: '100%', height: DECK_HEIGHT, borderRadius: Radius.xl,
-    overflow: 'hidden', backgroundColor: Colors.paper,
-    shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 }, elevation: 6, position: 'absolute',
-  },
-  cardUnder: { transform: [{ scale: 0.95 }, { translateY: 10 }], opacity: 0.72 },
-  cardImage:        { flex: 1, justifyContent: 'flex-end' },
-  cardImageRounded: { borderRadius: Radius.xl },
-  cardOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.18)' },
-  cardContent: { padding: Spacing.md, paddingBottom: 16, zIndex: 5 },
-  cardName: {
-    color: Colors.white, fontSize: 26, fontWeight: '900',
-    textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
-  },
-  cardCity: { color: 'rgba(255,255,255,0.82)', fontSize: 13, fontWeight: '600' },
-
-  // Photo carousel
-  dotsRow: {
-    position: 'absolute', top: 10, left: 12, right: 12,
-    flexDirection: 'row', gap: 5, zIndex: 4,
-  },
-  dot:       { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.38)' },
-  dotActive: { backgroundColor: Colors.white },
-  tapRow:    { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 3 },
-  tapZone:   { flex: 1 },
-
-  // Swipe intent badges
-  swipeBadge: {
-    position: 'absolute', top: 22, borderWidth: 2.5, borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 5, zIndex: 6,
-  },
-  swipeBadgeLike: { left: 16, borderColor: '#4caf70', transform: [{ rotate: '-12deg' }] },
-  swipeBadgePass: { right: 16, borderColor: Colors.error, transform: [{ rotate: '12deg' }] },
-  swipeBadgeText: { fontSize: 15, fontWeight: '900', letterSpacing: 1 },
-
-  // Swipe action buttons
-  swipeActions: {
-    marginTop: Spacing.sm, flexDirection: 'row',
-    justifyContent: 'center', gap: 24, alignItems: 'center',
-  },
-  actionBtn: {
-    width: 64, height: 64, borderRadius: 32,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 }, elevation: 3,
-  },
-  actionBtnDim: { opacity: 0.6 },
-  passBtn: {
-    backgroundColor: Colors.warmWhite,
-    borderWidth: 1.5, borderColor: 'rgba(217,79,79,0.22)',
-  },
-  likeBtn: {
-    backgroundColor: Colors.terracotta,
-    width: 72, height: 72, borderRadius: 36,
-  },
-
-  // Candidate bio strip (below deck)
-  candidateBio: {
-    marginTop: Spacing.sm, backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border,
-    padding: Spacing.md, gap: 6,
-  },
-  candidateBioHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  candidateBioText: { fontSize: 14, color: Colors.brownMid, lineHeight: 20 },
-
-  // ── No-photo card ──────────────────────────────────────────────────────────
-  noPhotoCard: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.paper },
-  noPhotoFill: { ...StyleSheet.absoluteFillObject, backgroundColor: Colors.warmWhite, opacity: 0.6 },
-  initialsCircle: {
-    width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.terracotta,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-    shadowColor: Colors.terracotta, shadowOpacity: 0.28, shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 }, elevation: 4,
-  },
-  initialsText: { fontSize: 34, fontWeight: '900', color: Colors.white, letterSpacing: 1 },
-  noPhotoInfo:  { alignItems: 'center', gap: 4 },
-  noPhotoName:  { fontSize: 24, fontWeight: '900', color: Colors.ink, textAlign: 'center' },
-  noPhotoCity:  { fontSize: 13, color: Colors.brownMid, fontWeight: '600' },
-  noPhotoNote: {
-    marginTop: 10, fontSize: 12, color: Colors.muted, fontWeight: '500',
-    backgroundColor: Colors.border, borderRadius: Radius.full,
-    paddingHorizontal: 10, paddingVertical: 3,
-  },
-
-  // ── Profile & Preferences tab shared ──────────────────────────────────────
-  tabScroll:        { flex: 1 },
-  tabScrollContent: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, paddingBottom: 32 },
-
+  // Shared
+  metaRow:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
   sectionLabel: {
     fontSize: 10, fontWeight: '700', color: Colors.muted,
     textTransform: 'uppercase', letterSpacing: 0.7,
   },
-  metaRow:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  metaText: { fontSize: 13, color: Colors.muted, fontWeight: '600' },
   intentBadge: {
     backgroundColor: 'rgba(196,98,45,0.09)', borderRadius: Radius.full,
     paddingHorizontal: 8, paddingVertical: 3,
@@ -1325,44 +1352,199 @@ const styles = StyleSheet.create({
   },
   editBtnText: { fontSize: 12, color: Colors.terracotta, fontWeight: '700' },
 
-  // ── Profile tab ────────────────────────────────────────────────────────────
+  // Empty states
+  emptyWrap: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32, gap: 10,
+  },
+  emptyIconWrap: {
+    width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(196,98,45,0.08)',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+  },
+  emptyTitle: { fontSize: 20, fontWeight: '900', color: Colors.ink, textAlign: 'center' },
+  emptySub:   { fontSize: 14, color: Colors.muted, textAlign: 'center', lineHeight: 21, maxWidth: 280 },
+  primaryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12,
+    backgroundColor: Colors.terracotta, borderRadius: Radius.full,
+    paddingHorizontal: 24, paddingVertical: 13,
+  },
+  primaryBtnText:   { color: Colors.white, fontWeight: '700', fontSize: 15 },
+  secondaryBtn:     { paddingHorizontal: 16, paddingVertical: 8 },
+  secondaryBtnText: { color: Colors.muted, fontWeight: '600', fontSize: 13 },
+
+  // Discover deck
+  deckContainer: { flex: 1, paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
+  deckWrap: { height: DECK_H, justifyContent: 'center', alignItems: 'center' },
+  card: {
+    width: '100%', height: DECK_H, borderRadius: Radius.xl, overflow: 'hidden',
+    backgroundColor: Colors.paper, shadowColor: '#000', shadowOpacity: 0.14,
+    shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 6, position: 'absolute',
+  },
+  cardUnder:       { transform: [{ scale: 0.95 }, { translateY: 10 }], opacity: 0.72 },
+  cardImage:        { flex: 1, justifyContent: 'flex-end' },
+  cardImageRounded: { borderRadius: Radius.xl },
+  cardOverlay:      { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.18)' },
+  cardContent: { padding: Spacing.md, paddingBottom: 16, zIndex: 5 },
+  cardName: {
+    color: Colors.white, fontSize: 26, fontWeight: '900',
+    textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
+  },
+  cardCity: { color: 'rgba(255,255,255,0.82)', fontSize: 13, fontWeight: '600' },
+  dotsRow: {
+    position: 'absolute', top: 10, left: 12, right: 12, flexDirection: 'row', gap: 5, zIndex: 4,
+  },
+  dot:       { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.38)' },
+  dotActive: { backgroundColor: Colors.white },
+  tapRow:  { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 3 },
+  tapZone: { flex: 1 },
+  swipeBadge: {
+    position: 'absolute', top: 22, borderWidth: 2.5, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 5, zIndex: 6,
+  },
+  swipeBadgeLike: { left: 16, borderColor: '#4caf70', transform: [{ rotate: '-12deg' }] },
+  swipeBadgePass: { right: 16, borderColor: Colors.error, transform: [{ rotate: '12deg' }] },
+  swipeBadgeText: { fontSize: 15, fontWeight: '900', letterSpacing: 1 },
+  swipeActions: {
+    marginTop: Spacing.sm, flexDirection: 'row', justifyContent: 'center', gap: 24, alignItems: 'center',
+  },
+  actionBtn: {
+    width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3,
+  },
+  actionBtnDim: { opacity: 0.6 },
+  passBtn: {
+    backgroundColor: Colors.warmWhite, borderWidth: 1.5, borderColor: 'rgba(217,79,79,0.22)',
+  },
+  likeBtn: { backgroundColor: Colors.terracotta, width: 72, height: 72, borderRadius: 36 },
+  bioBand: {
+    marginTop: Spacing.sm, backgroundColor: Colors.warmWhite, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border, padding: Spacing.md, gap: 6,
+  },
+  bioBandHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  bioBandText:   { fontSize: 14, color: Colors.brownMid, lineHeight: 20 },
+
+  // No-photo card
+  noPhotoCard:   { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.paper },
+  noPhotoFill:   { ...StyleSheet.absoluteFillObject, backgroundColor: Colors.warmWhite, opacity: 0.6 },
+  initialsCircle: {
+    width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.terracotta,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+    shadowColor: Colors.terracotta, shadowOpacity: 0.28, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 }, elevation: 4,
+  },
+  initialsText:  { fontSize: 34, fontWeight: '900', color: Colors.white, letterSpacing: 1 },
+  noPhotoInfo:   { alignItems: 'center', gap: 4 },
+  noPhotoName:   { fontSize: 24, fontWeight: '900', color: Colors.ink, textAlign: 'center' },
+  noPhotoCity:   { fontSize: 13, color: Colors.brownMid, fontWeight: '600' },
+  noPhotoNote: {
+    marginTop: 10, fontSize: 12, color: Colors.muted, fontWeight: '500',
+    backgroundColor: Colors.border, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3,
+  },
+
+  // Matches grid
+  matchesGrid:     { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, paddingBottom: 24 },
+  matchesHeading:  { fontSize: 13, color: Colors.muted, fontWeight: '700', marginBottom: 12 },
+  matchGridRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 12,
+  },
+  matchCard: {
+    width: (SCREEN_WIDTH - Spacing.md * 2 - 12) / 2,
+    backgroundColor: Colors.paper, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 12, alignItems: 'center', gap: 6,
+  },
+  matchAvatar:     { position: 'relative' },
+  matchAvatarImg: {
+    width: 72, height: 72, borderRadius: 36,
+  },
+  matchAvatarFallback: {
+    width: 72, height: 72, borderRadius: 36, backgroundColor: Colors.terracotta,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  matchAvatarInitials: { fontSize: 22, fontWeight: '900', color: Colors.white },
+  matchNewDot: {
+    position: 'absolute', bottom: 2, right: 2,
+    width: 12, height: 12, borderRadius: 6, backgroundColor: '#5a9e6f',
+    borderWidth: 2, borderColor: Colors.paper,
+  },
+  matchName:    { fontSize: 14, fontWeight: '700', color: Colors.ink, textAlign: 'center' },
+  matchCity:    { fontSize: 12, color: Colors.muted, textAlign: 'center' },
+  matchChatBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2,
+    borderWidth: 1, borderColor: Colors.terracotta, borderRadius: Radius.full,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  matchChatBtnText: { fontSize: 12, color: Colors.terracotta, fontWeight: '700' },
+
+  // Messages list
+  msgRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: Spacing.md, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  msgRowFirst:        { borderTopWidth: 1, borderTopColor: Colors.border },
+  msgAvatarImg:       { width: 52, height: 52, borderRadius: 26 },
+  msgAvatar:          {},
+  msgAvatarFallback: {
+    width: 52, height: 52, borderRadius: 26, backgroundColor: Colors.terracotta,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  msgAvatarInitials: { fontSize: 18, fontWeight: '900', color: Colors.white },
+  msgBody:  { flex: 1, gap: 2 },
+  msgName:  { fontSize: 15, fontWeight: '700', color: Colors.ink },
+  msgCity:  { fontSize: 12, color: Colors.muted },
+  msgHint:  { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginTop: 2 },
+  msgRight: { alignItems: 'flex-end', gap: 4 },
+  msgTime:  { fontSize: 11, color: Colors.muted },
+
+  // Profile + prefs tab
+  tabScroll:        { flex: 1 },
+  tabScrollContent: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, paddingBottom: 32 },
   profileCard: {
     backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.border,
     borderRadius: Radius.lg, padding: Spacing.md, gap: 12,
   },
-  profileCardHeader: {
+  profileCardSpaced: { marginTop: Spacing.sm },
+  profileCardSectionHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  photoCount: { fontSize: 11, color: Colors.muted, fontWeight: '600' },
+  profileCardTop: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
   },
-  profileCardHeaderRight: { alignItems: 'flex-end', gap: 6 },
-  profileName: { fontSize: 18, fontWeight: '900', color: Colors.ink },
-  profileCity: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
+  profileCardTopRight: { alignItems: 'flex-end', gap: 6 },
+  profileName:    { fontSize: 18, fontWeight: '900', color: Colors.ink },
+  profileCity:    { fontSize: 12, color: Colors.muted, fontWeight: '600' },
   profileSection: { gap: 4 },
   profileBio:     { fontSize: 14, color: Colors.brownMid, lineHeight: 20 },
-
-  // Photo strip
-  photoStrip: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  photoWrap:  { position: 'relative' },
+  profileBioInput: { marginTop: 6, minHeight: 60, padding: 0 },
+  profileBioInputFocused: {
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm,
+    padding: 8, marginHorizontal: -8,
+  },
+  photoStrip:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  photoWrap:      { position: 'relative' },
   photo: {
-    width: PHOTO_SIZE, height: Math.round(PHOTO_SIZE * PHOTO_ASPECT),
-    borderRadius: 8, backgroundColor: Colors.warmWhite,
+    width: PHOTO_W, height: PHOTO_H, borderRadius: 8, backgroundColor: Colors.warmWhite,
   },
   photoEmpty:     { borderWidth: 1, borderColor: Colors.border },
   photoRemoveBtn: {
-    position: 'absolute', right: -6, top: -6,
-    backgroundColor: Colors.cream, borderRadius: 9,
+    position: 'absolute', right: -6, top: -6, backgroundColor: Colors.cream, borderRadius: 9,
   },
   photoAddBtn: {
-    width: PHOTO_SIZE, height: Math.round(PHOTO_SIZE * PHOTO_ASPECT),
-    borderRadius: 8, borderWidth: 1.5, borderColor: Colors.terracotta,
-    borderStyle: 'dashed', backgroundColor: 'rgba(196,98,45,0.04)',
-    alignItems: 'center', justifyContent: 'center', gap: 4,
+    width: PHOTO_W, height: PHOTO_H, borderRadius: 8, borderWidth: 1.5,
+    borderColor: Colors.terracotta, borderStyle: 'dashed',
+    backgroundColor: 'rgba(196,98,45,0.04)', alignItems: 'center', justifyContent: 'center', gap: 4,
   },
   photoAddLabel: { fontSize: 10, color: Colors.terracotta, fontWeight: '700' },
 
-  // ── Preferences tab ────────────────────────────────────────────────────────
-  prefIntro: {
-    fontSize: 13, color: Colors.muted, lineHeight: 19, marginBottom: Spacing.sm,
+  // Pref divider
+  prefDivider: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 20,
   },
+  prefDividerLine:  { flex: 1, height: 1, backgroundColor: Colors.border },
+  prefDividerLabel: { fontSize: 11, fontWeight: '700', color: Colors.muted, letterSpacing: 0.8 },
+
   prefCard: {
     backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.border,
     borderRadius: Radius.lg, padding: Spacing.md, gap: 10, marginBottom: Spacing.sm,
@@ -1372,41 +1554,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full,
     backgroundColor: Colors.warmWhite, borderWidth: 1, borderColor: Colors.border,
   },
-  chipActive: {
-    backgroundColor: 'rgba(196,98,45,0.10)', borderColor: Colors.terracotta,
-  },
+  chipActive:     { backgroundColor: 'rgba(196,98,45,0.10)', borderColor: Colors.terracotta },
   chipText:       { fontSize: 13, fontWeight: '600', color: Colors.brownMid },
   chipTextActive: { color: Colors.terracotta },
-
-  // Age range
-  ageRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  ageDash: {
-    width: 20, height: 2, borderRadius: 1, backgroundColor: Colors.border,
+  ageRow:   { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  ageDash:  { width: 20, height: 2, borderRadius: 1, backgroundColor: Colors.border },
+  ageField: { flex: 1, alignItems: 'center', gap: 6 },
+  ageFieldLabel: {
+    fontSize: 10, fontWeight: '700', color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.6,
   },
-  ageField:     { flex: 1, alignItems: 'center', gap: 6 },
-  ageFieldLabel:{ fontSize: 10, fontWeight: '700', color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.6 },
   ageControl: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.warmWhite, borderRadius: Radius.lg,
-    borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 8, paddingVertical: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 8, paddingVertical: 8,
   },
-  ageStepBtn:  { padding: 4 },
-  ageValueWrap:{ minWidth: 40, alignItems: 'center' },
-  ageValue:    { fontSize: 16, fontWeight: '800', color: Colors.ink },
-  ageHint:     { fontSize: 12, color: Colors.muted },
-
-  // Visibility
+  ageStepBtn: { padding: 4 },
+  ageValue:   { fontSize: 16, fontWeight: '800', color: Colors.ink, minWidth: 40, textAlign: 'center' },
+  ageHint:    { fontSize: 12, color: Colors.muted },
   visibilityRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  visHint: { fontSize: 12, color: Colors.muted, marginTop: 2, maxWidth: 220 },
-
-  // Save button
+  visHint: { fontSize: 12, color: Colors.muted, marginTop: 2 },
   saveBtn: {
-    marginTop: Spacing.sm, backgroundColor: Colors.terracotta,
-    borderRadius: Radius.full, paddingVertical: 15,
-    alignItems: 'center', justifyContent: 'center',
+    marginTop: Spacing.sm, backgroundColor: Colors.terracotta, borderRadius: Radius.full,
+    paddingVertical: 15, alignItems: 'center', justifyContent: 'center',
   },
   saveBtnDisabled: { opacity: 0.6 },
-  saveBtnText: { color: Colors.white, fontWeight: '700', fontSize: 15 },
+  saveBtnText:     { color: Colors.white, fontWeight: '700', fontSize: 15 },
 });
