@@ -8,15 +8,16 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolvePostAuthRoute } from '../../lib/services/auth';
+import GodenaLogo from '../../components/GodenaLogo';
 
 const CODE_LENGTH = 6;
+const AUTH_LOGO_SIZE = 88;
 
 export default function OtpScreen() {
   const router = useRouter();
@@ -103,7 +104,9 @@ export default function OtpScreen() {
               <Text style={styles.backText}>← Back</Text>
             </TouchableOpacity>
 
-            <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+            <View style={styles.logoWrap}>
+              <GodenaLogo width={AUTH_LOGO_SIZE} height={AUTH_LOGO_SIZE} />
+            </View>
             <Text style={styles.title}>Enter the code</Text>
             <Text style={styles.subtitle}>
               We sent a 6-digit code to your number. It expires in 10 minutes.
@@ -177,10 +180,8 @@ const styles = StyleSheet.create({
   content: { flex: 1, padding: Spacing.lg, paddingTop: Spacing.md },
   back: { marginBottom: Spacing.xl },
   backText: { color: Colors.muted, fontSize: 15 },
-  wordmarkLogo: {
-    width: 120,
-    height: 30,
-    marginBottom: 28,
+  logoWrap: {
+    marginBottom: 22,
   },
   title: {
     fontSize: 36,

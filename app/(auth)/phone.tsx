@@ -9,12 +9,14 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
+import GodenaLogo from '../../components/GodenaLogo';
+
+const AUTH_LOGO_SIZE = 88;
 
 export default function PhoneScreen() {
   const router = useRouter();
@@ -62,7 +64,9 @@ export default function PhoneScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+              <View style={styles.logoWrap}>
+                <GodenaLogo width={AUTH_LOGO_SIZE} height={AUTH_LOGO_SIZE} />
+              </View>
               <Text style={styles.title}>What's your{'\n'}phone number?</Text>
               <Text style={styles.subtitle}>
                 We'll send a one-time code. Your number is never shown to other members.
@@ -126,10 +130,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   header: { marginBottom: 40 },
-  wordmarkLogo: {
-    width: 120,
-    height: 30,
-    marginBottom: 32,
+  logoWrap: {
+    marginBottom: 24,
   },
   title: {
     fontSize: 36,

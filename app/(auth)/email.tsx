@@ -9,15 +9,16 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolvePostAuthRoute } from '../../lib/services/auth';
+import GodenaLogo from '../../components/GodenaLogo';
 
 type Mode = 'signin' | 'signup';
+const AUTH_LOGO_SIZE = 88;
 
 export default function EmailAuthScreen() {
   const router = useRouter();
@@ -121,7 +122,9 @@ export default function EmailAuthScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
+              <View style={styles.logoWrap}>
+                <GodenaLogo width={AUTH_LOGO_SIZE} height={AUTH_LOGO_SIZE} />
+              </View>
               <Text style={styles.title}>
                 {mode === 'signin' ? 'Welcome back' : 'Create your account'}
               </Text>
@@ -245,10 +248,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   header: { marginBottom: 28 },
-  wordmarkLogo: {
-    width: 120,
-    height: 30,
-    marginBottom: 24,
+  logoWrap: {
+    marginBottom: 20,
   },
   title: {
     fontSize: 34,
