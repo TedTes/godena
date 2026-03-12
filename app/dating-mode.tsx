@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -59,6 +60,7 @@ type MyDatingSummary = {
   about: string;
   intent: string;
   languages: string[];
+  avatarUrl: string | null;
   preferredGenders: string[];
   preferredIntents: string[];
   preferredAgeMin: number | null;
@@ -87,8 +89,10 @@ type DatingMatchRow = {
 
 const SCREEN_WIDTH    = Dimensions.get('window').width;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
-const PHOTO_W         = 96;
-const PHOTO_H         = Math.round(PHOTO_W * 1.3);
+const PHOTO_GAP       = 8;
+const PHOTO_COLS      = 3;
+const PHOTO_W         = Math.floor((SCREEN_WIDTH - 16 * 2 - PHOTO_GAP * (PHOTO_COLS - 1)) / PHOTO_COLS);
+const PHOTO_H         = Math.round(PHOTO_W * 1.35);
 
 const GENDER_OPTIONS = [
   { value: 'man',        label: 'Men'        },
@@ -462,6 +466,7 @@ function ProfileTab({
 }) {
   const [bioText, setBioText] = useState(summary?.about ?? '');
   const [bioFocused, setBioFocused] = useState(false);
+  const [bioInputHeight, setBioInputHeight] = useState(96);
 
   // Sync bioText when summary loads/changes
   useEffect(() => { setBioText(summary?.about ?? ''); }, [summary?.about]);
@@ -473,23 +478,31 @@ function ProfileTab({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
-      {/* ── Identity card ─────────────────────────────────────────────────── */}
-      <View style={styles.profileCard}>
-        <Text style={styles.profileName}>{summary?.fullName ?? 'You'}</Text>
+      {/* ── Avatar hero ──────────────────────────────────────────────────── */}
+      <View style={styles.profileHero}>
+        <View style={styles.profileAvatarRing}>
+          <View style={styles.profileAvatarWrap}>
+            {summary?.avatarUrl ? (
+              <Image source={{ uri: summary.avatarUrl }} style={styles.profileAvatar} />
+            ) : (
+              <View style={[styles.profileAvatar, styles.profileAvatarFallback]}>
+                <Text style={styles.profileAvatarInitials}>
+                  {summary?.fullName ? getInitials(summary.fullName) : '?'}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
         {summary?.city ? (
           <View style={styles.metaRow}>
             <Ionicons name="location-outline" size={12} color={Colors.muted} />
-            <Text style={styles.profileCity}>{summary.city}</Text>
+            <Text style={styles.profileHeroCity}>{summary.city}</Text>
           </View>
         ) : null}
       </View>
 
-      {/* ── Photos card ──────────────────────────────────────────────────── */}
-      <View style={[styles.profileCard, styles.profileCardSpaced]}>
-        <View style={styles.profileCardSectionHeader}>
-          <Text style={styles.sectionLabel}>Dating photos</Text>
-          <Text style={styles.photoCount}>{photoPaths.length} / 6</Text>
-        </View>
+      {/* ── Photos ───────────────────────────────────────────────────────── */}
+      <View style={styles.photoSection}>
         <View style={styles.photoStrip}>
           {photoUrls.map((url, idx) => (
             <View key={`${photoPaths[idx] ?? idx}`} style={styles.photoWrap}>
@@ -530,41 +543,40 @@ function ProfileTab({
         </View>
       </View>
 
-      {/* ── Bio card ─────────────────────────────────────────────────────── */}
-      <View style={[styles.profileCard, styles.profileCardSpaced]}>
-        <Text style={styles.sectionLabel}>About</Text>
+      {/* ── Bio ──────────────────────────────────────────────────────────── */}
+      <View style={[styles.bioCard, bioFocused && styles.bioCardFocused]}>
+        <Text style={styles.prefCardLabel}>Bio</Text>
         <TextInput
-          style={[styles.profileBio, styles.profileBioInput, bioFocused && styles.profileBioInputFocused]}
           value={bioText}
           onChangeText={setBioText}
+          onContentSizeChange={(e) => {
+            const next = Math.max(56, e.nativeEvent.contentSize.height + 16);
+            setBioInputHeight(next);
+          }}
           onFocus={() => setBioFocused(true)}
           onBlur={() => {
             setBioFocused(false);
             void onSaveBio(bioText.trim());
           }}
           multiline
-          placeholder="Write a short bio…"
+          maxLength={280}
+          scrollEnabled={false}
+          placeholder="Tap to write a short bio…"
           placeholderTextColor={Colors.muted}
           textAlignVertical="top"
+          style={[styles.profileBio, styles.profileBioInput, { height: bioInputHeight }]}
         />
         {(summary?.languages ?? []).length > 0 ? (
-          <View style={[styles.metaRow, { marginTop: 4 }]}>
+          <View style={styles.metaRow}>
             <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.muted} />
             <Text style={styles.metaText}>{summary!.languages.join(' · ')}</Text>
           </View>
         ) : null}
       </View>
 
-      {/* ── Preferences section ──────────────────────────────────────────── */}
-      <View style={styles.prefDivider}>
-        <View style={styles.prefDividerLine} />
-        <Text style={styles.prefDividerLabel}>Preferences</Text>
-        <View style={styles.prefDividerLine} />
-      </View>
-
       {/* Gender */}
       <View style={styles.prefCard}>
-        <Text style={styles.sectionLabel}>I'm interested in</Text>
+        <Text style={styles.prefCardLabel}>I'm interested in</Text>
         <View style={styles.chipRow}>
           {GENDER_OPTIONS.map((opt) => {
             const sel = prefDraft.preferredGenders.includes(opt.value);
@@ -584,7 +596,7 @@ function ProfileTab({
 
       {/* Intent */}
       <View style={styles.prefCard}>
-        <Text style={styles.sectionLabel}>Looking for</Text>
+        <Text style={styles.prefCardLabel}>Looking for</Text>
         <View style={styles.chipRow}>
           {INTENT_OPTIONS.map((opt) => {
             const sel = prefDraft.preferredIntents.includes(opt.value);
@@ -604,45 +616,56 @@ function ProfileTab({
 
       {/* Age range */}
       <View style={styles.prefCard}>
-        <Text style={styles.sectionLabel}>Age range</Text>
-        <View style={styles.ageRow}>
-          <AgeField
-            label="Min"
-            value={prefDraft.preferredAgeMin}
-            floor={18}
-            ceiling={prefDraft.preferredAgeMax ?? 99}
-            onChange={(v) => onPrefUpdate({ preferredAgeMin: v })}
-          />
-          <View style={styles.ageDash} />
-          <AgeField
-            label="Max"
-            value={prefDraft.preferredAgeMax}
-            floor={prefDraft.preferredAgeMin ?? 18}
-            ceiling={99}
-            onChange={(v) => onPrefUpdate({ preferredAgeMax: v })}
+        <View style={styles.ageHeaderRow}>
+          <Text style={styles.prefCardLabel}>Age range</Text>
+          <Text style={styles.ageRangeValue}>
+            {prefDraft.preferredAgeMin ?? 18} – {prefDraft.preferredAgeMax ?? 65}
+          </Text>
+        </View>
+        <View style={styles.ageSliderRow}>
+          <Text style={styles.ageSliderLabel}>Min</Text>
+          <Slider
+            style={styles.ageSlider}
+            minimumValue={18}
+            maximumValue={prefDraft.preferredAgeMax ?? 65}
+            step={1}
+            value={prefDraft.preferredAgeMin ?? 18}
+            onValueChange={(v) => onPrefUpdate({ preferredAgeMin: Math.round(v) })}
+            minimumTrackTintColor={Colors.terracotta}
+            maximumTrackTintColor={Colors.border}
+            thumbTintColor={Colors.terracotta}
           />
         </View>
-        {prefDraft.preferredAgeMin == null && prefDraft.preferredAgeMax == null ? (
-          <Text style={styles.ageHint}>No age limit — you'll see everyone.</Text>
-        ) : null}
+        <View style={styles.ageSliderRow}>
+          <Text style={styles.ageSliderLabel}>Max</Text>
+          <Slider
+            style={styles.ageSlider}
+            minimumValue={prefDraft.preferredAgeMin ?? 18}
+            maximumValue={65}
+            step={1}
+            value={prefDraft.preferredAgeMax ?? 65}
+            onValueChange={(v) => onPrefUpdate({ preferredAgeMax: Math.round(v) })}
+            minimumTrackTintColor={Colors.terracotta}
+            maximumTrackTintColor={Colors.border}
+            thumbTintColor={Colors.terracotta}
+          />
+        </View>
       </View>
 
       {/* Visibility */}
       <View style={styles.prefCard}>
+        <Text style={styles.prefCardLabel}>Visible in dating</Text>
         <View style={styles.visibilityRow}>
-          <View style={{ flex: 1, marginRight: 12 }}>
-            <Text style={styles.sectionLabel}>Visible in dating</Text>
-            <Text style={styles.visHint}>
-              {prefDraft.isGloballyVisible
-                ? 'Others in your groups can discover you.'
-                : "You're hidden — you can still swipe."}
-            </Text>
-          </View>
+          <Text style={[styles.visHint, { flex: 1, marginRight: 12 }]}>
+            {prefDraft.isGloballyVisible
+              ? 'Others in your groups can discover you.'
+              : "You're hidden — you can still swipe."}
+          </Text>
           <Switch
             value={prefDraft.isGloballyVisible}
             onValueChange={(v) => onPrefUpdate({ isGloballyVisible: v })}
-            trackColor={{ false: Colors.border, true: 'rgba(196,98,45,0.35)' }}
-            thumbColor={prefDraft.isGloballyVisible ? Colors.terracotta : Colors.muted}
+            trackColor={{ false: Colors.border, true: Colors.terracotta }}
+            thumbColor={Colors.white}
           />
         </View>
       </View>
@@ -660,39 +683,6 @@ function ProfileTab({
         )}
       </TouchableOpacity>
     </ScrollView>
-  );
-}
-
-function AgeField({
-  label, value, floor, ceiling, onChange,
-}: { label: string; value: number | null; floor: number; ceiling: number; onChange: (v: number | null) => void }) {
-  return (
-    <View style={styles.ageField}>
-      <Text style={styles.ageFieldLabel}>{label}</Text>
-      <View style={styles.ageControl}>
-        <TouchableOpacity
-          onPress={() => {
-            if (value == null) return;
-            onChange(value - 1 < floor ? null : value - 1);
-          }}
-          style={styles.ageStepBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="remove" size={16} color={Colors.brownMid} />
-        </TouchableOpacity>
-        <Text style={styles.ageValue}>{value ?? 'Any'}</Text>
-        <TouchableOpacity
-          onPress={() => {
-            const next = (value ?? floor - 1) + 1;
-            onChange(next > ceiling ? ceiling : next);
-          }}
-          style={styles.ageStepBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="add" size={16} color={Colors.brownMid} />
-        </TouchableOpacity>
-      </View>
-    </View>
   );
 }
 
@@ -999,7 +989,7 @@ export default function DatingModeScreen() {
 
     const [{ data: me }, { data: dp }, { data: dprefs }, candidatesRes] = await Promise.all([
       supabase.from('profiles')
-        .select('full_name, city, bio, intent, languages').eq('user_id', uid).maybeSingle(),
+        .select('full_name, city, bio, intent, languages, avatar_url').eq('user_id', uid).maybeSingle(),
       supabase.from('dating_profiles')
         .select('is_enabled, about, photos').eq('user_id', uid).maybeSingle(),
       supabase.from('dating_preferences')
@@ -1011,8 +1001,9 @@ export default function DatingModeScreen() {
     const myName = me?.full_name?.trim();
     if (myName) setHeaderName(myName.split(' ')[0] || myName);
 
-    const paths   = (dp?.photos as string[] | null | undefined) ?? [];
-    const urls    = await Promise.all(paths.map((p) => resolveProfilePhotoUrl(p)));
+    const paths      = (dp?.photos as string[] | null | undefined) ?? [];
+    const urls       = await Promise.all(paths.map((p) => resolveProfilePhotoUrl(p)));
+    const avatarUrl  = me?.avatar_url ? await resolveProfilePhotoUrl(me.avatar_url) : null;
     setMyPhotoPaths(paths);
     setMyPhotoUrls(urls.map((u) => u ?? ''));
 
@@ -1028,6 +1019,7 @@ export default function DatingModeScreen() {
       about:            dp?.about?.trim() || me?.bio?.trim() || '',
       intent:           formatIntent((me?.intent as DatingCandidateRow['intent'] | null | undefined) ?? null),
       languages:        (me?.languages as string[] | null | undefined) ?? [],
+      avatarUrl:        avatarUrl ?? null,
       preferredGenders: pg,
       preferredIntents: pi.map((v) => v === 'long_term' ? 'Long-term' : v.replace('_', ' ')),
       preferredAgeMin:  pam,
@@ -1499,12 +1491,34 @@ const styles = StyleSheet.create({
 
   // Profile + prefs tab
   tabScroll:        { flex: 1 },
-  tabScrollContent: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, paddingBottom: 32 },
+  tabScrollContent: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, paddingBottom: 32, gap: Spacing.sm },
   profileCard: {
     backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.border,
     borderRadius: Radius.lg, padding: Spacing.md, gap: 12,
   },
-  profileCardSpaced: { marginTop: Spacing.sm },
+  // Profile hero
+  profileHero: { alignItems: 'center', gap: 6, paddingTop: 12, paddingBottom: 4 },
+  profileAvatarRing: {
+    borderRadius: 56, borderWidth: 2.5, borderColor: Colors.terracotta, padding: 3,
+    shadowColor: Colors.terracotta, shadowOpacity: 0.25, shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 }, elevation: 5,
+  },
+  profileAvatarWrap: { width: 100, height: 100, borderRadius: 50, overflow: 'hidden' },
+  profileAvatar:     { width: 100, height: 100, borderRadius: 50 },
+  profileAvatarFallback: { backgroundColor: Colors.terracotta, alignItems: 'center', justifyContent: 'center' },
+  profileAvatarInitials: { fontSize: 32, fontWeight: '900', color: Colors.white },
+  profileHeroName: { fontSize: 20, fontWeight: '900', color: Colors.ink, marginTop: 4 },
+  profileHeroCity: { fontSize: 13, color: Colors.muted, fontWeight: '600' },
+
+  photoSection: { marginTop: 4, marginBottom: 16 },
+  bioCard: {
+    backgroundColor: Colors.paper, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: Spacing.md, gap: 6,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  bioCardFocused: { borderColor: Colors.terracotta },
   profileCardSectionHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
@@ -1517,12 +1531,12 @@ const styles = StyleSheet.create({
   profileCity:    { fontSize: 12, color: Colors.muted, fontWeight: '600' },
   profileSection: { gap: 4 },
   profileBio:     { fontSize: 14, color: Colors.brownMid, lineHeight: 20 },
-  profileBioInput: { marginTop: 6, minHeight: 60, padding: 0 },
-  profileBioInputFocused: {
-    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm,
-    padding: 8, marginHorizontal: -8,
+  profileBioInput: {
+    minHeight: 56,
+    maxHeight: 112,
+    padding: 0,
   },
-  photoStrip:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  photoStrip:     { flexDirection: 'row', flexWrap: 'wrap', gap: PHOTO_GAP },
   photoWrap:      { position: 'relative' },
   photo: {
     width: PHOTO_W, height: PHOTO_H, borderRadius: 8, backgroundColor: Colors.warmWhite,
@@ -1534,7 +1548,7 @@ const styles = StyleSheet.create({
   photoAddBtn: {
     width: PHOTO_W, height: PHOTO_H, borderRadius: 8, borderWidth: 1.5,
     borderColor: Colors.terracotta, borderStyle: 'dashed',
-    backgroundColor: 'rgba(196,98,45,0.04)', alignItems: 'center', justifyContent: 'center', gap: 4,
+    backgroundColor: Colors.warmWhite, alignItems: 'center', justifyContent: 'center', gap: 4,
   },
   photoAddLabel: { fontSize: 10, color: Colors.terracotta, fontWeight: '700' },
 
@@ -1546,31 +1560,30 @@ const styles = StyleSheet.create({
   prefDividerLabel: { fontSize: 11, fontWeight: '700', color: Colors.muted, letterSpacing: 0.8 },
 
   prefCard: {
-    backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.lg, padding: Spacing.md, gap: 10, marginBottom: Spacing.sm,
+    backgroundColor: Colors.paper, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    paddingVertical: Spacing.md, paddingHorizontal: Spacing.md,
+    gap: 10, marginBottom: Spacing.sm,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  prefCardLabel: {
+    fontSize: 11, fontWeight: '700', color: Colors.muted,
+    textTransform: 'uppercase', letterSpacing: 0.7,
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full,
     backgroundColor: Colors.warmWhite, borderWidth: 1, borderColor: Colors.border,
   },
-  chipActive:     { backgroundColor: 'rgba(196,98,45,0.10)', borderColor: Colors.terracotta },
-  chipText:       { fontSize: 13, fontWeight: '600', color: Colors.brownMid },
+  chipActive:     { backgroundColor: 'rgba(196,98,45,0.13)', borderColor: Colors.terracotta, borderWidth: 1.5 },
+  chipText:       { fontSize: 13, fontWeight: '600', color: Colors.brown },
   chipTextActive: { color: Colors.terracotta },
-  ageRow:   { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  ageDash:  { width: 20, height: 2, borderRadius: 1, backgroundColor: Colors.border },
-  ageField: { flex: 1, alignItems: 'center', gap: 6 },
-  ageFieldLabel: {
-    fontSize: 10, fontWeight: '700', color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.6,
-  },
-  ageControl: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border,
-    paddingHorizontal: 8, paddingVertical: 8,
-  },
-  ageStepBtn: { padding: 4 },
-  ageValue:   { fontSize: 16, fontWeight: '800', color: Colors.ink, minWidth: 40, textAlign: 'center' },
-  ageHint:    { fontSize: 12, color: Colors.muted },
+  ageHeaderRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  ageRangeValue:  { fontSize: 15, fontWeight: '800', color: Colors.ink },
+  ageSliderRow:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ageSliderLabel: { fontSize: 11, fontWeight: '700', color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.5, width: 28 },
+  ageSlider:      { flex: 1, height: 36 },
   visibilityRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
