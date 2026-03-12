@@ -335,8 +335,6 @@ export default function HomeScreen() {
       <SafeAreaView edges={['top']} style={styles.safe}>
         <Animated.View style={[{ flex: 1 }, enterStyle]}>
           <View style={styles.header}>
-            {/* Top row: logo */}
-            <Image source={require('../../assets/godena-logo.png')} style={styles.wordmarkLogo} resizeMode="contain" />
             {/* Greeting row: text + bell on same line */}
             <View style={styles.greetingRow}>
               <View style={styles.greetingLeft}>
@@ -475,7 +473,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
             {upcomingEvents.length > 0 ? (
-              upcomingEvents.slice(0, 2).map((ev) => (
+              upcomingEvents.slice(0, 3).map((ev) => (
                 <TouchableOpacity
                   key={ev.id}
                   style={styles.eventCard}
@@ -545,11 +543,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: Spacing.lg,
   },
-  wordmarkLogo: {
-    width: 96,
-    height: 24,
-    marginBottom: 10,
-  },
   greetingRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -568,7 +561,10 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     marginTop: 3,
     lineHeight: 18,
   },
-  notifBtn: { position: 'relative', padding: 6, marginTop: -2 },
+  notifBtn: {
+    position: 'relative', width: 36, height: 36, borderRadius: 18,
+    backgroundColor: C.paper, alignItems: 'center', justifyContent: 'center',
+  },
   notifDot: {
     position: 'absolute',
     top: 1,
@@ -651,8 +647,8 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   sectionTitle: {
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '700',
     color: C.ink,
   },
   seeAll: {
@@ -754,13 +750,13 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: Spacing.lg,
-    marginBottom: 14,
-    backgroundColor: C.warmWhite,
+    marginBottom: 10,
+    backgroundColor: C.paper,
     borderRadius: Radius.lg,
-    padding: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: C.border,
-    gap: 16,
+    gap: 14,
   },
   eventIconWrap: {
     width: 56,
@@ -858,5 +854,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     color: C.muted,
     lineHeight: 17,
   },
+
 
 }); }
