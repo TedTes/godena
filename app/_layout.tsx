@@ -1,8 +1,19 @@
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/theme';
+import * as SplashScreen from 'expo-splash-screen';
+
+void SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  useEffect(() => {
+    const hide = async () => {
+      await SplashScreen.hideAsync();
+    };
+    void hide();
+  }, []);
+
   return (
     <>
       <StatusBar style="light" />
