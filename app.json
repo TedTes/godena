@@ -4,13 +4,13 @@
     "slug": "godena",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo-temp.png",
+    "icon": "./assets/godena-logo.svg",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/godena-logo.svg",
       "resizeMode": "contain",
-      "backgroundColor": "#3d2b1f"
+      "backgroundColor": "#F7F4EF"
     },
     "scheme": "godena",
     "ios": {
@@ -20,14 +20,14 @@
     "android": {
       "package": "com.godena.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/godena-logo.svg",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/godena-logo.svg"
     },
     "plugins": [
       "expo-router",
