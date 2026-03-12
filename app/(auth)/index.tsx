@@ -6,7 +6,6 @@ import {
   Text,
   TouchableOpacity,
   View,
-  Image,
 } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
@@ -19,7 +18,6 @@ import { Colors, Radius, Spacing } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolvePostAuthRoute } from '../../lib/services/auth';
 import { useAuthEntrance } from '../../hooks/useAuthEntrance';
-
 type Provider = 'google' | 'apple';
 
 export default function AuthChoiceScreen() {
@@ -204,7 +202,7 @@ export default function AuthChoiceScreen() {
   };
 
   const isLoading = loadingProvider !== null;
-  const { logoStyle, titleStyle, subtitleStyle, buttonsStyle } = useAuthEntrance();
+  const { titleStyle, subtitleStyle, buttonsStyle } = useAuthEntrance();
 
   return (
     <View style={styles.container}>
@@ -213,13 +211,6 @@ export default function AuthChoiceScreen() {
         {/* Top: branding + buttons */}
         <View style={styles.content}>
           <View style={styles.header}>
-            <Animated.View style={logoStyle}>
-              <Image
-                source={require('../../assets/godena-logo.png')}
-                style={styles.wordmarkLogo}
-                resizeMode="contain"
-              />
-            </Animated.View>
             <Animated.Text style={[styles.title, titleStyle]}>Sign in</Animated.Text>
             <Animated.Text style={[styles.subtitle, subtitleStyle]}>Choose the fastest way to continue.</Animated.Text>
           </View>
@@ -294,7 +285,7 @@ export default function AuthChoiceScreen() {
               accessibilityLabel="Continue with Email"
               accessibilityRole="button"
             >
-              <Ionicons name="mail-outline" size={16} color={Colors.muted} />
+              <Ionicons name="mail-outline" size={16} color={Colors.brownMid} />
               <Text style={styles.emailBtnText}>Continue with Email</Text>
             </TouchableOpacity>
           </Animated.View>
@@ -337,14 +328,13 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: Spacing.lg,
-    paddingTop: 52,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
+    paddingBottom: 24,
   },
 
-  header: { marginBottom: 34 },
-  wordmarkLogo: { width: 152, height: 152, marginBottom: 14 },
-  title: { fontSize: 30, fontWeight: '900', color: Colors.ink, marginBottom: 8, letterSpacing: -0.5 },
-  subtitle: { fontSize: 15, color: Colors.muted, lineHeight: 22 },
+  header: { marginBottom: 24, alignItems: 'center' },
+  title: { fontSize: 30, fontWeight: '900', color: Colors.ink, marginBottom: 8, letterSpacing: -0.5, textAlign: 'center' },
+  subtitle: { fontSize: 15, color: Colors.muted, lineHeight: 22, textAlign: 'center' },
 
   buttons: { gap: 10 },
 
@@ -387,15 +377,18 @@ const styles = StyleSheet.create({
   dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
   dividerText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
 
-  // Email (ghost text button with icon)
+  // Email (outlined pill — more discoverable than ghost text)
   emailBtn: {
-    height: 48,
+    height: 52,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 6,
   },
-  emailBtnText: { color: Colors.muted, fontSize: 14, fontWeight: '600' },
+  emailBtnText: { color: Colors.brown, fontSize: 14, fontWeight: '700' },
 
   errorText: {
     marginTop: 12,

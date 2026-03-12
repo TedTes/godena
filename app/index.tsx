@@ -1,15 +1,68 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 import { resolvePostAuthRoute } from '../lib/services/auth';
+import GodenaLogo from '../components/GodenaLogo';
 
 export default function Index() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [routeError, setRouteError] = useState('');
   const [retryNonce, setRetryNonce] = useState(0);
+  const logoOpacity = useState(() => new Animated.Value(0.4))[0];
+  const logoScale = useState(() => new Animated.Value(0.92))[0];
+  const logoTranslateY = useState(() => new Animated.Value(6))[0];
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(logoOpacity, {
+            toValue: 1,
+            duration: 650,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(logoScale, {
+            toValue: 1,
+            duration: 650,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(logoTranslateY, {
+            toValue: 0,
+            duration: 650,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.timing(logoOpacity, {
+            toValue: 0.78,
+            duration: 900,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(logoScale, {
+            toValue: 0.96,
+            duration: 900,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(logoTranslateY, {
+            toValue: 2,
+            duration: 900,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [logoOpacity, logoScale, logoTranslateY]);
 
   useEffect(() => {
     let mounted = true;
@@ -86,6 +139,15 @@ export default function Index() {
   if (loading) {
     return (
       <View style={styles.container}>
+        <Animated.View
+          style={{
+            opacity: logoOpacity,
+            transform: [{ scale: logoScale }, { translateY: logoTranslateY }],
+          }}
+        >
+          <GodenaLogo width={124} height={124} />
+        </Animated.View>
+        <View style={{ height: 20 }} />
         <ActivityIndicator color={Colors.terracotta} />
       </View>
     );
