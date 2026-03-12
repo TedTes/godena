@@ -133,6 +133,7 @@ export default function ProfileScreen() {
   >([]);
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [editingField, setEditingField] = useState<EditableField | null>(null);
+  const [isBioFocused, setIsBioFocused] = useState(false);
   const [editingValue, setEditingValue] = useState('');
   const [editingSecondaryValue, setEditingSecondaryValue] = useState('');
   const [editingMultiValue, setEditingMultiValue] = useState<string[]>([]);
@@ -1085,12 +1086,21 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About</Text>
             {editingField === 'bio' ? (
-              <RAnimated.View key="bio-edit" entering={editEnterAnim} exiting={editExitAnim} style={styles.bioDashedCard}>
+              <RAnimated.View
+                key="bio-edit"
+                entering={editEnterAnim}
+                exiting={editExitAnim}
+                style={[styles.bioDashedCard, (editingField === 'bio' || isBioFocused) && styles.bioDashedCardActive]}
+              >
                 <RAnimated.View entering={inputEnterAnim}>
                   <TextInput
                     value={editingValue}
                     onChangeText={setEditingValue}
-                    onBlur={() => void updateProfilePatch({ bio: editingValue.trim() || null }).then(closeEditRow)}
+                    onFocus={() => setIsBioFocused(true)}
+                    onBlur={() => {
+                      setIsBioFocused(false);
+                      void updateProfilePatch({ bio: editingValue.trim() || null }).then(closeEditRow);
+                    }}
                     multiline
                     style={styles.bioInput}
                     autoFocus
@@ -1743,14 +1753,22 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
 
   // ── Bio ──
   bioDashedCard: {
-    backgroundColor: C.warmWhite,
+    backgroundColor: C.paper,
     borderWidth: 1,
-    borderColor: C.borderDark,
-    borderStyle: 'dashed',
+    borderColor: C.border,
     borderRadius: Radius.lg,
     padding: Spacing.md,
     minHeight: 94,
     justifyContent: 'flex-start',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  bioDashedCardActive: {
+    borderColor: 'rgba(196,98,45,0.45)',
+    borderWidth: 1,
   },
   bioInput: {
     fontSize: 14,
