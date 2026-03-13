@@ -21,13 +21,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../constants/theme';
 import { supabase } from '../lib/supabase';
-
-const INTENT_OPTIONS = [
-  { value: 'friendship', label: 'Friendship' },
-  { value: 'dating', label: 'Dating' },
-  { value: 'long_term', label: 'Long-term' },
-  { value: 'marriage', label: 'Marriage' },
-] as const;
+import { resolveProfilePhotoUrl } from '../lib/services/photoUrls';
 
 const GENDER_OPTIONS = [
   { value: 'woman', label: 'Woman' },
@@ -41,10 +35,11 @@ type SelectedPhoto = {
   uri: string;
   mimeType?: string | null;
   base64?: string | null;
+  storagePath?: string | null;
 };
 
 const PROFILE_SETUP_BASE_SELECT =
-  'full_name, city, birth_date, bio, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections';
+  'full_name, city, birth_date, bio, ethnicity, religion, languages, gender, is_open_to_connections';
 
 export default function ProfileSetupScreen() {
   const router = useRouter();
@@ -58,14 +53,10 @@ export default function ProfileSetupScreen() {
   const [ethnicity, setEthnicity] = useState('');
   const [religion, setReligion] = useState('');
   const [languagesInput, setLanguagesInput] = useState('');
-  const [intent, setIntent] = useState<(typeof INTENT_OPTIONS)[number]['value']>('dating');
   const [gender, setGender] = useState<GenderValue | null>(null);
-  const [preferredGenders, setPreferredGenders] = useState<GenderValue[]>([]);
-  const [preferredAgeMin, setPreferredAgeMin] = useState('');
-  const [preferredAgeMax, setPreferredAgeMax] = useState('');
   const [isOpenToConnections, setIsOpenToConnections] = useState(true);
   const [datingModeEnabled, setDatingModeEnabled] = useState(false);
-  const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
+  const [avatarPhoto, setAvatarPhoto] = useState<SelectedPhoto | null>(null);
   const [pickingPhoto, setPickingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -104,7 +95,7 @@ export default function ProfileSetupScreen() {
 
       const { data: existingProfile, error: profileError } = await supabase
         .from('profiles')
-        .select(PROFILE_SETUP_BASE_SELECT)
+        .select(`${PROFILE_SETUP_BASE_SELECT}, avatar_url`)
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -121,33 +112,24 @@ export default function ProfileSetupScreen() {
       setEthnicity(existingProfile.ethnicity ?? '');
       setReligion(existingProfile.religion ?? '');
       setLanguagesInput((existingProfile.languages ?? []).join(', '));
-      setIntent((existingProfile.intent as typeof intent) ?? 'dating');
       const existingGender = existingProfile.gender as GenderValue | null;
       setGender(existingGender && GENDER_OPTIONS.some((g) => g.value === existingGender) ? existingGender : null);
-      setPreferredGenders((existingProfile.preferred_genders as GenderValue[] | null) ?? []);
-      setPreferredAgeMin(existingProfile.preferred_age_min?.toString() ?? '');
-      setPreferredAgeMax(existingProfile.preferred_age_max?.toString() ?? '');
       setIsOpenToConnections(existingProfile.is_open_to_connections ?? true);
-      const [{ data: datingProfile }, { data: datingPreferences }] = await Promise.all([
-        supabase
-          .from('dating_profiles')
-          .select('is_enabled')
-          .eq('user_id', user.id)
-          .maybeSingle(),
-        supabase
-          .from('dating_preferences')
-          .select('preferred_genders, preferred_age_min, preferred_age_max')
-          .eq('user_id', user.id)
-          .maybeSingle(),
-      ]);
-      setDatingModeEnabled(datingProfile?.is_enabled ?? false);
-      if (datingPreferences) {
-        const allowedGenders = new Set(GENDER_OPTIONS.map((g) => g.value));
-        const prefGenders = (datingPreferences.preferred_genders as GenderValue[] | null) ?? [];
-        setPreferredGenders(prefGenders.filter((g) => allowedGenders.has(g)));
-        setPreferredAgeMin(datingPreferences.preferred_age_min?.toString() ?? '');
-        setPreferredAgeMax(datingPreferences.preferred_age_max?.toString() ?? '');
+      if (existingProfile.avatar_url) {
+        const resolvedAvatarUri = await resolveProfilePhotoUrl(existingProfile.avatar_url);
+        if (resolvedAvatarUri) {
+          setAvatarPhoto({
+            uri: resolvedAvatarUri,
+            storagePath: existingProfile.avatar_url,
+          });
+        }
       }
+      const { data: datingProfile } = await supabase
+        .from('dating_profiles')
+        .select('is_enabled')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setDatingModeEnabled(datingProfile?.is_enabled ?? false);
       setInitialLoading(false);
     };
 
@@ -157,10 +139,6 @@ export default function ProfileSetupScreen() {
   const addPhoto = async () => {
     if (pickingPhoto) return;
     setError('');
-    if (photos.length >= 4) {
-      Alert.alert('Photo limit reached', 'You can upload up to 4 photos.');
-      return;
-    }
 
     try {
       setPickingPhoto(true);
@@ -175,24 +153,21 @@ export default function ProfileSetupScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [4, 5],
-      quality: 0.8,
-      base64: true,
-    });
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [4, 5],
+        quality: 0.8,
+        base64: true,
+      });
 
-    if (!result.canceled && result.assets[0]?.uri) {
-      const asset = result.assets[0];
-      setPhotos((prev) => [
-        ...prev,
-        {
+      if (!result.canceled && result.assets[0]?.uri) {
+        const asset = result.assets[0];
+        setAvatarPhoto({
           uri: asset.uri,
           mimeType: asset.mimeType,
           base64: asset.base64,
-        },
-      ].slice(0, 4));
-    }
+        });
+      }
     } catch (pickerError: any) {
       setError(pickerError?.message ?? 'Could not open photo library.');
     } finally {
@@ -200,8 +175,8 @@ export default function ProfileSetupScreen() {
     }
   };
 
-  const removePhoto = (uri: string) => {
-    setPhotos((prev) => prev.filter((p) => p.uri !== uri));
+  const removePhoto = () => {
+    setAvatarPhoto(null);
   };
 
   const handleDatingModeToggle = (value: boolean) => {
@@ -224,8 +199,6 @@ export default function ProfileSetupScreen() {
       return;
     }
 
-    const minAge = preferredAgeMin.trim() ? Number(preferredAgeMin) : null;
-    const maxAge = preferredAgeMax.trim() ? Number(preferredAgeMax) : null;
     const normalizedBirthDate = birthDate.trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
       setError('Birth date must use YYYY-MM-DD format.');
@@ -250,18 +223,6 @@ export default function ProfileSetupScreen() {
       setError('You must be at least 18 years old.');
       return;
     }
-    if (
-      (minAge !== null && Number.isNaN(minAge)) ||
-      (maxAge !== null && Number.isNaN(maxAge))
-    ) {
-      setError('Preferred age range must be numeric.');
-      return;
-    }
-    if (minAge !== null && maxAge !== null && minAge > maxAge) {
-      setError('Preferred minimum age cannot be greater than maximum age.');
-      return;
-    }
-
     setError('');
     setSaving(true);
 
@@ -277,20 +238,20 @@ export default function ProfileSetupScreen() {
 
     const { data: existingProfile } = await supabase
       .from('profiles')
-      .select('photo_urls, avatar_url')
+      .select('avatar_url')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    const uploadedPhotoPaths: string[] = [];
-    for (let i = 0; i < photos.length; i += 1) {
-      const picked = photos[i];
+    let nextAvatarUrl = existingProfile?.avatar_url ?? null;
+    if (avatarPhoto?.base64 || avatarPhoto?.uri?.startsWith('file://')) {
+      const picked = avatarPhoto;
       const contentType = picked.mimeType || 'image/jpeg';
       const ext =
         contentType === 'image/png' ? 'png' :
         contentType === 'image/webp' ? 'webp' :
         contentType === 'image/jpeg' ? 'jpg' :
         'jpg';
-      const filePath = `${user.id}/${Date.now()}-${i}.${ext}`;
+      const filePath = `${user.id}/${Date.now()}-avatar.${ext}`;
 
       let fileData: ArrayBuffer;
       if (picked.base64) {
@@ -315,17 +276,10 @@ export default function ProfileSetupScreen() {
         return;
       }
 
-      uploadedPhotoPaths.push(filePath);
+      nextAvatarUrl = filePath;
+    } else if (!avatarPhoto) {
+      nextAvatarUrl = null;
     }
-
-    const nextPhotoUrls =
-      uploadedPhotoPaths.length > 0
-        ? uploadedPhotoPaths
-        : (existingProfile?.photo_urls ?? []);
-    const nextAvatarUrl =
-      uploadedPhotoPaths.length > 0
-        ? uploadedPhotoPaths[0]
-        : (existingProfile?.avatar_url ?? null);
 
     const { error: upsertError } = await supabase.from('profiles').upsert({
       user_id: user.id,
@@ -336,14 +290,9 @@ export default function ProfileSetupScreen() {
       ethnicity: ethnicity.trim(),
       religion: religion.trim() || null,
       languages: parsedLanguages,
-      intent,
       gender,
-      preferred_genders: preferredGenders,
-      preferred_age_min: minAge,
-      preferred_age_max: maxAge,
       is_open_to_connections: isOpenToConnections,
       avatar_url: nextAvatarUrl,
-      photo_urls: nextPhotoUrls,
       last_active_at: new Date().toISOString(),
     });
 
@@ -361,24 +310,6 @@ export default function ProfileSetupScreen() {
       setError(datingProfileError.message);
       return;
     }
-
-    const { error: datingPreferencesError } = await supabase
-      .from('dating_preferences')
-      .upsert(
-        {
-          user_id: user.id,
-          preferred_genders: preferredGenders,
-          preferred_intents: intent ? [intent] : [],
-          preferred_age_min: minAge,
-          preferred_age_max: maxAge,
-        },
-        { onConflict: 'user_id' }
-      );
-    if (datingPreferencesError) {
-      setError(datingPreferencesError.message);
-      return;
-    }
-
     // Keep global openness and per-group signals consistent:
     // when global is turned off, clear all group-level open signals.
     if (!isOpenToConnections) {
@@ -564,27 +495,6 @@ export default function ProfileSetupScreen() {
             />
           </View>
 
-          {/* ── Preferences ── */}
-          <Text style={styles.sectionHeader}>Preferences</Text>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Intent <Text style={styles.required}>*</Text></Text>
-            <View style={styles.intentRow}>
-              {INTENT_OPTIONS.map((option) => (
-                <TouchableOpacity
-                  key={option.value}
-                  style={[styles.intentChip, intent === option.value && styles.intentChipActive]}
-                  onPress={() => setIntent(option.value)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.intentChipText, intent === option.value && styles.intentChipTextActive]}>
-                    {option.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
           <View style={styles.field}>
             <Text style={styles.label}>Gender <Text style={styles.required}>*</Text></Text>
             <View style={styles.intentRow}>
@@ -600,56 +510,6 @@ export default function ProfileSetupScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Interested in</Text>
-            <View style={styles.intentRow}>
-              {GENDER_OPTIONS.map((option) => {
-                const selected = preferredGenders.includes(option.value);
-                return (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[styles.intentChip, selected && styles.intentChipActive]}
-                    onPress={() =>
-                      setPreferredGenders((prev) =>
-                        selected ? prev.filter((g) => g !== option.value) : [...prev, option.value]
-                      )
-                    }
-                    activeOpacity={0.85}
-                  >
-                    <Text style={[styles.intentChipText, selected && styles.intentChipTextActive]}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Preferred age range</Text>
-            <View style={styles.ageRow}>
-              <TextInput
-                style={[styles.input, styles.ageInput]}
-                value={preferredAgeMin}
-                onChangeText={setPreferredAgeMin}
-                keyboardType="number-pad"
-                placeholder="Min"
-                placeholderTextColor={Colors.muted}
-                maxLength={2}
-              />
-              <Text style={styles.ageDash}>—</Text>
-              <TextInput
-                style={[styles.input, styles.ageInput]}
-                value={preferredAgeMax}
-                onChangeText={setPreferredAgeMax}
-                keyboardType="number-pad"
-                placeholder="Max"
-                placeholderTextColor={Colors.muted}
-                maxLength={2}
-              />
             </View>
           </View>
 
@@ -691,23 +551,22 @@ export default function ProfileSetupScreen() {
           {!isEditMode && (
             <View style={styles.field}>
               <View style={styles.labelRow}>
-                <Text style={styles.label}>Photos</Text>
-                <Text style={styles.charCount}>{photos.length}/4</Text>
+                <Text style={styles.label}>Profile photo</Text>
               </View>
               <View style={styles.photoRow}>
-                {photos.map((photo) => (
-                  <View key={photo.uri} style={styles.photoWrap}>
-                    <Image source={{ uri: photo.uri }} style={styles.photo} />
+                {avatarPhoto ? (
+                  <View key={avatarPhoto.uri} style={styles.photoWrap}>
+                    <Image source={{ uri: avatarPhoto.uri }} style={styles.photo} />
                     <TouchableOpacity
                       style={styles.removePhotoBtn}
-                      onPress={() => removePhoto(photo.uri)}
+                      onPress={removePhoto}
                       activeOpacity={0.8}
                     >
                       <Text style={styles.removePhotoText}>×</Text>
                     </TouchableOpacity>
                   </View>
-                ))}
-                {photos.length < 4 && (
+                ) : null}
+                {!avatarPhoto && (
                   <TouchableOpacity
                     style={[styles.addPhotoBtn, pickingPhoto && styles.addPhotoBtnDisabled]}
                     onPress={addPhoto}

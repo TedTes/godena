@@ -33,12 +33,10 @@ type DatingCandidateRow = {
   user_id: string;
   full_name: string | null;
   city: string | null;
-  bio: string | null;
   intent: 'friendship' | 'dating' | 'long_term' | 'marriage' | null;
   languages: string[] | null;
   birth_date: string | null;
   avatar_url: string | null;
-  photo_urls: string[] | null;
   dating_about: string | null;
   dating_photos: string[] | null;
 };
@@ -84,6 +82,8 @@ type DatingMatchRow = {
   photoUrl: string | null;
   matchedAt: string;
 };
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -144,11 +144,47 @@ function timeAgo(iso: string): string {
   return `${Math.floor(days / 7)}w ago`;
 }
 
+function serializePrefDraft(prefDraft: PrefDraft): string {
+  return JSON.stringify({
+    preferredGenders: [...prefDraft.preferredGenders].sort(),
+    preferredIntents: [...prefDraft.preferredIntents].sort(),
+    preferredAgeMin: prefDraft.preferredAgeMin,
+    preferredAgeMax: prefDraft.preferredAgeMax,
+    isGloballyVisible: prefDraft.isGloballyVisible,
+  });
+}
+
 // ── DatingHeader ──────────────────────────────────────────────────────────────
 
 function DatingHeader({
-  name, onBack,
-}: { name: string; likedCount: number; onBack: () => void }) {
+  name, onBack, saveState,
+}: { name: string; likedCount: number; onBack: () => void; saveState?: SaveState }) {
+  const badgeScale = useRef(new Animated.Value(0)).current;
+  const badgeOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (saveState === 'saved') {
+      badgeScale.setValue(0.72);
+      badgeOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(badgeScale, { toValue: 1, useNativeDriver: true, friction: 6, tension: 140 }),
+        Animated.timing(badgeOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start();
+      return;
+    }
+
+    if (saveState === 'error') {
+      badgeScale.setValue(1);
+      badgeOpacity.setValue(1);
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(badgeOpacity, { toValue: 0, duration: 140, useNativeDriver: true }),
+      Animated.timing(badgeScale, { toValue: 0.85, duration: 140, useNativeDriver: true }),
+    ]).start();
+  }, [badgeOpacity, badgeScale, saveState]);
+
   return (
     <View style={styles.header}>
       <TouchableOpacity
@@ -159,7 +195,21 @@ function DatingHeader({
         <Ionicons name="chevron-back" size={20} color={Colors.brown} />
       </TouchableOpacity>
       <Text style={styles.headerTitle}>{name}</Text>
-      <View style={styles.headerSpacer} />
+      <View style={styles.headerStatusWrap}>
+        <Animated.View
+          style={[
+            styles.headerStatusBadge,
+            saveState === 'error' && styles.headerStatusBadgeError,
+            { opacity: badgeOpacity, transform: [{ scale: badgeScale }] },
+          ]}
+        >
+          <Ionicons
+            name={saveState === 'error' ? 'alert' : 'checkmark'}
+            size={14}
+            color={Colors.white}
+          />
+        </Animated.View>
+      </View>
     </View>
   );
 }
@@ -446,9 +496,9 @@ function MessagesTab({
 
 function ProfileTab({
   summary, photoPaths, photoUrls, updatingPhotos,
-  prefDraft, savingPrefs,
+  prefDraft,
   onAdd, onRemove, onSaveBio,
-  onPrefUpdate, onPrefSave,
+  onPrefUpdate, onBioSaveStateChange,
   scrollRef,
 }: {
   summary: MyDatingSummary | null;
@@ -456,20 +506,46 @@ function ProfileTab({
   photoUrls: string[];
   updatingPhotos: boolean;
   prefDraft: PrefDraft;
-  savingPrefs: boolean;
   onAdd: () => void;
   onRemove: (path: string, idx: number) => void;
   onSaveBio: (text: string) => Promise<void>;
   onPrefUpdate: (patch: Partial<PrefDraft>) => void;
-  onPrefSave: () => void;
+  onBioSaveStateChange: (state: SaveState) => void;
   scrollRef: React.RefObject<ScrollView | null>;
 }) {
   const [bioText, setBioText] = useState(summary?.about ?? '');
   const [bioFocused, setBioFocused] = useState(false);
   const [bioInputHeight, setBioInputHeight] = useState(96);
+  const [bioSaveState, setBioSaveState] = useState<SaveState>('idle');
 
   // Sync bioText when summary loads/changes
   useEffect(() => { setBioText(summary?.about ?? ''); }, [summary?.about]);
+
+  useEffect(() => {
+    onBioSaveStateChange(bioSaveState);
+  }, [bioSaveState, onBioSaveStateChange]);
+
+  useEffect(() => {
+    if (bioSaveState !== 'saved' && bioSaveState !== 'error') return;
+    const timer = setTimeout(() => setBioSaveState('idle'), 1400);
+    return () => clearTimeout(timer);
+  }, [bioSaveState]);
+
+  useEffect(() => {
+    const next = summary?.about ?? '';
+    if (bioText.trim() === next.trim()) {
+      setBioSaveState('idle');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setBioSaveState('saving');
+      void onSaveBio(bioText.trim())
+        .then(() => setBioSaveState('saved'))
+        .catch(() => setBioSaveState('error'));
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [bioText, summary?.about, onSaveBio]);
+
   return (
     <ScrollView
       ref={scrollRef}
@@ -556,7 +632,10 @@ function ProfileTab({
           onFocus={() => setBioFocused(true)}
           onBlur={() => {
             setBioFocused(false);
-            void onSaveBio(bioText.trim());
+            setBioSaveState('saving');
+            void onSaveBio(bioText.trim())
+              .then(() => setBioSaveState('saved'))
+              .catch(() => setBioSaveState('error'));
           }}
           multiline
           maxLength={280}
@@ -566,12 +645,6 @@ function ProfileTab({
           textAlignVertical="top"
           style={[styles.profileBio, styles.profileBioInput, { height: bioInputHeight }]}
         />
-        {(summary?.languages ?? []).length > 0 ? (
-          <View style={styles.metaRow}>
-            <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.muted} />
-            <Text style={styles.metaText}>{summary!.languages.join(' · ')}</Text>
-          </View>
-        ) : null}
       </View>
 
       {/* Gender */}
@@ -669,19 +742,6 @@ function ProfileTab({
           />
         </View>
       </View>
-
-      <TouchableOpacity
-        style={[styles.saveBtn, savingPrefs && styles.saveBtnDisabled]}
-        onPress={onPrefSave}
-        disabled={savingPrefs}
-        activeOpacity={0.85}
-      >
-        {savingPrefs ? (
-          <ActivityIndicator color={Colors.white} />
-        ) : (
-          <Text style={styles.saveBtnText}>Save Preferences</Text>
-        )}
-      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -721,13 +781,22 @@ export default function DatingModeScreen() {
     preferredGenders: [], preferredIntents: [],
     preferredAgeMin: null, preferredAgeMax: null, isGloballyVisible: true,
   });
-  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [prefSaveState, setPrefSaveState] = useState<SaveState>('idle');
+  const [bioSaveState, setBioSaveState] = useState<SaveState>('idle');
 
   // Navigation
   const [activeTab, setActiveTab] = useState<DatingTab>('discover');
 
   const position      = useRef(new Animated.ValueXY()).current;
   const profileScroll = useRef<ScrollView>(null);
+  const prefsHydrated = useRef(false);
+  const lastSavedPrefs = useRef(serializePrefDraft({
+    preferredGenders: [],
+    preferredIntents: [],
+    preferredAgeMin: null,
+    preferredAgeMax: null,
+    isGloballyVisible: true,
+  }));
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
@@ -882,41 +951,66 @@ export default function DatingModeScreen() {
 
   // ── Preferences save ─────────────────────────────────────────────────────────
 
-  const savePreferences = async () => {
-    if (!userId || savingPrefs) return;
-    setSavingPrefs(true);
+  const persistPreferences = useCallback(async (draft: PrefDraft) => {
+    if (!userId) throw new Error('Missing user');
     const { error } = await supabase.from('dating_preferences').upsert(
       {
         user_id:             userId,
-        preferred_genders:   prefDraft.preferredGenders,
-        preferred_intents:   prefDraft.preferredIntents,
-        preferred_age_min:   prefDraft.preferredAgeMin,
-        preferred_age_max:   prefDraft.preferredAgeMax,
-        is_globally_visible: prefDraft.isGloballyVisible,
+        preferred_genders:   draft.preferredGenders,
+        preferred_intents:   draft.preferredIntents,
+        preferred_age_min:   draft.preferredAgeMin,
+        preferred_age_max:   draft.preferredAgeMax,
+        is_globally_visible: draft.isGloballyVisible,
       },
       { onConflict: 'user_id' }
     );
-    setSavingPrefs(false);
-    if (error) { Alert.alert('Save failed', error.message); return; }
+    if (error) throw error;
     setMySummary((prev) => prev ? {
       ...prev,
-      preferredGenders:    prefDraft.preferredGenders,
-      preferredIntents:    prefDraft.preferredIntents,
-      preferredAgeMin:     prefDraft.preferredAgeMin,
-      preferredAgeMax:     prefDraft.preferredAgeMax,
-      isGloballyVisible:   prefDraft.isGloballyVisible,
+      preferredGenders:    draft.preferredGenders,
+      preferredIntents:    draft.preferredIntents,
+      preferredAgeMin:     draft.preferredAgeMin,
+      preferredAgeMax:     draft.preferredAgeMax,
+      isGloballyVisible:   draft.isGloballyVisible,
     } : prev);
-    Alert.alert('Saved', 'Your preferences have been updated.');
-  };
+  }, [userId]);
 
   // ── Bio save ─────────────────────────────────────────────────────────────────
 
   const saveDatingBio = async (text: string) => {
     if (!userId) return;
-    await supabase.from('dating_profiles')
+    const { error } = await supabase.from('dating_profiles')
       .upsert({ user_id: userId, is_enabled: true, about: text }, { onConflict: 'user_id' });
+    if (error) throw error;
     setMySummary((prev) => prev ? { ...prev, about: text } : prev);
   };
+
+  useEffect(() => {
+    if (!userId || !prefsHydrated.current) return;
+    const serialized = serializePrefDraft(prefDraft);
+    if (serialized === lastSavedPrefs.current) {
+      if (prefSaveState !== 'idle') setPrefSaveState('idle');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPrefSaveState('saving');
+      void persistPreferences(prefDraft)
+        .then(() => {
+          lastSavedPrefs.current = serialized;
+          setPrefSaveState('saved');
+        })
+        .catch(() => {
+          setPrefSaveState('error');
+        });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [prefDraft, prefSaveState, persistPreferences, userId]);
+
+  useEffect(() => {
+    if (prefSaveState !== 'saved' && prefSaveState !== 'error') return;
+    const timer = setTimeout(() => setPrefSaveState('idle'), 1400);
+    return () => clearTimeout(timer);
+  }, [prefSaveState]);
 
   // ── Matches loading ──────────────────────────────────────────────────────────
 
@@ -989,7 +1083,7 @@ export default function DatingModeScreen() {
 
     const [{ data: me }, { data: dp }, { data: dprefs }, candidatesRes] = await Promise.all([
       supabase.from('profiles')
-        .select('full_name, city, bio, intent, languages, avatar_url').eq('user_id', uid).maybeSingle(),
+        .select('full_name, city, birth_date, gender, languages, avatar_url').eq('user_id', uid).maybeSingle(),
       supabase.from('dating_profiles')
         .select('is_enabled, about, photos').eq('user_id', uid).maybeSingle(),
       supabase.from('dating_preferences')
@@ -1016,8 +1110,8 @@ export default function DatingModeScreen() {
     setMySummary({
       fullName:         myName || 'You',
       city:             me?.city?.trim() || 'City not set',
-      about:            dp?.about?.trim() || me?.bio?.trim() || '',
-      intent:           formatIntent((me?.intent as DatingCandidateRow['intent'] | null | undefined) ?? null),
+      about:            dp?.about?.trim() || '',
+      intent:           pi[0] ? formatIntent(pi[0] as DatingCandidateRow['intent']) : 'Not set',
       languages:        (me?.languages as string[] | null | undefined) ?? [],
       avatarUrl:        avatarUrl ?? null,
       preferredGenders: pg,
@@ -1026,7 +1120,18 @@ export default function DatingModeScreen() {
       preferredAgeMax:  pax,
       isGloballyVisible: vis,
     });
-    setPrefDraft({ preferredGenders: pg, preferredIntents: pi, preferredAgeMin: pam, preferredAgeMax: pax, isGloballyVisible: vis });
+    const loadedPrefDraft = {
+      preferredGenders: pg,
+      preferredIntents: pi,
+      preferredAgeMin: pam,
+      preferredAgeMax: pax,
+      isGloballyVisible: vis,
+    };
+    prefsHydrated.current = false;
+    setPrefDraft(loadedPrefDraft);
+    lastSavedPrefs.current = serializePrefDraft(loadedPrefDraft);
+    setPrefSaveState('idle');
+    prefsHydrated.current = true;
 
     if ((dp?.is_enabled ?? false) === false) {
       setProfiles([]); setDatingDisabled(true); setLoading(false); return;
@@ -1042,7 +1147,7 @@ export default function DatingModeScreen() {
 
     const prepared = await Promise.all(
       rows.map(async (row) => {
-        const allPaths = [row.avatar_url, ...(row.photo_urls ?? []), ...(row.dating_photos ?? [])]
+        const allPaths = [row.avatar_url, ...(row.dating_photos ?? [])]
           .filter((v, i, arr): v is string => Boolean(v) && arr.indexOf(v) === i);
         const resolved = await Promise.all(allPaths.map((p) => resolveProfilePhotoUrl(p)));
         return {
@@ -1050,7 +1155,7 @@ export default function DatingModeScreen() {
           name:      row.full_name?.trim() || 'Member',
           age:       ageFromBirthDate(row.birth_date),
           city:      row.city?.trim() || 'City not set',
-          bio:       row.dating_about?.trim() || row.bio?.trim() || 'No bio yet.',
+          bio:       row.dating_about?.trim() || 'No bio yet.',
           intent:    formatIntent(row.intent),
           languages: row.languages ?? [],
           images:    resolved.filter((u): u is string => Boolean(u)),
@@ -1087,6 +1192,9 @@ export default function DatingModeScreen() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   const showDeck = datingState === 'active';
+  const headerSaveState = activeTab === 'profile'
+    ? (bioSaveState !== 'idle' ? bioSaveState : prefSaveState)
+    : 'idle';
 
   return (
     <View style={styles.container}>
@@ -1096,6 +1204,7 @@ export default function DatingModeScreen() {
           name={headerName}
           likedCount={likedCount}
           onBack={() => router.back()}
+          saveState={headerSaveState}
         />
       </SafeAreaView>
 
@@ -1266,12 +1375,11 @@ export default function DatingModeScreen() {
             photoUrls={myPhotoUrls}
             updatingPhotos={updatingPhotos}
             prefDraft={prefDraft}
-            savingPrefs={savingPrefs}
             onAdd={() => { void addPhoto(); }}
             onRemove={(p, i) => { void removePhoto(p, i); }}
             onSaveBio={(text) => saveDatingBio(text)}
             onPrefUpdate={(patch) => setPrefDraft((prev) => ({ ...prev, ...patch }))}
-            onPrefSave={() => { void savePreferences(); }}
+            onBioSaveStateChange={setBioSaveState}
             scrollRef={profileScroll}
           />
         ) : null}
@@ -1309,7 +1417,23 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
   headerTitle:     { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  headerSpacer: { width: 36 },
+  headerStatusWrap: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerStatusBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerStatusBadgeError: {
+    backgroundColor: Colors.error,
+  },
 
   // Tab bar
   tabBar: {
@@ -1588,10 +1712,4 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   visHint: { fontSize: 12, color: Colors.muted, marginTop: 2 },
-  saveBtn: {
-    marginTop: Spacing.sm, backgroundColor: Colors.terracotta, borderRadius: Radius.full,
-    paddingVertical: 15, alignItems: 'center', justifyContent: 'center',
-  },
-  saveBtnDisabled: { opacity: 0.6 },
-  saveBtnText:     { color: Colors.white, fontWeight: '700', fontSize: 15 },
 });
