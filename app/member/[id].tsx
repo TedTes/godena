@@ -103,7 +103,6 @@ export default function MemberProfileScreen() {
   const chips = [
     profile.city,
     profile.gender,
-    profile.intent?.replace('_', ' '),
     profile.ethnicity,
     profile.religion,
     profile.languages?.length ? profile.languages.join(', ') : null,

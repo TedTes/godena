@@ -57,13 +57,7 @@ const settingsRows = [
   { icon: 'log-out-outline', label: 'Sign Out', danger: true },
 ] as const;
 
-const COMPLETENESS_TOTAL = 7;
-const INTENT_OPTIONS = [
-  { value: 'friendship', label: 'Friendship' },
-  { value: 'dating', label: 'Dating' },
-  { value: 'long_term', label: 'Long-term' },
-  { value: 'marriage', label: 'Marriage' },
-] as const;
+const COMPLETENESS_TOTAL = 6;
 const GENDER_OPTIONS = [
   { value: 'woman', label: 'Woman' },
   { value: 'man', label: 'Man' },
@@ -76,10 +70,7 @@ type EditableField =
   | 'ethnicity'
   | 'gender'
   | 'religion'
-  | 'languages'
-  | 'intent'
-  | 'preferred_genders'
-  | 'preferred_age';
+  | 'languages';
 
 type ProfileData = {
   full_name: string;
@@ -89,20 +80,14 @@ type ProfileData = {
   ethnicity: string | null;
   religion: string | null;
   languages: string[] | null;
-  intent: string;
   gender: string | null;
-  preferred_genders: string[] | null;
-  preferred_age_min: number | null;
-  preferred_age_max: number | null;
   is_open_to_connections: boolean | null;
   verification_status: string | null;
   avatar_url: string | null;
-  photo_urls: string[] | null;
 };
 
 const PROFILE_BASE_SELECT =
-  'full_name, city, bio, birth_date, ethnicity, religion, languages, intent, gender, preferred_genders, preferred_age_min, preferred_age_max, is_open_to_connections, verification_status, avatar_url, photo_urls';
-const ALLOWED_GENDER_VALUES = new Set(GENDER_OPTIONS.map((g) => g.value));
+  'full_name, city, bio, birth_date, ethnicity, religion, languages, gender, is_open_to_connections, verification_status, avatar_url';
 
 function AvatarImage({ uri, style, onError }: { uri: string; style: object; onError: () => void }) {
   const opacity = React.useRef(new Animated.Value(0)).current;
@@ -128,15 +113,10 @@ export default function ProfileScreen() {
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [galleryPhotos, setGalleryPhotos] = useState<
-    Array<{ uri: string; path: string; isAvatar: boolean }>
-  >([]);
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [editingField, setEditingField] = useState<EditableField | null>(null);
   const [isBioFocused, setIsBioFocused] = useState(false);
   const [editingValue, setEditingValue] = useState('');
-  const [editingSecondaryValue, setEditingSecondaryValue] = useState('');
-  const [editingMultiValue, setEditingMultiValue] = useState<string[]>([]);
   const [editingDate, setEditingDate] = useState<Date>(new Date());
   const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
   const [datingModeOn, setDatingModeOn] = useState(false);
@@ -159,7 +139,7 @@ export default function ProfileScreen() {
     const resolvedUserId = uid ?? userId;
     if (!resolvedUserId) return;
 
-    const [{ data }, { data: datingProfile }, { data: datingPreferences }] = await Promise.all([
+    const [{ data }, { data: datingProfile }] = await Promise.all([
       supabase
         .from('profiles')
         .select(PROFILE_BASE_SELECT)
@@ -170,55 +150,19 @@ export default function ProfileScreen() {
         .select('is_enabled')
         .eq('user_id', resolvedUserId)
         .maybeSingle(),
-      supabase
-        .from('dating_preferences')
-        .select('preferred_genders, preferred_intents, preferred_age_min, preferred_age_max')
-        .eq('user_id', resolvedUserId)
-        .maybeSingle(),
     ]);
 
     const profileData = data as ProfileData | null;
-    const mergedProfileData = profileData
-      ? {
-          ...profileData,
-          intent: (datingPreferences?.preferred_intents?.[0] as string | undefined) ?? profileData.intent,
-          preferred_genders:
-            (datingPreferences?.preferred_genders as string[] | null | undefined)?.filter((g) =>
-              ALLOWED_GENDER_VALUES.has(g as (typeof GENDER_OPTIONS)[number]['value'])
-            ) ?? profileData.preferred_genders,
-          preferred_age_min: datingPreferences?.preferred_age_min ?? profileData.preferred_age_min,
-          preferred_age_max: datingPreferences?.preferred_age_max ?? profileData.preferred_age_max,
-        }
-      : null;
     setDatingModeOn(datingProfile?.is_enabled ?? false);
 
-    setProfile(mergedProfileData ?? null);
+    setProfile(profileData ?? null);
 
-    const avatarValue = mergedProfileData?.avatar_url ?? null;
+    const avatarValue = profileData?.avatar_url ?? null;
     if (avatarValue) {
       const uri = await resolvePhotoUri(avatarValue);
       setAvatarUri(uri ?? null);
     } else {
       setAvatarUri(null);
-    }
-
-    const mergedPaths = [
-      ...(mergedProfileData?.avatar_url ? [mergedProfileData.avatar_url] : []),
-      ...(mergedProfileData?.photo_urls ?? []),
-    ].filter((v, i, arr): v is string => Boolean(v) && arr.indexOf(v) === i);
-
-    if (mergedPaths.length > 0) {
-      const resolved = await Promise.all(mergedPaths.map((v) => resolvePhotoUri(v)));
-      const photos = mergedPaths
-        .map((path, index) => ({
-          path,
-          uri: resolved[index],
-          isAvatar: Boolean(mergedProfileData?.avatar_url && path === mergedProfileData.avatar_url),
-        }))
-        .filter((p): p is { uri: string; path: string; isAvatar: boolean } => Boolean(p.uri));
-      setGalleryPhotos(photos);
-    } else {
-      setGalleryPhotos([]);
     }
   };
 
@@ -253,22 +197,9 @@ export default function ProfileScreen() {
   const ethnicity       = profile?.ethnicity ?? null;
   const religion        = profile?.religion ?? null;
   const languages       = profile?.languages ?? [];
-  const preferredGenders = profile?.preferred_genders ?? [];
-  const intentLabelMap: Record<string, string> = {
-    friendship: 'Friendship',
-    dating: 'Dating',
-    long_term: 'Long-term',
-    marriage: 'Marriage',
-  };
-  const intentLabel = profile?.intent ? (intentLabelMap[profile.intent] ?? profile.intent) : null;
   const birthDateLabel = profile?.birth_date
     ? new Date(`${profile.birth_date}T00:00:00.000Z`).toLocaleDateString()
     : null;
-
-  const preferredAgeLabel     =
-    profile?.preferred_age_min != null && profile?.preferred_age_max != null
-      ? `${profile.preferred_age_min}–${profile.preferred_age_max} years`
-      : null;
 
   const aboutMeRows: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string | null; field: EditableField }[] = [
     { icon: 'calendar-outline',             label: 'Birth Date', value: birthDateLabel, field: 'birth_date' },
@@ -276,12 +207,6 @@ export default function ProfileScreen() {
     { icon: 'person-outline',               label: 'Gender',     value: profile?.gender ?? null, field: 'gender' },
     { icon: 'leaf-outline',                 label: 'Religion',   value: religion, field: 'religion' },
     { icon: 'chatbubble-ellipses-outline',  label: 'Languages',  value: languages.length > 0 ? languages.join(', ') : null, field: 'languages' },
-  ];
-
-  const preferencesRows: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string | null; field: EditableField }[] = [
-    { icon: 'sparkles-outline', label: 'Connection Goal', value: intentLabel, field: 'intent' },
-    { icon: 'heart-outline',    label: 'Interested in',  value: preferredGenders.length > 0 ? preferredGenders.join(', ') : null, field: 'preferred_genders' },
-    { icon: 'calendar-outline', label: 'Preferred Age',  value: preferredAgeLabel, field: 'preferred_age' },
   ];
 
   const enterStyle = useScreenEnter();
@@ -307,7 +232,6 @@ export default function ProfileScreen() {
     Boolean(profile?.full_name?.trim()),
     Boolean(profile?.bio?.trim()),
     Boolean(profile?.avatar_url),
-    galleryPhotos.filter((p) => !p.isAvatar).length > 0,
     Boolean(profile?.ethnicity?.trim()),
     Boolean(profile?.religion?.trim()),
     languages.length > 0,
@@ -330,34 +254,6 @@ export default function ProfileScreen() {
       return false;
     }
 
-    const containsDatingPreferencePatch =
-      Object.prototype.hasOwnProperty.call(patch, 'intent') ||
-      Object.prototype.hasOwnProperty.call(patch, 'preferred_genders') ||
-      Object.prototype.hasOwnProperty.call(patch, 'preferred_age_min') ||
-      Object.prototype.hasOwnProperty.call(patch, 'preferred_age_max');
-
-    if (containsDatingPreferencePatch) {
-      const preferredGenders = (next.preferred_genders ?? []).filter((g) =>
-        ALLOWED_GENDER_VALUES.has(g as (typeof GENDER_OPTIONS)[number]['value'])
-      );
-      const preferredIntent = next.intent ? [next.intent] : [];
-      const { error: datingPrefError } = await supabase
-        .from('dating_preferences')
-        .upsert(
-          {
-            user_id: userId,
-            preferred_genders: preferredGenders,
-            preferred_intents: preferredIntent,
-            preferred_age_min: next.preferred_age_min ?? null,
-            preferred_age_max: next.preferred_age_max ?? null,
-          },
-          { onConflict: 'user_id' }
-        );
-      if (datingPrefError) {
-        Alert.alert('Update warning', `Profile saved, but dating preferences failed to sync: ${datingPrefError.message}`);
-      }
-    }
-
     return true;
   };
 
@@ -376,13 +272,7 @@ export default function ProfileScreen() {
     }
     LayoutAnimation.configureNext(LAYOUT_SPRING);
     setEditingField(field);
-    if (field === 'preferred_age') {
-      setEditingValue(profile.preferred_age_min?.toString() ?? '');
-      setEditingSecondaryValue(profile.preferred_age_max?.toString() ?? '');
-    } else if (field === 'preferred_genders') {
-      setEditingMultiValue(profile.preferred_genders ?? []);
-      setEditingValue('');
-    } else if (field === 'languages') {
+    if (field === 'languages') {
       setEditingValue((profile.languages ?? []).join(', '));
     } else if (field === 'bio') {
       setEditingValue(profile.bio ?? '');
@@ -392,8 +282,6 @@ export default function ProfileScreen() {
       setEditingValue(profile.religion ?? '');
     } else if (field === 'gender') {
       setEditingValue(profile.gender ?? '');
-    } else if (field === 'intent') {
-      setEditingValue(profile.intent ?? '');
     }
   };
 
@@ -426,76 +314,6 @@ export default function ProfileScreen() {
         </View>
       );
     }
-    if (field === 'intent') {
-      return (
-        <View style={styles.inlineOptionsWrap}>
-          {INTENT_OPTIONS.map((opt) => (
-            <TouchableOpacity
-              key={opt.value}
-              style={[styles.inlineOptionChip, editingValue === opt.value && styles.inlineOptionChipActive]}
-              onPress={() => {
-                setEditingValue(opt.value);
-                void updateProfilePatch({ intent: opt.value }).then(closeEditRow);
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.inlineOptionText, editingValue === opt.value && styles.inlineOptionTextActive]}>
-                {opt.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      );
-    }
-    // ── Multi-select chips: Done chip to commit ──
-    if (field === 'preferred_genders') {
-      return (
-        <View style={styles.inlineOptionsWrap}>
-          {GENDER_OPTIONS.map((opt) => {
-            const selected = editingMultiValue.includes(opt.value);
-            return (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.inlineOptionChip, selected && styles.inlineOptionChipActive]}
-                onPress={() => setEditingMultiValue((prev) =>
-                  prev.includes(opt.value) ? prev.filter((v) => v !== opt.value) : [...prev, opt.value]
-                )}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.inlineOptionText, selected && styles.inlineOptionTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      );
-    }
-    // ── Two-input preferred age with Done chip ──
-    if (field === 'preferred_age') {
-      return (
-        <View style={styles.inlineAgeRow}>
-          <TextInput
-            value={editingValue}
-            onChangeText={setEditingValue}
-            placeholder="Min age"
-            keyboardType="number-pad"
-            style={[styles.inlineInput, styles.inlineInputHalf]}
-            autoFocus
-            placeholderTextColor={C.muted}
-          />
-          <TextInput
-            value={editingSecondaryValue}
-            onChangeText={setEditingSecondaryValue}
-            placeholder="Max age"
-            keyboardType="number-pad"
-            style={[styles.inlineInput, styles.inlineInputHalf]}
-            placeholderTextColor={C.muted}
-          />
-        </View>
-      );
-    }
-    // ── Text input with auto-save on blur ──
     const handleBlur = () => {
       if (field === 'languages') {
         const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
@@ -523,24 +341,6 @@ export default function ProfileScreen() {
   const commitActiveEdit = async () => {
     if (!editingField) return;
     if (editingField === 'bio') return;
-
-    if (editingField === 'preferred_genders') {
-      await updateProfilePatch({ preferred_genders: editingMultiValue });
-      closeEditRow();
-      return;
-    }
-
-    if (editingField === 'preferred_age') {
-      const min = editingValue.trim() ? Number(editingValue.trim()) : null;
-      const max = editingSecondaryValue.trim() ? Number(editingSecondaryValue.trim()) : null;
-      if ((min !== null && Number.isNaN(min)) || (max !== null && Number.isNaN(max)) || (min !== null && max !== null && min > max)) {
-        closeEditRow();
-        return;
-      }
-      await updateProfilePatch({ preferred_age_min: min, preferred_age_max: max });
-      closeEditRow();
-      return;
-    }
 
     if (editingField === 'languages') {
       const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
@@ -762,105 +562,6 @@ export default function ProfileScreen() {
     }
   };
 
-  const addGalleryPhoto = async () => {
-    if (!userId || updatingPhoto) return;
-
-    const current = profile?.photo_urls ?? [];
-    if (current.length >= 4) {
-      Alert.alert('Photo limit reached', 'You can upload up to 4 gallery photos.');
-      return;
-    }
-
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permission needed', 'Photo library access is required to add gallery photos.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [4, 5],
-      quality: 0.8,
-      base64: true,
-    });
-
-    if (result.canceled || !result.assets[0]?.uri) return;
-
-    try {
-      setUpdatingPhoto(true);
-      const asset = result.assets[0];
-      const contentType = asset.mimeType || 'image/jpeg';
-      const ext =
-        contentType === 'image/png' ? 'png' :
-        contentType === 'image/webp' ? 'webp' : 'jpg';
-      const filePath = `${userId}/${Date.now()}-gallery.${ext}`;
-
-      let fileData: ArrayBuffer;
-      if (asset.base64) {
-        const response = await fetch(`data:${contentType};base64,${asset.base64}`);
-        fileData = await response.arrayBuffer();
-      } else {
-        const response = await fetch(asset.uri);
-        fileData = await response.arrayBuffer();
-      }
-
-      const { error: uploadError } = await supabase.storage
-        .from('profile-photos')
-        .upload(filePath, fileData, { contentType, upsert: false });
-
-      if (uploadError) { Alert.alert('Upload failed', uploadError.message); return; }
-
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ photo_urls: [...current, filePath] })
-        .eq('user_id', userId);
-
-      if (updateError) { Alert.alert('Update failed', updateError.message); return; }
-
-      const resolvedUri = await resolvePhotoUri(filePath);
-      setProfile((prev) =>
-        prev ? { ...prev, photo_urls: [...(prev.photo_urls ?? []), filePath] } : prev
-      );
-      if (resolvedUri) {
-        setGalleryPhotos((prev) => [...prev, { uri: resolvedUri, path: filePath, isAvatar: false }]);
-      }
-    } catch (err: any) {
-      Alert.alert('Update failed', err?.message ?? 'Could not add gallery photo.');
-    } finally {
-      setUpdatingPhoto(false);
-    }
-  };
-
-  const removeGalleryPhoto = async (path: string) => {
-    if (!userId || updatingPhoto) return;
-    const current = profile?.photo_urls ?? [];
-    if (!current.includes(path)) return;
-
-    setUpdatingPhoto(true);
-    const next = current.filter((p) => p !== path);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ photo_urls: next })
-      .eq('user_id', userId);
-
-    if (error) {
-      setUpdatingPhoto(false);
-      Alert.alert('Update failed', error.message);
-      return;
-    }
-
-    const { error: storageError } = await supabase.storage.from('profile-photos').remove([path]);
-    setUpdatingPhoto(false);
-
-    if (storageError) Alert.alert('Storage cleanup warning', storageError.message);
-
-    setProfile((prev) =>
-      prev ? { ...prev, photo_urls: (prev.photo_urls ?? []).filter((p) => p !== path) } : prev
-    );
-    setGalleryPhotos((prev) => prev.filter((p) => p.path !== path));
-  };
-
   const openPhotoActions = () => {
     const hasPhoto = Boolean(avatarUri);
     Alert.alert('Profile photo', 'What would you like to do?', [
@@ -1016,72 +717,6 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* ── Photos ── */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionLabel}>Photos</Text>
-              {galleryPhotos.length > 0 && (
-                <Text style={styles.sectionMeta}>{galleryPhotos.length} / 5</Text>
-              )}
-            </View>
-
-            {galleryPhotos.length === 0 ? (
-              <TouchableOpacity
-                style={styles.galleryEmptyCard}
-                onPress={() => void addGalleryPhoto()}
-                activeOpacity={0.85}
-              >
-                <View style={styles.galleryEmptyIcon}>
-                  <Ionicons name="images-outline" size={26} color={C.muted} />
-                </View>
-                <Text style={styles.galleryEmptyTitle}>Add photos</Text>
-                <Text style={styles.galleryEmptySubtext}>
-                  Profiles with photos get far more connections
-                </Text>
-                <View style={styles.galleryEmptyBtn}>
-                  <Ionicons name="add" size={14} color={C.white} />
-                  <Text style={styles.galleryEmptyBtnText}>Upload a photo</Text>
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.galleryScroll}
-              >
-                {galleryPhotos.map((photo) => (
-                  <View key={photo.path} style={styles.galleryPhotoWrap}>
-                    <Image source={{ uri: photo.uri }} style={styles.galleryPhoto} resizeMode="cover" />
-                    {photo.isAvatar ? (
-                      <View style={styles.avatarBadge}>
-                        <Text style={styles.avatarBadgeText}>Avatar</Text>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.galleryRemoveBtn}
-                        onPress={() => void removeGalleryPhoto(photo.path)}
-                        activeOpacity={0.85}
-                        hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                      >
-                        <Ionicons name="close" size={11} color={C.white} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
-                {(profile?.photo_urls ?? []).length < 4 && (
-                  <TouchableOpacity
-                    style={styles.addPhotoTile}
-                    onPress={() => void addGalleryPhoto()}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="add" size={26} color={C.terracotta} />
-                    <Text style={styles.addPhotoLabel}>Add</Text>
-                  </TouchableOpacity>
-                )}
-              </ScrollView>
-            )}
-          </View>
-
           {/* ── Bio + Identity merged under "About" ── */}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>About</Text>
@@ -1162,60 +797,6 @@ export default function ProfileScreen() {
                       <View style={styles.infoText}>
                         <Text style={styles.infoFieldLabel}>{row.label}</Text>
                         <Text style={[styles.infoValue, !row.value && styles.infoValueEmpty]} numberOfLines={2}>
-                          {row.value ?? 'Not set'}
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
-                    </TouchableOpacity>
-                  </RAnimated.View>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* ── Preferences ── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Preferences</Text>
-            <View style={[styles.card, styles.cardNoPad]}>
-              {preferencesRows.map((row, i) => {
-                const isEditing = editingField === row.field;
-                if (isEditing) {
-                  return (
-                    <RAnimated.View
-                      key={`${row.label}-edit`}
-                      entering={editEnterAnim}
-                      exiting={editExitAnim}
-                      style={[styles.infoRow, i > 0 && styles.infoRowDivider, styles.infoRowEditing, { paddingHorizontal: Spacing.md }]}
-                    >
-                      <View style={[styles.infoIconBox, { alignSelf: 'flex-start', marginTop: 2 }]}>
-                        <Ionicons name={row.icon} size={18} color={C.terracotta} />
-                      </View>
-                      <View style={[styles.infoText, { gap: 8 }]}>
-                        <Text style={styles.infoFieldLabel}>{row.label}</Text>
-                        <RAnimated.View entering={inputEnterAnim}>
-                          {renderFieldInput(row.field)}
-                        </RAnimated.View>
-                      </View>
-                    </RAnimated.View>
-                  );
-                }
-                return (
-                  <RAnimated.View
-                    key={`${row.label}-view`}
-                    entering={viewEnterAnim}
-                    exiting={viewExitAnim}
-                  >
-                    <TouchableOpacity
-                      style={[styles.infoRow, i > 0 && styles.infoRowDivider, { paddingHorizontal: Spacing.md }]}
-                      activeOpacity={0.8}
-                      onPress={() => openInlineEditor(row.field)}
-                    >
-                      <View style={styles.infoIconBox}>
-                        <Ionicons name={row.icon} size={18} color={C.brownMid} />
-                      </View>
-                      <View style={styles.infoText}>
-                        <Text style={styles.infoFieldLabel}>{row.label}</Text>
-                        <Text style={[styles.infoValue, !row.value && styles.infoValueEmpty]} numberOfLines={1}>
                           {row.value ?? 'Not set'}
                         </Text>
                       </View>
