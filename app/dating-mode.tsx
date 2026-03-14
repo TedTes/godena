@@ -159,31 +159,23 @@ function serializePrefDraft(prefDraft: PrefDraft): string {
 function DatingHeader({
   name, onBack, saveState,
 }: { name: string; likedCount: number; onBack: () => void; saveState?: SaveState }) {
-  const badgeScale = useRef(new Animated.Value(0)).current;
-  const badgeOpacity = useRef(new Animated.Value(0)).current;
+  const scale   = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (saveState === 'saved') {
-      badgeScale.setValue(0.72);
-      badgeOpacity.setValue(0);
-      Animated.parallel([
-        Animated.spring(badgeScale, { toValue: 1, useNativeDriver: true, friction: 6, tension: 140 }),
-        Animated.timing(badgeOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-      ]).start();
-      return;
-    }
-
-    if (saveState === 'error') {
-      badgeScale.setValue(1);
-      badgeOpacity.setValue(1);
-      return;
-    }
-
+    if (saveState !== 'saved') return;
+    scale.setValue(0.3);
+    opacity.setValue(0);
     Animated.parallel([
-      Animated.timing(badgeOpacity, { toValue: 0, duration: 140, useNativeDriver: true }),
-      Animated.timing(badgeScale, { toValue: 0.85, duration: 140, useNativeDriver: true }),
-    ]).start();
-  }, [badgeOpacity, badgeScale, saveState]);
+      Animated.spring(scale,   { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }),
+      Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+    ]).start(() => {
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 0, duration: 350, delay: 1800, useNativeDriver: true }),
+        Animated.timing(scale,   { toValue: 0.7, duration: 350, delay: 1800, useNativeDriver: true }),
+      ]).start();
+    });
+  }, [saveState, scale, opacity]);
 
   return (
     <View style={styles.header}>
@@ -196,18 +188,8 @@ function DatingHeader({
       </TouchableOpacity>
       <Text style={styles.headerTitle}>{name}</Text>
       <View style={styles.headerStatusWrap}>
-        <Animated.View
-          style={[
-            styles.headerStatusBadge,
-            saveState === 'error' && styles.headerStatusBadgeError,
-            { opacity: badgeOpacity, transform: [{ scale: badgeScale }] },
-          ]}
-        >
-          <Ionicons
-            name={saveState === 'error' ? 'alert' : 'checkmark'}
-            size={14}
-            color={Colors.white}
-          />
+        <Animated.View style={[styles.headerStatusBadge, { opacity, transform: [{ scale }] }]}>
+          <Ionicons name="checkmark" size={15} color={Colors.success} />
         </Animated.View>
       </View>
     </View>
@@ -527,7 +509,8 @@ function ProfileTab({
 
   useEffect(() => {
     if (bioSaveState !== 'saved' && bioSaveState !== 'error') return;
-    const timer = setTimeout(() => setBioSaveState('idle'), 1400);
+    const delay = bioSaveState === 'error' ? 4500 : 3500;
+    const timer = setTimeout(() => setBioSaveState('idle'), delay);
     return () => clearTimeout(timer);
   }, [bioSaveState]);
 
@@ -542,7 +525,7 @@ function ProfileTab({
       void onSaveBio(bioText.trim())
         .then(() => setBioSaveState('saved'))
         .catch(() => setBioSaveState('error'));
-    }, 700);
+    }, 4000);
     return () => clearTimeout(timer);
   }, [bioText, summary?.about, onSaveBio]);
 
@@ -782,7 +765,7 @@ export default function DatingModeScreen() {
     preferredAgeMin: null, preferredAgeMax: null, isGloballyVisible: true,
   });
   const [prefSaveState, setPrefSaveState] = useState<SaveState>('idle');
-  const [bioSaveState, setBioSaveState] = useState<SaveState>('idle');
+  const [bioSaveState,  setBioSaveState]  = useState<SaveState>('idle');
 
   // Navigation
   const [activeTab, setActiveTab] = useState<DatingTab>('discover');
@@ -1002,13 +985,14 @@ export default function DatingModeScreen() {
         .catch(() => {
           setPrefSaveState('error');
         });
-    }, 700);
+    }, 4000);
     return () => clearTimeout(timer);
   }, [prefDraft, prefSaveState, persistPreferences, userId]);
 
   useEffect(() => {
     if (prefSaveState !== 'saved' && prefSaveState !== 'error') return;
-    const timer = setTimeout(() => setPrefSaveState('idle'), 1400);
+    const delay = prefSaveState === 'error' ? 4500 : 3500;
+    const timer = setTimeout(() => setPrefSaveState('idle'), delay);
     return () => clearTimeout(timer);
   }, [prefSaveState]);
 
@@ -1192,7 +1176,7 @@ export default function DatingModeScreen() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   const showDeck = datingState === 'active';
-  const headerSaveState = activeTab === 'profile'
+  const headerSaveState: SaveState = activeTab === 'profile'
     ? (bioSaveState !== 'idle' ? bioSaveState : prefSaveState)
     : 'idle';
 
@@ -1424,15 +1408,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerStatusBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.terracotta,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(90,158,111,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: Colors.success,
+  },
+  headerStatusBadgeSaved: {
+    borderColor: Colors.terracotta,
+    backgroundColor: 'rgba(196,98,45,0.08)',
   },
   headerStatusBadgeError: {
     backgroundColor: Colors.error,
+    borderColor: Colors.error,
   },
 
   // Tab bar
