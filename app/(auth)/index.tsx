@@ -255,39 +255,6 @@ export default function AuthChoiceScreen() {
                 </>
               )}
             </TouchableOpacity>
-
-            {/* Phone */}
-            <TouchableOpacity
-              style={[styles.secondaryBtn, isLoading && styles.btnDisabled]}
-              activeOpacity={0.85}
-              onPress={() => router.push('/(auth)/phone')}
-              disabled={isLoading}
-              accessibilityLabel="Continue with Phone"
-              accessibilityRole="button"
-            >
-              <Ionicons name="call-outline" size={18} color={Colors.ink} />
-              <Text style={styles.secondaryBtnText}>Continue with Phone</Text>
-            </TouchableOpacity>
-
-            {/* Divider */}
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Email */}
-            <TouchableOpacity
-              style={[styles.emailBtn, isLoading && styles.btnDisabled]}
-              activeOpacity={0.75}
-              onPress={() => router.push('/(auth)/email')}
-              disabled={isLoading}
-              accessibilityLabel="Continue with Email"
-              accessibilityRole="button"
-            >
-              <Ionicons name="mail-outline" size={16} color={Colors.brownMid} />
-              <Text style={styles.emailBtnText}>Continue with Email</Text>
-            </TouchableOpacity>
           </Animated.View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -366,29 +333,6 @@ const styles = StyleSheet.create({
 
   // Disabled overlay (non-active buttons while another is loading)
   btnDisabled: { opacity: 0.4 },
-
-  // "or" divider
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginVertical: 2,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerText: { fontSize: 12, color: Colors.muted, fontWeight: '600' },
-
-  // Email (outlined pill — more discoverable than ghost text)
-  emailBtn: {
-    height: 52,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 6,
-  },
-  emailBtnText: { color: Colors.brown, fontSize: 14, fontWeight: '700' },
 
   errorText: {
     marginTop: 12,
