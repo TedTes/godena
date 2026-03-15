@@ -88,6 +88,7 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SCREEN_WIDTH    = Dimensions.get('window').width;
+const SCREEN_HEIGHT   = Dimensions.get('window').height;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
 const PHOTO_GAP       = 8;
 const PHOTO_COLS      = 3;
@@ -274,6 +275,62 @@ function NoPhotoCard({
             <Text style={[styles.swipeBadgeText, { color: Colors.error }]}>PASS</Text>
           </Animated.View>
         </>
+      ) : null}
+    </View>
+  );
+}
+
+// ── CandidateDetail ───────────────────────────────────────────────────────────
+
+function CandidateDetail({ profile }: { profile: DatingCardProfile }) {
+  const [bioExpanded, setBioExpanded] = useState(false);
+  const bioIsLong = profile.bio.length > 120;
+
+  return (
+    <View style={styles.candidateDetail}>
+      {/* About */}
+      <View style={styles.detailCard}>
+        <Text style={styles.sectionLabel}>About</Text>
+        <Text style={styles.bioBandText} numberOfLines={bioExpanded ? undefined : 3}>
+          {profile.bio}
+        </Text>
+        {bioIsLong ? (
+          <TouchableOpacity
+            onPress={() => setBioExpanded((v) => !v)}
+            hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
+          >
+            <Text style={styles.detailExpandBtn}>
+              {bioExpanded ? 'Show less' : 'Read more'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Looking For */}
+      {profile.intent && profile.intent !== 'Not set' ? (
+        <View style={styles.detailCard}>
+          <Text style={styles.sectionLabel}>Looking For</Text>
+          <View style={styles.chipRow}>
+            <View style={styles.intentChip}>
+              <Ionicons name="heart-outline" size={12} color={Colors.terracotta} />
+              <Text style={styles.intentChipText}>{profile.intent}</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Languages */}
+      {profile.languages.length > 0 ? (
+        <View style={styles.detailCard}>
+          <Text style={styles.sectionLabel}>Languages</Text>
+          <View style={styles.chipRow}>
+            {profile.languages.map((lang) => (
+              <View key={lang} style={styles.basicChip}>
+                <Text style={styles.basicChipText}>{lang}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
       ) : null}
     </View>
   );
@@ -747,7 +804,7 @@ export default function DatingModeScreen() {
   const [submittingSwipe,    setSubmittingSwipe]    = useState(false);
 
   // My profile
-  const [headerName,     setHeaderName]     = useState('You');
+  const [headerName,     setHeaderName]     = useState('Dating');
   const [userId,         setUserId]         = useState<string | null>(null);
   const [mySummary,      setMySummary]      = useState<MyDatingSummary | null>(null);
   const [myPhotoPaths,   setMyPhotoPaths]   = useState<string[]>([]);
@@ -1076,8 +1133,7 @@ export default function DatingModeScreen() {
       supabase.rpc('get_dating_candidates', { p_limit: 40 }),
     ]);
 
-    const myName = me?.full_name?.trim();
-    if (myName) setHeaderName(myName.split(' ')[0] || myName);
+    // headerName intentionally stays as tab label, not user's name
 
     const paths      = (dp?.photos as string[] | null | undefined) ?? [];
     const urls       = await Promise.all(paths.map((p) => resolveProfilePhotoUrl(p)));
@@ -1092,7 +1148,7 @@ export default function DatingModeScreen() {
     const vis = dprefs?.is_globally_visible ?? true;
 
     setMySummary({
-      fullName:         myName || 'You',
+      fullName:         me?.full_name?.trim() || 'You',
       city:             me?.city?.trim() || 'City not set',
       about:            dp?.about?.trim() || '',
       intent:           pi[0] ? formatIntent(pi[0] as DatingCandidateRow['intent']) : 'Not set',
@@ -1305,22 +1361,14 @@ export default function DatingModeScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* Candidate bio strip */}
-              <View style={styles.bioBand}>
-                <View style={styles.bioBandHeader}>
-                  <Text style={styles.sectionLabel}>About</Text>
-                  <View style={styles.intentBadge}>
-                    <Text style={styles.intentBadgeText}>{currentProfile!.intent}</Text>
-                  </View>
-                </View>
-                <Text style={styles.bioBandText} numberOfLines={2}>{currentProfile!.bio}</Text>
-                {currentProfile!.languages.length > 0 ? (
-                  <View style={styles.metaRow}>
-                    <Ionicons name="chatbubble-ellipses-outline" size={12} color={Colors.muted} />
-                    <Text style={styles.metaText}>{currentProfile!.languages.join(' · ')}</Text>
-                  </View>
-                ) : null}
-              </View>
+              {/* Candidate profile detail */}
+              <ScrollView
+                style={styles.candidateScroll}
+                contentContainerStyle={styles.candidateScrollContent}
+                showsVerticalScrollIndicator={false}
+              >
+                <CandidateDetail key={currentProfile!.id} profile={currentProfile!} />
+              </ScrollView>
             </View>
           ) : (
             <DiscoverEmpty
@@ -1383,7 +1431,7 @@ export default function DatingModeScreen() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const DECK_H = 390;
+const DECK_H = Math.round(SCREEN_HEIGHT * 0.55);
 
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: Colors.cream },
@@ -1480,25 +1528,25 @@ const styles = StyleSheet.create({
   secondaryBtnText: { color: Colors.muted, fontWeight: '600', fontSize: 13 },
 
   // Discover deck
-  deckContainer: { flex: 1, paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
-  deckWrap: { height: DECK_H, justifyContent: 'center', alignItems: 'center' },
+  deckContainer: { flex: 1, paddingBottom: Spacing.sm },
+  deckWrap: { height: DECK_H, width: '100%', justifyContent: 'center', alignItems: 'center' },
   card: {
     width: '100%', height: DECK_H, borderRadius: Radius.xl, overflow: 'hidden',
-    backgroundColor: Colors.paper, shadowColor: '#000', shadowOpacity: 0.14,
-    shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 6, position: 'absolute',
+    backgroundColor: Colors.paper, shadowColor: '#000', shadowOpacity: 0.18,
+    shadowRadius: 20, shadowOffset: { width: 0, height: 10 }, elevation: 8, position: 'absolute',
   },
-  cardUnder:       { transform: [{ scale: 0.95 }, { translateY: 10 }], opacity: 0.72 },
+  cardUnder:       { transform: [{ scale: 0.96 }, { translateY: 8 }], opacity: 0.75 },
   cardImage:        { flex: 1, justifyContent: 'flex-end' },
   cardImageRounded: { borderRadius: Radius.xl },
-  cardOverlay:      { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.18)' },
-  cardContent: { padding: Spacing.md, paddingBottom: 16, zIndex: 5 },
+  cardOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.28)' },
+  cardContent: { padding: Spacing.md, paddingBottom: 24, zIndex: 5 },
   cardName: {
-    color: Colors.white, fontSize: 26, fontWeight: '900',
-    textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
+    color: Colors.white, fontSize: 28, fontWeight: '900',
+    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
   },
-  cardCity: { color: 'rgba(255,255,255,0.82)', fontSize: 13, fontWeight: '600' },
+  cardCity: { color: 'rgba(255,255,255,0.88)', fontSize: 14, fontWeight: '600' },
   dotsRow: {
-    position: 'absolute', top: 10, left: 12, right: 12, flexDirection: 'row', gap: 5, zIndex: 4,
+    position: 'absolute', top: 12, left: 14, right: 14, flexDirection: 'row', gap: 5, zIndex: 4,
   },
   dot:       { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.38)' },
   dotActive: { backgroundColor: Colors.white },
@@ -1512,23 +1560,48 @@ const styles = StyleSheet.create({
   swipeBadgePass: { right: 16, borderColor: Colors.error, transform: [{ rotate: '12deg' }] },
   swipeBadgeText: { fontSize: 15, fontWeight: '900', letterSpacing: 1 },
   swipeActions: {
-    marginTop: Spacing.sm, flexDirection: 'row', justifyContent: 'center', gap: 24, alignItems: 'center',
+    marginTop: -32,
+    zIndex: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 36,
+    paddingBottom: 4,
   },
   actionBtn: {
-    width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3,
+    width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 5,
+    borderWidth: 3, borderColor: Colors.cream,
   },
   actionBtnDim: { opacity: 0.6 },
   passBtn: {
-    backgroundColor: Colors.warmWhite, borderWidth: 1.5, borderColor: 'rgba(217,79,79,0.22)',
+    backgroundColor: Colors.warmWhite, borderColor: Colors.cream,
   },
-  likeBtn: { backgroundColor: Colors.terracotta, width: 72, height: 72, borderRadius: 36 },
-  bioBand: {
-    marginTop: Spacing.sm, backgroundColor: Colors.warmWhite, borderRadius: Radius.lg,
-    borderWidth: 1, borderColor: Colors.border, padding: Spacing.md, gap: 6,
+  likeBtn: { backgroundColor: Colors.terracotta, width: 72, height: 72, borderRadius: 36, borderColor: Colors.cream },
+  bioBandText: { fontSize: 14, color: Colors.brownMid, lineHeight: 21 },
+
+  // Candidate detail sections
+  candidateScroll:        { flex: 1, marginTop: Spacing.md },
+  candidateScrollContent: { paddingHorizontal: Spacing.md, paddingBottom: 16, gap: 8 },
+  candidateDetail:        { gap: 8 },
+  detailCard: {
+    backgroundColor: Colors.warmWhite, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border, padding: Spacing.md, gap: 8,
   },
-  bioBandHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  bioBandText:   { fontSize: 14, color: Colors.brownMid, lineHeight: 20 },
+  detailExpandBtn: { fontSize: 13, color: Colors.terracotta, fontWeight: '700', marginTop: 2 },
+  intentChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start',
+    backgroundColor: 'rgba(196,98,45,0.09)', borderRadius: Radius.full,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderWidth: 1, borderColor: 'rgba(196,98,45,0.20)',
+  },
+  intentChipText: { fontSize: 13, color: Colors.terracotta, fontWeight: '700' },
+  basicChip: {
+    backgroundColor: Colors.paper, borderRadius: Radius.full,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  basicChipText: { fontSize: 13, color: Colors.brown, fontWeight: '600' },
 
   // No-photo card
   noPhotoCard:   { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.paper },
