@@ -45,11 +45,10 @@ export async function fetchConnection(connectionId: string) {
 }
 
 export async function fetchProfile(userId: string) {
-  return supabase
-    .from('profiles')
-    .select('user_id, full_name, avatar_url')
-    .eq('user_id', userId)
-    .maybeSingle();
+  const res = await supabase.rpc('get_connection_profiles', { p_user_ids: [userId] });
+  if (res.error || !res.data) return { data: null, error: res.error ?? null };
+  const row = (res.data as ProfileRow[])[0] ?? null;
+  return { data: row, error: null };
 }
 
 export async function fetchGroup(groupId: string) {
