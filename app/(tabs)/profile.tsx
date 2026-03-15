@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Alert,
@@ -120,6 +120,50 @@ export default function ProfileScreen() {
   const [editingDate, setEditingDate] = useState<Date>(new Date());
   const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
   const [datingModeOn, setDatingModeOn] = useState(false);
+
+  // Bio autosave
+  type BioSaveState = 'idle' | 'saving' | 'saved' | 'error';
+  const [bioSaveState, setBioSaveState] = useState<BioSaveState>('idle');
+  const badgeOpacity = useRef(new Animated.Value(0)).current;
+  const badgeScale   = useRef(new Animated.Value(0)).current;
+
+  // Badge animation
+  useEffect(() => {
+    if (bioSaveState !== 'saved') return;
+    badgeScale.setValue(0.3);
+    badgeOpacity.setValue(0);
+    Animated.parallel([
+      Animated.spring(badgeScale,   { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }),
+      Animated.timing(badgeOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+    ]).start(() => {
+      Animated.parallel([
+        Animated.timing(badgeOpacity, { toValue: 0, duration: 350, delay: 1800, useNativeDriver: true }),
+        Animated.timing(badgeScale,   { toValue: 0.7, duration: 350, delay: 1800, useNativeDriver: true }),
+      ]).start();
+    });
+  }, [bioSaveState, badgeOpacity, badgeScale]);
+
+  // Reset badge after shown
+  useEffect(() => {
+    if (bioSaveState !== 'saved' && bioSaveState !== 'error') return;
+    const timer = setTimeout(() => setBioSaveState('idle'), 3500);
+    return () => clearTimeout(timer);
+  }, [bioSaveState]);
+
+  // 4s debounce autosave while editing bio
+  useEffect(() => {
+    if (editingField !== 'bio') return;
+    const current = editingValue.trim();
+    if (current === (profile?.bio ?? '').trim()) return;
+    const timer = setTimeout(() => {
+      setBioSaveState('saving');
+      void updateProfilePatch({ bio: current || null })
+        .then((ok) => setBioSaveState(ok ? 'saved' : 'error'))
+        .catch(() => setBioSaveState('error'));
+    }, 4000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingValue, editingField, profile?.bio]);
 
   const resolvePhotoUri = async (value: string): Promise<string | null> => {
     if (value.startsWith('http://') || value.startsWith('https://')) {
@@ -719,7 +763,12 @@ export default function ProfileScreen() {
 
           {/* ── Bio + Identity merged under "About" ── */}
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>About</Text>
+            <View style={styles.bioLabelRow}>
+              <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>About</Text>
+              <Animated.View style={[styles.bioSaveBadge, { opacity: badgeOpacity, transform: [{ scale: badgeScale }] }]}>
+                <Ionicons name="checkmark" size={13} color={C.success} />
+              </Animated.View>
+            </View>
             {editingField === 'bio' ? (
               <RAnimated.View
                 key="bio-edit"
@@ -734,7 +783,15 @@ export default function ProfileScreen() {
                     onFocus={() => setIsBioFocused(true)}
                     onBlur={() => {
                       setIsBioFocused(false);
-                      void updateProfilePatch({ bio: editingValue.trim() || null }).then(closeEditRow);
+                      const current = editingValue.trim();
+                      if (current !== (profile?.bio ?? '').trim()) {
+                        setBioSaveState('saving');
+                        void updateProfilePatch({ bio: current || null })
+                          .then((ok) => { setBioSaveState(ok ? 'saved' : 'error'); closeEditRow(); })
+                          .catch(() => { setBioSaveState('error'); closeEditRow(); });
+                      } else {
+                        closeEditRow();
+                      }
                     }}
                     multiline
                     style={styles.bioInput}
@@ -1333,6 +1390,22 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   addPhotoLabel: { fontSize: 11, color: C.terracotta, fontWeight: '700' },
 
   // ── Bio ──
+  bioLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  bioSaveBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(90,158,111,0.12)',
+    borderWidth: 1.5,
+    borderColor: C.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bioDashedCard: {
     backgroundColor: C.paper,
     borderWidth: 1,
