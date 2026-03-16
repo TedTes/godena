@@ -47,6 +47,17 @@ type RevealSuggestion = {
   groupName: string;
 };
 
+type ActivityPost = {
+  postId: string;
+  groupId: string;
+  authorId: string;
+  authorFirstName: string;
+  content: string;
+  createdAt: string;
+  groupName: string;
+  groupEmoji: string;
+};
+
 function getGroupVisuals(category: string, iconEmoji?: string | null): { emoji: string; coverColor: string } {
   let base: { emoji: string; coverColor: string };
   switch (category) {
@@ -85,6 +96,14 @@ function getGreetingEmoji() {
   return '🌙';
 }
 
+function timeAgo(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 function getGreetingSub() {
   const h = new Date().getHours();
   if (h < 12) return 'Ready to show up somewhere today?';
@@ -101,6 +120,7 @@ export default function HomeScreen() {
   const [revealSuggestions, setRevealSuggestions] = useState<RevealSuggestion[]>([]);
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const [notificationCount, setNotificationCount] = useState(0);
+  const [recentActivity, setRecentActivity] = useState<ActivityPost[]>([]);
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -148,7 +168,7 @@ export default function HomeScreen() {
       const groupIds = memberships.map((m) => m.group_id);
 
       if (groupIds.length > 0) {
-        const [groupsRes, eventsRes] = await Promise.all([
+        const [groupsRes, eventsRes, activityRes] = await Promise.all([
           supabase
             .from('groups')
             .select('id, name, member_count, category, icon_emoji')
@@ -159,6 +179,7 @@ export default function HomeScreen() {
             .in('group_id', groupIds)
             .order('starts_at', { ascending: true })
             .limit(50),
+          supabase.rpc('get_group_activity_feed', { p_group_ids: groupIds }),
         ]);
 
         const groups =
@@ -257,9 +278,36 @@ export default function HomeScreen() {
         } else {
           setUpcomingEvents([]);
         }
+
+        type ActivityRow = { post_id: string; group_id: string; author_id: string; author_first_name: string; content: string; created_at: string };
+        const allActivityRows = (activityRes.data as ActivityRow[] | null) ?? [];
+        const seenAuthors = new Set<string>();
+        const activityRows = allActivityRows.filter((r) => {
+          if (seenAuthors.has(r.author_id)) return false;
+          seenAuthors.add(r.author_id);
+          return true;
+        });
+        const groupNameById2 = new Map(groups.map((g) => [g.id, g.name]));
+        setRecentActivity(
+          activityRows.map((r) => {
+            const grp = groups.find((g) => g.id === r.group_id);
+            const visuals = getGroupVisuals(grp?.category ?? 'other', grp?.icon_emoji);
+            return {
+              postId: r.post_id,
+              groupId: r.group_id,
+              authorId: r.author_id,
+              authorFirstName: r.author_first_name,
+              content: r.content,
+              createdAt: r.created_at,
+              groupName: groupNameById2.get(r.group_id) ?? 'Group',
+              groupEmoji: visuals.emoji,
+            };
+          })
+        );
       } else {
         setMyGroups([]);
         setUpcomingEvents([]);
+        setRecentActivity([]);
       }
 
       const { data: pendingConnections } = await supabase
@@ -526,6 +574,42 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
+
+          {recentActivity.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Group Activity</Text>
+              </View>
+              <View style={styles.activityFeed}>
+                {recentActivity.map((post) => (
+                  <TouchableOpacity
+                    key={post.postId}
+                    style={styles.activityItem}
+                    activeOpacity={0.82}
+                    onPress={() => router.push(`/group/${post.groupId}?tab=activity`)}
+                  >
+                    <View style={styles.activityAccent} />
+                    <View style={styles.activityAvatarWrap}>
+                      <Text style={styles.activityAvatarText}>
+                        {post.authorFirstName.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.activityBody}>
+                      <View style={styles.activityTopRow}>
+                        <Text style={styles.activityAuthor}>{post.authorFirstName}</Text>
+                        <Text style={styles.activityTime}>{timeAgo(post.createdAt)}</Text>
+                      </View>
+                      <View style={styles.activityGroupPill}>
+                        <Text style={styles.activityGroupEmoji}>{post.groupEmoji}</Text>
+                        <Text style={styles.activityGroupName} numberOfLines={1}>{post.groupName}</Text>
+                      </View>
+                      <Text style={styles.activityContent} numberOfLines={2}>{post.content}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
 
           <View style={{ height: 20 }} />
           </ScrollView>
@@ -855,5 +939,78 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     lineHeight: 17,
   },
 
+  activityFeed: { gap: 8, paddingHorizontal: Spacing.lg },
+  activityItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+    backgroundColor: C.warmWhite,
+    borderRadius: Radius.lg,
+    paddingVertical: 13,
+    paddingRight: 14,
+    paddingLeft: 0,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  activityAccent: {
+    width: 3,
+    alignSelf: 'stretch',
+    backgroundColor: C.terracotta,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
+    marginRight: 1,
+    opacity: 0.7,
+  },
+  activityAvatarWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(196,98,45,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  activityAvatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.terracotta,
+  },
+  activityBody: { flex: 1, gap: 4 },
+  activityTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  activityAuthor: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: C.ink,
+  },
+  activityTime: {
+    fontSize: 11,
+    color: C.muted,
+  },
+  activityGroupPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(196,98,45,0.08)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  activityGroupEmoji: { fontSize: 11 },
+  activityGroupName: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: C.terracotta,
+  },
+  activityContent: {
+    fontSize: 13,
+    color: C.brownMid,
+    lineHeight: 19,
+  },
 
 }); }
