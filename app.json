@@ -4,7 +4,7 @@
     "slug": "godena",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/godena-logo.svg",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {

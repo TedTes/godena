@@ -115,9 +115,11 @@ type EventRsvpRow = {
 const REACTION_CHOICES = ['❤️', '👍', '🔥', '👏', '😂', '🎉', '💯', '🙏'];
 
 export default function GroupDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab: initialTab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'about' | 'members' | 'events' | 'activity'>('about');
+  const [activeTab, setActiveTab] = useState<'about' | 'members' | 'events' | 'activity'>(
+    (initialTab as 'about' | 'members' | 'events' | 'activity') ?? 'about'
+  );
   const [loading, setLoading] = useState(true);
   const [group, setGroup] = useState<Group | null>(null);
   const [membership, setMembership] = useState<Membership | null>(null);
@@ -785,8 +787,8 @@ export default function GroupDetailScreen() {
                     placeholder="Add a short group description..."
                     placeholderTextColor={Colors.muted}
                     multiline
-                    numberOfLines={4}
                     textAlignVertical="top"
+                    scrollEnabled={false}
                     autoFocus
                   />
                   <View style={styles.aboutActionsRow}>
@@ -811,27 +813,23 @@ export default function GroupDetailScreen() {
                   </View>
                 </>
               ) : (
-                <>
-                  <View style={styles.aboutDescBox}>
-                    {group.description ? (
-                      <Text style={styles.aboutText}>{group.description}</Text>
-                    ) : (
-                      <Text style={styles.aboutEmptyText}>
-                        {canEditGroupDescription ? 'Share what this group is about...' : 'No description yet.'}
-                      </Text>
-                    )}
-                  </View>
-                  {canEditGroupDescription && (
-                    <TouchableOpacity
-                      style={styles.aboutEditBtn}
-                      onPress={startEditDescription}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      <Ionicons name="create-outline" size={13} color={Colors.terracotta} />
-                      <Text style={styles.aboutEditBtnText}>{group.description ? 'Edit' : 'Add description'}</Text>
-                    </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.aboutDescBox}
+                  onPress={canEditGroupDescription ? startEditDescription : undefined}
+                  activeOpacity={canEditGroupDescription ? 0.7 : 1}
+                  disabled={!canEditGroupDescription}
+                >
+                  {group.description ? (
+                    <Text style={styles.aboutText}>{group.description}</Text>
+                  ) : canEditGroupDescription ? (
+                    <View style={styles.aboutEmptyEditRow}>
+                      <Ionicons name="create-outline" size={14} color={Colors.muted} />
+                      <Text style={styles.aboutEmptyText}>Share what this group is about…</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.aboutEmptyText}>No description yet.</Text>
                   )}
-                </>
+                </TouchableOpacity>
               )}
             </View>
 
@@ -1050,6 +1048,9 @@ export default function GroupDetailScreen() {
           <View style={styles.tabContent}>
             {membership && (
               <View style={styles.postComposer}>
+                <View style={styles.postComposerIcon}>
+                  <Ionicons name="create-outline" size={16} color={Colors.terracotta} />
+                </View>
                 <TextInput
                   style={styles.postInput}
                   value={postDraft}
@@ -1057,6 +1058,8 @@ export default function GroupDetailScreen() {
                   placeholder="Share something with the group..."
                   placeholderTextColor={Colors.muted}
                   multiline
+                  scrollEnabled={false}
+                  textAlignVertical="top"
                 />
                 <TouchableOpacity
                   style={[
@@ -1068,7 +1071,7 @@ export default function GroupDetailScreen() {
                 >
                   {posting
                     ? <ActivityIndicator size="small" color={Colors.white} />
-                    : <Text style={styles.postBtnText}>Post</Text>
+                    : <Ionicons name="arrow-up" size={16} color={Colors.white} />
                   }
                 </TouchableOpacity>
               </View>
@@ -1818,7 +1821,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     borderRadius: Radius.lg,
     padding: Spacing.md,
-    minHeight: 200,
   },
   aboutHeaderRow: {
     flexDirection: 'row',
@@ -1868,14 +1870,12 @@ const styles = StyleSheet.create({
   aboutInput: {
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.paper,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.warmWhite,
     color: Colors.ink,
     fontSize: 14,
-    lineHeight: 21,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 104,
+    lineHeight: 22,
+    padding: Spacing.md,
     marginBottom: 10,
   },
   aboutActionsRow: {
@@ -1927,6 +1927,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.muted,
     lineHeight: 22,
+  },
+  aboutEmptyEditRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
   },
   aboutEmptyHint: {
     fontSize: 12,
@@ -2248,30 +2251,40 @@ const styles = StyleSheet.create({
 
   // ── Posts ──
   postComposer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     backgroundColor: Colors.warmWhite,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
+    borderRadius: Radius.full,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     marginBottom: Spacing.md,
   },
+  postComposerIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(196,98,45,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   postInput: {
-    minHeight: 72,
+    flex: 1,
     fontSize: 14,
     color: Colors.ink,
-    textAlignVertical: 'top',
+    paddingVertical: 0,
   },
   postBtn: {
-    marginTop: 10,
-    alignSelf: 'flex-end',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: Colors.terracotta,
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    minWidth: 68,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  postBtnDisabled: { opacity: 0.5 },
+  postBtnDisabled: { opacity: 0.4 },
   postBtnText: { fontSize: 12, fontWeight: '700', color: Colors.white },
   postCard: {
     backgroundColor: Colors.warmWhite,
