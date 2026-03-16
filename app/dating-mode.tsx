@@ -1255,15 +1255,15 @@ export default function DatingModeScreen() {
         {activeTab === 'discover' ? (
           showDeck ? (
             <View style={styles.deckContainer}>
-              {/* Deck */}
               <View style={styles.deckWrap}>
+                {/* Background card (next) */}
                 {nextProfile ? (
                   <View style={[styles.card, styles.cardUnder]}>
                     {nextProfile.images.length > 0 ? (
                       <ImageBackground
                         source={{ uri: nextProfile.images[nxtPhotoIdx] ?? nextProfile.images[0] }}
                         style={styles.cardImage}
-                        imageStyle={styles.cardImageRounded}
+                        imageStyle={styles.cardImageStyle}
                       />
                     ) : (
                       <NoPhotoCard profile={nextProfile} />
@@ -1271,6 +1271,7 @@ export default function DatingModeScreen() {
                   </View>
                 ) : null}
 
+                {/* Foreground card (swipeable) */}
                 <Animated.View
                   style={[
                     styles.card,
@@ -1282,8 +1283,9 @@ export default function DatingModeScreen() {
                     <ImageBackground
                       source={{ uri: currentProfile!.images[curPhotoIdx] ?? currentProfile!.images[0] }}
                       style={styles.cardImage}
-                      imageStyle={styles.cardImageRounded}
+                      imageStyle={styles.cardImageStyle}
                     >
+                      {/* Photo dots */}
                       {currentProfile!.images.length > 1 ? (
                         <>
                           <View style={styles.dotsRow}>
@@ -1309,6 +1311,7 @@ export default function DatingModeScreen() {
                         </>
                       ) : null}
 
+                      {/* Swipe stamps */}
                       <Animated.View style={[styles.swipeBadge, styles.swipeBadgeLike, { opacity: likeOpacity }]}>
                         <Text style={[styles.swipeBadgeText, { color: '#4caf70' }]}>LIKE</Text>
                       </Animated.View>
@@ -1316,15 +1319,35 @@ export default function DatingModeScreen() {
                         <Text style={[styles.swipeBadgeText, { color: Colors.error }]}>PASS</Text>
                       </Animated.View>
 
-                      <View style={styles.cardOverlay} />
+                      {/* Profile info overlay */}
                       <View style={styles.cardContent}>
                         <Text style={styles.cardName}>
                           {currentProfile!.name}{currentProfile!.age != null ? `, ${currentProfile!.age}` : ''}
                         </Text>
-                        <View style={styles.metaRow}>
-                          <Ionicons name="location-outline" size={12} color="rgba(255,255,255,0.75)" />
+                        <View style={[styles.metaRow, { marginBottom: 8 }]}>
+                          <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.82)" />
                           <Text style={styles.cardCity}>{currentProfile!.city}</Text>
                         </View>
+                        {currentProfile!.bio ? (
+                          <Text style={styles.cardBio} numberOfLines={2}>
+                            {currentProfile!.bio}
+                          </Text>
+                        ) : null}
+                        {(currentProfile!.intent && currentProfile!.intent !== 'Not set') ||
+                          currentProfile!.languages.length > 0 ? (
+                          <View style={styles.cardChipRow}>
+                            {currentProfile!.intent && currentProfile!.intent !== 'Not set' ? (
+                              <View style={styles.cardChip}>
+                                <Text style={styles.cardChipText}>{currentProfile!.intent}</Text>
+                              </View>
+                            ) : null}
+                            {currentProfile!.languages.slice(0, 3).map((lang) => (
+                              <View key={lang} style={styles.cardChip}>
+                                <Text style={styles.cardChipText}>{lang}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        ) : null}
                       </View>
                     </ImageBackground>
                   ) : (
@@ -1335,40 +1358,31 @@ export default function DatingModeScreen() {
                     />
                   )}
                 </Animated.View>
-              </View>
 
-              {/* Action buttons */}
-              <View style={styles.swipeActions}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.passBtn, submittingSwipe && styles.actionBtnDim]}
-                  onPress={() => forceSwipe('left')}
-                  disabled={submittingSwipe}
-                  activeOpacity={0.8}
-                >
-                  {submittingSwipe
-                    ? <ActivityIndicator size="small" color={Colors.error} />
-                    : <Ionicons name="close" size={26} color={Colors.error} />}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.likeBtn, submittingSwipe && styles.actionBtnDim]}
-                  onPress={() => forceSwipe('right')}
-                  disabled={submittingSwipe}
-                  activeOpacity={0.8}
-                >
-                  {submittingSwipe
-                    ? <ActivityIndicator size="small" color={Colors.white} />
-                    : <Ionicons name="heart" size={24} color={Colors.white} />}
-                </TouchableOpacity>
+                {/* Action buttons — float over card bottom */}
+                <View style={styles.swipeActions}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.passBtn, submittingSwipe && styles.actionBtnDim]}
+                    onPress={() => forceSwipe('left')}
+                    disabled={submittingSwipe}
+                    activeOpacity={0.8}
+                  >
+                    {submittingSwipe
+                      ? <ActivityIndicator size="small" color={Colors.error} />
+                      : <Ionicons name="close" size={28} color={Colors.error} />}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.likeBtn, submittingSwipe && styles.actionBtnDim]}
+                    onPress={() => forceSwipe('right')}
+                    disabled={submittingSwipe}
+                    activeOpacity={0.8}
+                  >
+                    {submittingSwipe
+                      ? <ActivityIndicator size="small" color={Colors.white} />
+                      : <Ionicons name="heart" size={26} color={Colors.white} />}
+                  </TouchableOpacity>
+                </View>
               </View>
-
-              {/* Candidate profile detail */}
-              <ScrollView
-                style={styles.candidateScroll}
-                contentContainerStyle={styles.candidateScrollContent}
-                showsVerticalScrollIndicator={false}
-              >
-                <CandidateDetail key={currentProfile!.id} profile={currentProfile!} />
-              </ScrollView>
             </View>
           ) : (
             <DiscoverEmpty
@@ -1527,26 +1541,49 @@ const styles = StyleSheet.create({
   secondaryBtn:     { paddingHorizontal: 16, paddingVertical: 8 },
   secondaryBtnText: { color: Colors.muted, fontWeight: '600', fontSize: 13 },
 
-  // Discover deck
-  deckContainer: { flex: 1, paddingBottom: Spacing.sm },
-  deckWrap: { height: DECK_H, width: '100%', justifyContent: 'center', alignItems: 'center' },
+  // Discover deck — full screen
+  deckContainer: { flex: 1 },
+  deckWrap:      { flex: 1, position: 'relative' },
   card: {
-    width: '100%', height: DECK_H, borderRadius: Radius.xl, overflow: 'hidden',
-    backgroundColor: Colors.paper, shadowColor: '#000', shadowOpacity: 0.18,
-    shadowRadius: 20, shadowOffset: { width: 0, height: 10 }, elevation: 8, position: 'absolute',
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: Radius.xl, overflow: 'hidden',
+    backgroundColor: Colors.paper,
+    shadowColor: '#000', shadowOpacity: 0.20,
+    shadowRadius: 24, shadowOffset: { width: 0, height: 10 }, elevation: 8,
   },
-  cardUnder:       { transform: [{ scale: 0.96 }, { translateY: 8 }], opacity: 0.75 },
+  cardUnder:        { transform: [{ scale: 0.96 }, { translateY: 10 }], opacity: 0.72 },
   cardImage:        { flex: 1, justifyContent: 'flex-end' },
-  cardImageRounded: { borderRadius: Radius.xl },
-  cardOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.28)' },
-  cardContent: { padding: Spacing.md, paddingBottom: 24, zIndex: 5 },
-  cardName: {
-    color: Colors.white, fontSize: 28, fontWeight: '900',
-    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
+  cardImageStyle:   { borderRadius: Radius.xl },
+  cardBottomFade: {},
+  cardContent: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: 18,
+    paddingBottom: 112,
+    zIndex: 5,
+    gap: 5,
+    backgroundColor: 'rgba(10,5,2,0.48)',
+    // top fade: use borderTopLeftRadius + borderTopRightRadius to soften the panel edge
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
   },
-  cardCity: { color: 'rgba(255,255,255,0.88)', fontSize: 14, fontWeight: '600' },
+  cardName: {
+    color: Colors.white, fontSize: 28, fontWeight: '900', lineHeight: 32,
+  },
+  cardCity:  {
+    color: 'rgba(255,255,255,0.80)', fontSize: 13, fontWeight: '600',
+  },
+  cardBio: {
+    color: 'rgba(255,255,255,0.78)', fontSize: 13, lineHeight: 20, marginTop: 4,
+  },
+  cardChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  cardChip: {
+    backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: Radius.full,
+    paddingHorizontal: 11, paddingVertical: 5,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+  },
+  cardChipText: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: '600' },
   dotsRow: {
-    position: 'absolute', top: 12, left: 14, right: 14, flexDirection: 'row', gap: 5, zIndex: 4,
+    position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', gap: 5, zIndex: 4,
   },
   dot:       { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.38)' },
   dotActive: { backgroundColor: Colors.white },
@@ -1560,27 +1597,21 @@ const styles = StyleSheet.create({
   swipeBadgePass: { right: 16, borderColor: Colors.error, transform: [{ rotate: '12deg' }] },
   swipeBadgeText: { fontSize: 15, fontWeight: '900', letterSpacing: 1 },
   swipeActions: {
-    marginTop: -32,
-    zIndex: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 36,
-    paddingBottom: 4,
+    position: 'absolute', bottom: 28, left: 0, right: 0, zIndex: 20,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', paddingHorizontal: 40,
   },
   actionBtn: {
-    width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 5,
-    borderWidth: 3, borderColor: Colors.cream,
+    width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6,
+    borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)',
   },
-  actionBtnDim: { opacity: 0.6 },
-  passBtn: {
-    backgroundColor: Colors.warmWhite, borderColor: Colors.cream,
-  },
-  likeBtn: { backgroundColor: Colors.terracotta, width: 72, height: 72, borderRadius: 36, borderColor: Colors.cream },
+  actionBtnDim: { opacity: 0.55 },
+  passBtn: { backgroundColor: 'rgba(255,255,255,0.92)' },
+  likeBtn: { backgroundColor: Colors.terracotta, width: 74, height: 74, borderRadius: 37 },
   bioBandText: { fontSize: 14, color: Colors.brownMid, lineHeight: 21 },
 
-  // Candidate detail sections
+  // Candidate detail sections (kept for other uses)
   candidateScroll:        { flex: 1, marginTop: Spacing.md },
   candidateScrollContent: { paddingHorizontal: Spacing.md, paddingBottom: 16, gap: 8 },
   candidateDetail:        { gap: 8 },
