@@ -103,8 +103,8 @@ const GENDER_OPTIONS = [
 const INTENT_OPTIONS = [
   { value: 'friendship', label: 'Friendship' },
   { value: 'dating',     label: 'Dating'     },
-  { value: 'long_term',  label: 'Long-term'  },
-  { value: 'marriage',   label: 'Marriage'   },
+  { value: 'long_term',  label: 'Long term'  },
+  { value: 'marriage',   label: 'Long term'  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ function ageFromBirthDate(birthDate: string | null): number | null {
 
 function formatIntent(intent: DatingCandidateRow['intent']): string {
   if (!intent) return 'Not set';
-  if (intent === 'long_term') return 'Long-term';
+  if (intent === 'long_term' || intent === 'marriage') return 'Long term';
   return intent.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -158,8 +158,8 @@ function serializePrefDraft(prefDraft: PrefDraft): string {
 // ── DatingHeader ──────────────────────────────────────────────────────────────
 
 function DatingHeader({
-  name, onBack, saveState,
-}: { name: string; likedCount: number; onBack: () => void; saveState?: SaveState }) {
+  name, subtitle, onBack, saveState,
+}: { name: string; subtitle?: string; likedCount: number; onBack: () => void; saveState?: SaveState; dimTitle?: boolean }) {
   const scale   = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 
@@ -187,7 +187,10 @@ function DatingHeader({
       >
         <Ionicons name="chevron-back" size={20} color={Colors.brown} />
       </TouchableOpacity>
-      <Text style={styles.headerTitle}>{name}</Text>
+      <View style={styles.headerTitleWrap}>
+        <Text style={styles.headerTitle}>{name}</Text>
+        {subtitle ? <Text style={styles.headerSubtitle}>{subtitle}</Text> : null}
+      </View>
       <View style={styles.headerStatusWrap}>
         <Animated.View style={[styles.headerStatusBadge, { opacity, transform: [{ scale }] }]}>
           <Ionicons name="checkmark" size={15} color={Colors.success} />
@@ -802,9 +805,10 @@ export default function DatingModeScreen() {
   const [likedCount,         setLikedCount]         = useState(0);
   const [photoIdxByProfile,  setPhotoIdxByProfile]  = useState<Record<string, number>>({});
   const [submittingSwipe,    setSubmittingSwipe]    = useState(false);
+  const [overlayExpanded,    setOverlayExpanded]    = useState(false);
+  const overlayAnim = useRef(new Animated.Value(0)).current;
 
   // My profile
-  const [headerName,     setHeaderName]     = useState('Dating');
   const [userId,         setUserId]         = useState<string | null>(null);
   const [mySummary,      setMySummary]      = useState<MyDatingSummary | null>(null);
   const [myPhotoPaths,   setMyPhotoPaths]   = useState<string[]>([]);
@@ -854,6 +858,14 @@ export default function DatingModeScreen() {
   const nextProfile     = profiles[index + 1] ?? null;
   const curPhotoIdx     = currentProfile ? (photoIdxByProfile[currentProfile.id] ?? 0) : 0;
   const nxtPhotoIdx     = nextProfile    ? (photoIdxByProfile[nextProfile.id]    ?? 0) : 0;
+  const headerTitle = useMemo(() => {
+    if (activeTab === 'discover') return currentProfile
+      ? `${currentProfile.name}${currentProfile.age != null ? `, ${currentProfile.age}` : ''}`
+      : 'Dating';
+    if (activeTab === 'matches') return 'Matches';
+    if (activeTab === 'messages') return 'Messages';
+    return 'Your profile';
+  }, [activeTab, currentProfile]);
 
   // ── Swipe animations ─────────────────────────────────────────────────────────
 
@@ -879,6 +891,15 @@ export default function DatingModeScreen() {
     if (liked) setLikedCount((n) => n + 1);
     position.setValue({ x: 0, y: 0 });
     setIndex((n) => n + 1);
+    // collapse overlay when advancing to next card
+    setOverlayExpanded(false);
+    Animated.timing(overlayAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+  };
+
+  const toggleOverlay = () => {
+    const next = !overlayExpanded;
+    setOverlayExpanded(next);
+    Animated.spring(overlayAnim, { toValue: next ? 1 : 0, useNativeDriver: false, friction: 8, tension: 60 }).start();
   };
 
   const submitSwipe = async (direction: 'left' | 'right') => {
@@ -1133,8 +1154,6 @@ export default function DatingModeScreen() {
       supabase.rpc('get_dating_candidates', { p_limit: 40 }),
     ]);
 
-    // headerName intentionally stays as tab label, not user's name
-
     const paths      = (dp?.photos as string[] | null | undefined) ?? [];
     const urls       = await Promise.all(paths.map((p) => resolveProfilePhotoUrl(p)));
     const avatarUrl  = me?.avatar_url ? await resolveProfilePhotoUrl(me.avatar_url) : null;
@@ -1241,7 +1260,7 @@ export default function DatingModeScreen() {
       {/* Header */}
       <SafeAreaView style={styles.headerSafe} edges={['top']}>
         <DatingHeader
-          name={headerName}
+          name={headerTitle}
           likedCount={likedCount}
           onBack={() => router.back()}
           saveState={headerSaveState}
@@ -1319,36 +1338,92 @@ export default function DatingModeScreen() {
                         <Text style={[styles.swipeBadgeText, { color: Colors.error }]}>PASS</Text>
                       </Animated.View>
 
-                      {/* Profile info overlay */}
-                      <View style={styles.cardContent}>
-                        <Text style={styles.cardName}>
-                          {currentProfile!.name}{currentProfile!.age != null ? `, ${currentProfile!.age}` : ''}
-                        </Text>
-                        <View style={[styles.metaRow, { marginBottom: 8 }]}>
-                          <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.82)" />
-                          <Text style={styles.cardCity}>{currentProfile!.city}</Text>
-                        </View>
-                        {currentProfile!.bio ? (
-                          <Text style={styles.cardBio} numberOfLines={2}>
-                            {currentProfile!.bio}
-                          </Text>
-                        ) : null}
-                        {(currentProfile!.intent && currentProfile!.intent !== 'Not set') ||
-                          currentProfile!.languages.length > 0 ? (
-                          <View style={styles.cardChipRow}>
-                            {currentProfile!.intent && currentProfile!.intent !== 'Not set' ? (
-                              <View style={styles.cardChip}>
-                                <Text style={styles.cardChipText}>{currentProfile!.intent}</Text>
-                              </View>
-                            ) : null}
-                            {currentProfile!.languages.slice(0, 3).map((lang) => (
-                              <View key={lang} style={styles.cardChip}>
-                                <Text style={styles.cardChipText}>{lang}</Text>
-                              </View>
-                            ))}
+                      {/* Profile info overlay — expandable */}
+                      <Animated.View style={styles.cardContent}>
+                        {/* Drag handle */}
+                        <TouchableOpacity onPress={toggleOverlay} activeOpacity={0.7} style={styles.cardHandle}>
+                          <View style={styles.cardHandleBar} />
+                        </TouchableOpacity>
+
+                        {/* Info block */}
+                        <View style={styles.cardInfoBlock}>
+                          {/* City */}
+                          <View style={styles.metaRow}>
+                            <Ionicons name="location-outline" size={12} color="rgba(255,255,255,0.45)" />
+                            <Text style={styles.cardCity}>{currentProfile!.city}</Text>
                           </View>
-                        ) : null}
-                      </View>
+
+                          {/* Bio */}
+                          {currentProfile!.bio ? (
+                            <Text style={styles.cardBio} numberOfLines={overlayExpanded ? 0 : 2}>
+                              {currentProfile!.bio}
+                            </Text>
+                          ) : null}
+
+                          {/* Tags — intent + languages separated by "." */}
+                          {(() => {
+                            const intent = currentProfile!.intent && currentProfile!.intent !== 'Not set'
+                              ? formatIntent(currentProfile!.intent as DatingCandidateRow['intent'])
+                              : null;
+                            const langs = currentProfile!.languages.slice(0, overlayExpanded ? 8 : 3);
+                            const parts = [intent, ...langs].filter(Boolean) as string[];
+                            return parts.length > 0 ? (
+                              <Text style={styles.cardMeta}>{parts.join(' . ')}</Text>
+                            ) : null;
+                          })()}
+
+                          {/* Expanded detail section */}
+                          {overlayExpanded && (
+                            <View style={styles.cardExpandedDetail}>
+                              <View style={styles.cardDivider} />
+                              <View style={styles.cardDetailRow}>
+                                <Ionicons name="heart-outline" size={12} color="rgba(255,255,255,0.35)" />
+                                <Text style={styles.cardDetailText}>
+                                  {currentProfile!.intent && currentProfile!.intent !== 'Not set'
+                                    ? formatIntent(currentProfile!.intent as DatingCandidateRow['intent'])
+                                    : 'Not specified'}
+                                </Text>
+                              </View>
+                              {currentProfile!.age != null && (
+                                <View style={styles.cardDetailRow}>
+                                  <Ionicons name="calendar-outline" size={12} color="rgba(255,255,255,0.35)" />
+                                  <Text style={styles.cardDetailText}>{currentProfile!.age} years old</Text>
+                                </View>
+                              )}
+                              {currentProfile!.languages.length > 0 && (
+                                <View style={styles.cardDetailRow}>
+                                  <Ionicons name="language-outline" size={12} color="rgba(255,255,255,0.35)" />
+                                  <Text style={styles.cardDetailText}>{currentProfile!.languages.join(', ')}</Text>
+                                </View>
+                              )}
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Action buttons — embedded in overlay */}
+                        <View style={styles.cardActions}>
+                          <TouchableOpacity
+                            style={[styles.actionBtn, styles.passBtn, submittingSwipe && styles.actionBtnDim]}
+                            onPress={() => forceSwipe('left')}
+                            disabled={submittingSwipe}
+                            activeOpacity={0.8}
+                          >
+                            {submittingSwipe
+                              ? <ActivityIndicator size="small" color={Colors.white} />
+                              : <Ionicons name="close" size={26} color={Colors.white} />}
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.actionBtn, styles.likeBtn, submittingSwipe && styles.actionBtnDim]}
+                            onPress={() => forceSwipe('right')}
+                            disabled={submittingSwipe}
+                            activeOpacity={0.8}
+                          >
+                            {submittingSwipe
+                              ? <ActivityIndicator size="small" color={Colors.white} />
+                              : <Ionicons name="heart" size={24} color={Colors.white} />}
+                          </TouchableOpacity>
+                        </View>
+                      </Animated.View>
                     </ImageBackground>
                   ) : (
                     <NoPhotoCard
@@ -1359,29 +1434,6 @@ export default function DatingModeScreen() {
                   )}
                 </Animated.View>
 
-                {/* Action buttons — float over card bottom */}
-                <View style={styles.swipeActions}>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.passBtn, submittingSwipe && styles.actionBtnDim]}
-                    onPress={() => forceSwipe('left')}
-                    disabled={submittingSwipe}
-                    activeOpacity={0.8}
-                  >
-                    {submittingSwipe
-                      ? <ActivityIndicator size="small" color={Colors.error} />
-                      : <Ionicons name="close" size={28} color={Colors.error} />}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.likeBtn, submittingSwipe && styles.actionBtnDim]}
-                    onPress={() => forceSwipe('right')}
-                    disabled={submittingSwipe}
-                    activeOpacity={0.8}
-                  >
-                    {submittingSwipe
-                      ? <ActivityIndicator size="small" color={Colors.white} />
-                      : <Ionicons name="heart" size={26} color={Colors.white} />}
-                  </TouchableOpacity>
-                </View>
               </View>
             </View>
           ) : (
@@ -1462,7 +1514,10 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.paper,
     borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
-  headerTitle:     { fontSize: 20, fontWeight: '800', color: Colors.ink },
+  headerTitleWrap:  { alignItems: 'center', gap: 1 },
+  headerTitle:      { fontSize: 18, fontWeight: '800', color: Colors.ink },
+  headerSubtitle:   { fontSize: 11, fontWeight: '500', color: Colors.muted },
+  headerTitleMuted: { fontSize: 13, fontWeight: '500', color: Colors.muted },
   headerStatusWrap: {
     width: 36,
     height: 36,
@@ -1543,7 +1598,7 @@ const styles = StyleSheet.create({
 
   // Discover deck — full screen
   deckContainer: { flex: 1 },
-  deckWrap:      { flex: 1, position: 'relative' },
+  deckWrap:      { flex: 1, position: 'relative', marginBottom: -34 },
   card: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: Radius.xl, overflow: 'hidden',
@@ -1557,36 +1612,89 @@ const styles = StyleSheet.create({
   cardBottomFade: {},
   cardContent: {
     paddingHorizontal: Spacing.md,
-    paddingTop: 18,
-    paddingBottom: 112,
+    paddingTop: 8,
+    paddingBottom: 44,
     zIndex: 5,
-    gap: 5,
-    backgroundColor: 'rgba(10,5,2,0.48)',
-    // top fade: use borderTopLeftRadius + borderTopRightRadius to soften the panel edge
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
+    gap: 0,
+  },
+  cardInfoBlock: {
+    gap: 0,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 12,
+    marginBottom: 10,
+    backgroundColor: 'rgba(8,4,2,0.42)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    overflow: 'hidden',
+  },
+  cardActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 4,
   },
   cardName: {
     color: Colors.white, fontSize: 28, fontWeight: '900', lineHeight: 32,
   },
-  cardCity:  {
-    color: 'rgba(255,255,255,0.80)', fontSize: 13, fontWeight: '600',
+  cardCity: {
+    color: 'rgba(255,255,255,0.50)', fontSize: 11, fontWeight: '500', letterSpacing: 0.2,
+    marginBottom: 6,
+    textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
   },
+  cardMetaLine: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  cardMeta: {
+    color: 'rgba(255,255,255,0.38)', fontSize: 11, fontWeight: '400', letterSpacing: 0.1,
+    marginTop: 8,
+    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
+  cardExpandedDetail: { gap: 8, marginTop: 8 },
+  cardDetailRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardDetailText: { color: 'rgba(255,255,255,0.45)', fontSize: 11.5, fontWeight: '400' },
   cardBio: {
-    color: 'rgba(255,255,255,0.78)', fontSize: 13, lineHeight: 20, marginTop: 4,
+    color: 'rgba(255,255,255,0.90)', fontSize: 13, lineHeight: 19, fontWeight: '400',
+    borderLeftWidth: 2, borderLeftColor: 'rgba(255,255,255,0.18)',
+    paddingLeft: 8, marginVertical: 2,
+    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
   },
+  cardHandle: { alignItems: 'center', paddingTop: 2, paddingBottom: 8 },
+  cardHandleBar: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.50)',
+  },
+  cardTagRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' },
+  cardTagIntent: { color: 'rgba(240,217,138,0.85)', fontSize: 12, fontWeight: '600' },
+  cardTagLang:   { color: 'rgba(255,255,255,0.50)', fontSize: 12 },
+  cardExpandedSection: { gap: 6 },
+  cardDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.10)', marginVertical: 4 },
+  cardExpandedHint: { color: 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' },
+  cardIntentInline: { color: 'rgba(255,255,255,0.45)', fontSize: 12, fontStyle: 'italic' },
   cardChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   cardChip: {
-    backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: Radius.full,
-    paddingHorizontal: 11, paddingVertical: 5,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: Radius.full,
+    paddingHorizontal: 9, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
   },
-  cardChipText: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: '600' },
+  cardChipText: { color: 'rgba(255,255,255,0.90)', fontSize: 11, fontWeight: '600' },
+  cardChipIntent: {
+    backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full,
+    paddingHorizontal: 9, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(201,168,76,0.30)',
+  },
+  cardChipIntentText: { color: 'rgba(240,217,138,0.85)', fontSize: 11, fontWeight: '600' },
+  cardChipLang: {
+    backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full,
+    paddingHorizontal: 9, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  cardChipLangText: { color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '600' },
   dotsRow: {
     position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', gap: 5, zIndex: 4,
   },
-  dot:       { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.38)' },
-  dotActive: { backgroundColor: Colors.white },
+  dot:       { flex: 1, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.35)',
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+  dotActive: { backgroundColor: Colors.white, opacity: 1 },
   tapRow:  { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 3 },
   tapZone: { flex: 1 },
   swipeBadge: {
@@ -1597,18 +1705,17 @@ const styles = StyleSheet.create({
   swipeBadgePass: { right: 16, borderColor: Colors.error, transform: [{ rotate: '12deg' }] },
   swipeBadgeText: { fontSize: 15, fontWeight: '900', letterSpacing: 1 },
   swipeActions: {
-    position: 'absolute', bottom: 28, left: 0, right: 0, zIndex: 20,
+    position: 'absolute', bottom: 48, left: 0, right: 0, zIndex: 20,
     flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', paddingHorizontal: 40,
+    alignItems: 'center', paddingHorizontal: Spacing.md,
   },
   actionBtn: {
-    width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6,
-    borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)',
+    width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 4,
   },
   actionBtnDim: { opacity: 0.55 },
-  passBtn: { backgroundColor: 'rgba(255,255,255,0.92)' },
-  likeBtn: { backgroundColor: Colors.terracotta, width: 74, height: 74, borderRadius: 37 },
+  passBtn: { backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
+  likeBtn: { backgroundColor: Colors.terracotta },
   bioBandText: { fontSize: 14, color: Colors.brownMid, lineHeight: 21 },
 
   // Candidate detail sections (kept for other uses)
