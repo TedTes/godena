@@ -280,7 +280,6 @@ export default function ConnectionsScreen() {
 
         <View style={styles.header}>
           <Text style={styles.title}>Connections</Text>
-          <Text style={styles.subtitle}>Your introductions and conversations</Text>
         </View>
 
         {loading ? (
@@ -331,7 +330,7 @@ export default function ConnectionsScreen() {
           /* ── Connections Layout ── */
           <Animated.View style={[styles.tabbedWrap, { opacity: screenFade }]}>
             <Animated.View style={styles.tabContentWrap}>
-              <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: Spacing.lg, paddingBottom: 24 }}>
                 {/* Pending reveal */}
                 {pendingReveal && (
                   <View style={styles.section}>
@@ -365,9 +364,6 @@ export default function ConnectionsScreen() {
 
                 {/* Active connections */}
                 <View style={styles.section}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionLabel}>Active Connections</Text>
-                  </View>
                   {activeConnections.length > 0 ? (
                     activeConnections.map((c) => (
                       <TouchableOpacity
@@ -428,11 +424,11 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  title: { fontSize: 28, fontWeight: '900', color: Colors.ink },
-  subtitle: { fontSize: 13, color: Colors.muted, marginTop: 2 },
-
+  title: { fontSize: 22, fontWeight: '700', color: Colors.ink },
   // ── Empty State ──
   emptyWrap: { flex: 1 },
   emptyScroll: { paddingHorizontal: Spacing.lg },
