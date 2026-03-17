@@ -14,11 +14,16 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
-  Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import RAnimated, { FadeIn, FadeInDown, FadeOut, useReducedMotion } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
+import { supabase } from '../../lib/supabase';
+import { useScreenEnter } from '../../hooks/useScreenEnter';
 
 if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -30,12 +35,6 @@ const LAYOUT_SPRING = {
   update: { type: LayoutAnimation.Types.spring, springDamping: 0.8 },
   delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
 };
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
-import { supabase } from '../../lib/supabase';
-import { useScreenEnter } from '../../hooks/useScreenEnter';
 
 type SignalGroup = {
   id: string;
@@ -49,9 +48,9 @@ type SignalGroup = {
 const mockGroups: SignalGroup[] = [];
 
 const settingsRows = [
+  { icon: 'git-compare-outline', label: 'Connections' },
   { icon: 'notifications-outline', label: 'Notifications' },
   { icon: 'shield-outline', label: 'Privacy & Safety' },
-  { icon: 'star-outline', label: 'Upgrade to Premium', accent: true },
   { icon: 'help-circle-outline', label: 'Help & Feedback' },
   { icon: 'trash-outline', label: 'Delete Account', danger: true },
   { icon: 'log-out-outline', label: 'Sign Out', danger: true },
@@ -107,7 +106,6 @@ export default function ProfileScreen() {
 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [updatingPhoto, setUpdatingPhoto] = useState(false);
-  const [updatingGlobalOpen, setUpdatingGlobalOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
@@ -119,38 +117,33 @@ export default function ProfileScreen() {
   const [editingValue, setEditingValue] = useState('');
   const [editingDate, setEditingDate] = useState<Date>(new Date());
   const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
-  const [datingModeOn, setDatingModeOn] = useState(false);
 
-  // Bio autosave
   type BioSaveState = 'idle' | 'saving' | 'saved' | 'error';
   const [bioSaveState, setBioSaveState] = useState<BioSaveState>('idle');
   const badgeOpacity = useRef(new Animated.Value(0)).current;
-  const badgeScale   = useRef(new Animated.Value(0)).current;
+  const badgeScale = useRef(new Animated.Value(0)).current;
 
-  // Badge animation
   useEffect(() => {
     if (bioSaveState !== 'saved') return;
     badgeScale.setValue(0.3);
     badgeOpacity.setValue(0);
     Animated.parallel([
-      Animated.spring(badgeScale,   { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }),
+      Animated.spring(badgeScale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }),
       Animated.timing(badgeOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
     ]).start(() => {
       Animated.parallel([
         Animated.timing(badgeOpacity, { toValue: 0, duration: 350, delay: 1800, useNativeDriver: true }),
-        Animated.timing(badgeScale,   { toValue: 0.7, duration: 350, delay: 1800, useNativeDriver: true }),
+        Animated.timing(badgeScale, { toValue: 0.7, duration: 350, delay: 1800, useNativeDriver: true }),
       ]).start();
     });
   }, [bioSaveState, badgeOpacity, badgeScale]);
 
-  // Reset badge after shown
   useEffect(() => {
     if (bioSaveState !== 'saved' && bioSaveState !== 'error') return;
     const timer = setTimeout(() => setBioSaveState('idle'), 3500);
     return () => clearTimeout(timer);
   }, [bioSaveState]);
 
-  // 4s debounce autosave while editing bio
   useEffect(() => {
     if (editingField !== 'bio') return;
     const current = editingValue.trim();
@@ -183,21 +176,13 @@ export default function ProfileScreen() {
     const resolvedUserId = uid ?? userId;
     if (!resolvedUserId) return;
 
-    const [{ data }, { data: datingProfile }] = await Promise.all([
-      supabase
-        .from('profiles')
-        .select(PROFILE_BASE_SELECT)
-        .eq('user_id', resolvedUserId)
-        .maybeSingle(),
-      supabase
-        .from('dating_profiles')
-        .select('is_enabled')
-        .eq('user_id', resolvedUserId)
-        .maybeSingle(),
-    ]);
+    const { data } = await supabase
+      .from('profiles')
+      .select(PROFILE_BASE_SELECT)
+      .eq('user_id', resolvedUserId)
+      .maybeSingle();
 
     const profileData = data as ProfileData | null;
-    setDatingModeOn(datingProfile?.is_enabled ?? false);
 
     setProfile(profileData ?? null);
 
@@ -256,20 +241,12 @@ export default function ProfileScreen() {
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
-
-  const reducedMotion   = useReducedMotion();
-  // Edit row — slides down into the expanding row, exits quickly so LayoutAnimation can spring-close cleanly
-  const editEnterAnim   = reducedMotion ? FadeIn.duration(60)     : FadeInDown.duration(200);
-  const editExitAnim    = reducedMotion ? FadeOut.duration(60)    : FadeOut.duration(80);
-  // View row — fades back in after row collapses, fades out quickly when opening edit
-  const viewEnterAnim   = reducedMotion ? FadeIn.duration(60)     : FadeIn.duration(180);
-  const viewExitAnim    = reducedMotion ? FadeOut.duration(60)    : FadeOut.duration(60);
-  // Inner controls stagger (fires after the row wrapper animation begins)
-  const inputEnterAnim  = reducedMotion ? FadeIn.duration(60)     : FadeIn.duration(160).delay(60);
-
-  // Toggle thumb position (off=0, on=18)
-  const isOpen  = profile?.is_open_to_connections ?? true;
-  const thumbStyle = { transform: [{ translateX: isOpen ? 18 : 0 }] as const };
+  const reducedMotion = useReducedMotion();
+  const editEnterAnim = reducedMotion ? FadeIn.duration(60) : FadeInDown.duration(200);
+  const editExitAnim = reducedMotion ? FadeOut.duration(60) : FadeOut.duration(80);
+  const viewEnterAnim = reducedMotion ? FadeIn.duration(60) : FadeIn.duration(180);
+  const viewExitAnim = reducedMotion ? FadeOut.duration(60) : FadeOut.duration(60);
+  const inputEnterAnim = reducedMotion ? FadeIn.duration(60) : FadeIn.duration(160).delay(60);
 
   // Profile completeness
   const completenessScore = [
@@ -336,7 +313,6 @@ export default function ProfileScreen() {
   };
 
   const renderFieldInput = (field: EditableField) => {
-    // ── Single-select chips: save immediately on tap ──
     if (field === 'gender') {
       return (
         <View style={styles.inlineOptionsWrap}>
@@ -358,6 +334,7 @@ export default function ProfileScreen() {
         </View>
       );
     }
+
     const handleBlur = () => {
       if (field === 'languages') {
         const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
@@ -368,6 +345,7 @@ export default function ProfileScreen() {
         void updateProfilePatch({ religion: editingValue.trim() || null }).then(closeEditRow);
       }
     };
+
     return (
       <TextInput
         value={editingValue}
@@ -408,82 +386,6 @@ export default function ProfileScreen() {
     closeEditRow();
   };
 
-  const toggleGlobalOpen = async (value: boolean) => {
-    if (!userId || updatingGlobalOpen) return;
-    const prevValue = profile?.is_open_to_connections ?? true;
-
-    setUpdatingGlobalOpen(true);
-    setProfile((prev) => (prev ? { ...prev, is_open_to_connections: value } : prev));
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_open_to_connections: value })
-      .eq('user_id', userId);
-
-    if (error) {
-      setProfile((prev) => (prev ? { ...prev, is_open_to_connections: prevValue } : prev));
-      Alert.alert('Update failed', error.message);
-      setUpdatingGlobalOpen(false);
-      return;
-    }
-
-    if (!value) {
-      const { error: clearSignalsError } = await supabase
-        .from('group_memberships')
-        .update({ is_open_to_connect: false, openness_set_at: null })
-        .eq('user_id', userId)
-        .eq('is_open_to_connect', true);
-      if (clearSignalsError) {
-        setProfile((prev) => (prev ? { ...prev, is_open_to_connections: prevValue } : prev));
-        await supabase
-          .from('profiles')
-          .update({ is_open_to_connections: prevValue })
-          .eq('user_id', userId);
-        Alert.alert('Update failed', clearSignalsError.message);
-        setUpdatingGlobalOpen(false);
-        return;
-      }
-    }
-    setUpdatingGlobalOpen(false);
-  };
-
-  const persistDatingMode = async (value: boolean) => {
-    if (!userId || updatingGlobalOpen) return;
-    const prevValue = datingModeOn;
-
-    setUpdatingGlobalOpen(true);
-    setDatingModeOn(value);
-
-    const { error } = await supabase
-      .from('dating_profiles')
-      .upsert({ user_id: userId, is_enabled: value }, { onConflict: 'user_id' });
-
-    if (error) {
-      setDatingModeOn(prevValue);
-      Alert.alert('Update failed', error.message);
-    } else if (value) {
-      router.push('/dating-mode');
-    }
-
-    setUpdatingGlobalOpen(false);
-  };
-
-  const toggleDatingMode = async (value: boolean) => {
-    if (!userId || updatingGlobalOpen) return;
-    if (value && !datingModeOn) {
-      Alert.alert(
-        'Enable Dating Mode?',
-        'Dating Mode uses your dating preferences to show swipe candidates and create matches.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Enable', onPress: () => { void persistDatingMode(true); } },
-        ]
-      );
-      return;
-    }
-    await persistDatingMode(value);
-  };
-
   const deleteAccount = async () => {
     if (deletingAccount) return;
     setDeletingAccount(true);
@@ -521,6 +423,10 @@ export default function ProfileScreen() {
     }
     if (label === 'Upgrade to Premium') {
       router.push('/premium');
+      return;
+    }
+    if (label === 'Connections') {
+      router.push('/connections-settings');
       return;
     }
     if (label === 'Notifications') {
@@ -728,36 +634,6 @@ export default function ProfileScreen() {
                 <Text style={styles.metaText}>{city}</Text>
               </View>
 
-              {profile && (
-                <View style={styles.headerActionsRow}>
-                  <TouchableOpacity
-                    style={styles.headerActionItem}
-                    onPress={() => router.push('/profile-setup')}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.headerActionControl}>
-                      <Ionicons name="pencil-outline" size={22} color={C.white} />
-                    </View>
-                    <Text style={styles.headerActionLabel}>Edit Profile</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.headerActionItem}
-                    onPress={() => { void toggleGlobalOpen(!(profile.is_open_to_connections ?? true)); }}
-                    activeOpacity={0.8}
-                    disabled={updatingGlobalOpen}
-                  >
-                    <View style={[
-                      styles.toggleTrack,
-                      (profile.is_open_to_connections ?? true) && styles.toggleTrackOn,
-                    ]}>
-                      <View style={[styles.toggleThumb, thumbStyle]} />
-                    </View>
-                    <Text style={styles.headerActionLabel}>Open to Connect</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
             </View>
           </View>
 
@@ -869,59 +745,12 @@ export default function ProfileScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Account</Text>
             <View style={[styles.card, styles.cardNoPad]}>
-              <View style={[styles.settingsRow, styles.settingsRowDivider]}>
-                <View style={styles.settingsIcon}>
-                  <Ionicons name="heart-outline" size={18} color={C.brownMid} />
-                </View>
-                <View style={styles.settingsToggleLabelWrap}>
-                  <Text style={styles.settingsLabel}>Dating Mode</Text>
-                  <Text style={styles.settingsSubLabel}>
-                    {datingModeOn ? 'On' : 'Off'}
-                  </Text>
-                </View>
-                <Switch
-                  value={datingModeOn}
-                  onValueChange={(value) => { void toggleDatingMode(value); }}
-                  disabled={updatingGlobalOpen}
-                  thumbColor={Platform.OS === 'android' ? C.white : undefined}
-                  trackColor={{ false: C.borderDark, true: C.olive }}
-                />
-              </View>
-              {datingModeOn ? (
-                <TouchableOpacity
-                  style={[styles.settingsRow, styles.settingsRowDivider]}
-                  onPress={() => router.push('/dating-mode')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.settingsIcon, { backgroundColor: 'rgba(122,140,92,0.14)' }]}>
-                    <Ionicons name="flame-outline" size={18} color={C.olive} />
-                  </View>
-                  <Text style={styles.settingsLabel}>Open Dating Mode</Text>
-                  <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
-                </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                style={[styles.settingsRow, styles.settingsRowDivider]}
-                onPress={() => router.push('/verify-identity')}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.settingsIcon, { backgroundColor: 'rgba(201,168,76,0.12)' }]}>
-                  <Ionicons name="shield-checkmark-outline" size={18} color={C.gold} />
-                </View>
-                <Text style={styles.settingsLabel}>Photo Verification</Text>
-                <View style={[styles.unverifiedBadge, verificationLabel === 'Verified' && styles.verifiedBadge]}>
-                  <Text style={[styles.unverifiedText, verificationLabel === 'Verified' && styles.verifiedText]}>
-                    {verificationLabel}
-                  </Text>
-                </View>
-              </TouchableOpacity>
               {settingsRows.map((row, i) => (
                 <TouchableOpacity
                   key={row.label}
                   style={[
                     styles.settingsRow,
                     i < settingsRows.length - 1 && styles.settingsRowDivider,
-                    'accent' in row && row.accent && styles.settingsRowPremium,
                   ]}
                   onPress={() => onPressSettingRow(row.label)}
                   activeOpacity={0.7}
@@ -929,7 +758,6 @@ export default function ProfileScreen() {
                 >
                   <View style={[
                     styles.settingsIcon,
-                    'accent' in row && row.accent && styles.settingsIconAccent,
                     'danger' in row && row.danger && styles.settingsIconDanger,
                   ]}>
                     <Ionicons
@@ -937,7 +765,6 @@ export default function ProfileScreen() {
                       size={18}
                       color={
                         'danger' in row && row.danger ? C.error :
-                        'accent' in row && row.accent ? C.gold :
                         C.brownMid
                       }
                     />
@@ -945,15 +772,10 @@ export default function ProfileScreen() {
                   <Text style={[
                     styles.settingsLabel,
                     'danger' in row && row.danger && styles.settingsLabelDanger,
-                    'accent' in row && row.accent && styles.settingsLabelAccent,
                   ]}>
                     {row.label}
                   </Text>
-                  {'accent' in row && row.accent ? (
-                    <View style={styles.premiumBadge}>
-                      <Text style={styles.premiumBadgeText}>PRO</Text>
-                    </View>
-                  ) : row.label === 'Delete Account' && deletingAccount ? (
+                  {row.label === 'Delete Account' && deletingAccount ? (
                     <ActivityIndicator size="small" color={C.error} />
                   ) : (
                     <Ionicons name="chevron-forward" size={16} color={C.borderDark} />
@@ -968,7 +790,6 @@ export default function ProfileScreen() {
         </Animated.View>
       </SafeAreaView>
 
-      {/* ── Birth Date Picker Sheet ── */}
       <Modal
         visible={showBirthDateSheet}
         transparent
@@ -1219,47 +1040,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   metaText: { fontSize: 13, color: C.brownLight },
   metaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: C.brownLight },
 
-  // Header actions inside avatar card
-  headerActionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 28,
-    marginTop: 16,
-  },
-  headerActionItem: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  headerActionControl: {
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerActionLabel: {
-    fontSize: 11,
-    color: C.brownLight,
-    fontWeight: '600',
-  },
-  toggleTrack: {
-    width: 44,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    position: 'relative',
-  },
-  toggleTrackOn: {
-    backgroundColor: C.olive,
-  },
-  toggleThumb: {
-    position: 'absolute',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: C.white,
-    top: 3,
-    left: 3,
-  },
-
   // ── Sections ──
   section: { paddingHorizontal: Spacing.lg, marginTop: 20 },
   sectionLabel: {
@@ -1485,8 +1265,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   settingsIconAccent: { backgroundColor: 'rgba(201,168,76,0.12)' },
   settingsIconDanger: { backgroundColor: 'rgba(217,79,79,0.1)' },
   settingsLabel: { flex: 1, fontSize: 14, color: C.ink, fontWeight: '500' },
-  settingsToggleLabelWrap: { flex: 1, gap: 2 },
-  settingsSubLabel: { fontSize: 12, color: C.muted, fontWeight: '500' },
   settingsLabelDanger: { color: C.error },
   settingsLabelAccent: { color: C.gold, fontWeight: '600' },
   premiumBadge: {
