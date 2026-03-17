@@ -121,6 +121,9 @@ export default function HomeScreen() {
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const [notificationCount, setNotificationCount] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivityPost[]>([]);
+  const [datingModeEnabled, setDatingModeEnabled] = useState(false);
+  const [datingCandidateCount, setDatingCandidateCount] = useState(0);
+  const [datingMatchCount, setDatingMatchCount] = useState(0);
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -137,14 +140,36 @@ export default function HomeScreen() {
       const inboxItems = await fetchNotificationInboxItems(userId);
       setNotificationCount(inboxItems.length);
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('user_id', userId)
-        .maybeSingle();
+      const [{ data: profile }, { data: datingProfile }, { count: matchCount }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabase
+          .from('dating_profiles')
+          .select('is_enabled')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabase
+          .from('dating_matches')
+          .select('*', { count: 'exact', head: true })
+          .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`),
+      ]);
 
       if (profile?.full_name) {
         setFirstName(profile.full_name.split(' ')[0] ?? profile.full_name);
+      }
+
+      const datingEnabled = datingProfile?.is_enabled ?? false;
+      setDatingModeEnabled(datingEnabled);
+      setDatingMatchCount(matchCount ?? 0);
+
+      if (datingEnabled) {
+        const { data: candidates } = await supabase.rpc('get_dating_candidates', { p_limit: 12 });
+        setDatingCandidateCount(((candidates as Array<unknown> | null) ?? []).length);
+      } else {
+        setDatingCandidateCount(0);
       }
 
       const startOfMonth = new Date();
@@ -450,6 +475,46 @@ export default function HomeScreen() {
               <Text style={styles.momentumText}>
                 {`${eventsThisMonth} event${eventsThisMonth !== 1 ? 's' : ''} attended this month — reveals unlock through consistent presence`}
               </Text>
+            </View>
+          )}
+
+          {datingModeEnabled && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Dating</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.datingCard}
+                activeOpacity={0.88}
+                onPress={() => router.push('/dating-mode')}
+              >
+                <View style={styles.datingCardLeft}>
+                  <Text style={styles.datingEyebrow}>Discover</Text>
+                  <Text style={styles.datingTitle}>
+                    {datingCandidateCount > 0
+                      ? `${datingCandidateCount} ${datingCandidateCount === 1 ? 'person' : 'people'} to discover`
+                      : 'Dating mode is on'}
+                  </Text>
+                  <Text style={styles.datingSub}>
+                    {datingCandidateCount > 0
+                      ? 'Open discover to swipe and see who matches your preferences.'
+                      : 'New dating candidates will appear here as they become available.'}
+                  </Text>
+                </View>
+                <View style={styles.datingCardRight}>
+                  {datingMatchCount > 0 && (
+                    <View style={styles.datingCountPill}>
+                      <Ionicons name="heart" size={12} color={C.terracotta} />
+                      <Text style={styles.datingCountText}>
+                        {datingMatchCount} {datingMatchCount === 1 ? 'match' : 'matches'}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.datingArrowWrap}>
+                    <Ionicons name="arrow-forward" size={16} color={C.white} />
+                  </View>
+                </View>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -937,6 +1002,66 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     fontSize: 12,
     color: C.muted,
     lineHeight: 17,
+  },
+
+  datingCard: {
+    marginHorizontal: Spacing.lg,
+    backgroundColor: C.brown,
+    borderRadius: Radius.lg,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    overflow: 'hidden',
+  },
+  datingCardLeft: { flex: 1, paddingRight: 8 },
+  datingEyebrow: {
+    fontSize: 11,
+    color: C.terraLight,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  datingTitle: {
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '800',
+    color: C.cream,
+    marginBottom: 5,
+  },
+  datingSub: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: C.brownLight,
+  },
+  datingCardRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    minHeight: 72,
+    gap: 10,
+  },
+  datingCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  datingCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.cream,
+  },
+  datingArrowWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: C.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   activityFeed: { gap: 8, paddingHorizontal: Spacing.lg },
