@@ -26,7 +26,6 @@ type ProfileRow = {
   preferred_age_min: number | null;
   preferred_age_max: number | null;
   birth_date: string | null;
-  is_open_to_connections: boolean;
   is_premium: boolean;
 };
 
@@ -141,7 +140,7 @@ Deno.serve(async (req) => {
         .eq("is_open_to_connect", true),
       client
         .from("profiles")
-        .select("user_id, full_name, gender, preferred_genders, preferred_age_min, preferred_age_max, birth_date, is_open_to_connections, is_premium")
+        .select("user_id, full_name, gender, preferred_genders, preferred_age_min, preferred_age_max, birth_date, is_premium")
         .in("user_id", userIds),
       client
         .from("connections")
