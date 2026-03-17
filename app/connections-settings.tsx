@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -18,10 +19,10 @@ import { supabase } from '../lib/supabase';
 export default function ConnectionsSettingsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [busyKey, setBusyKey] = useState<'dating' | 'open' | null>(null);
+  const [busyKey, setBusyKey] = useState<'dating' | 'open' | 'bulk_on' | 'bulk_off' | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [datingModeOn, setDatingModeOn] = useState(false);
-  const [openToConnections, setOpenToConnections] = useState(true);
+  const [showInGroups, setShowInGroups] = useState(true);
 
   useEffect(() => {
     const load = async () => {
@@ -48,7 +49,7 @@ export default function ConnectionsSettingsScreen() {
           .maybeSingle(),
       ]);
 
-      setOpenToConnections(profileData?.is_open_to_connections ?? true);
+      setShowInGroups(profileData?.is_open_to_connections ?? true);
       setDatingModeOn(datingData?.is_enabled ?? false);
       setLoading(false);
     };
@@ -56,11 +57,11 @@ export default function ConnectionsSettingsScreen() {
     void load();
   }, [router]);
 
-  const updateOpenToConnections = async (value: boolean) => {
+  const updateShowInGroups = async (value: boolean) => {
     if (!userId || busyKey) return;
-    const prev = openToConnections;
+    const prev = showInGroups;
     setBusyKey('open');
-    setOpenToConnections(value);
+    setShowInGroups(value);
 
     const { error } = await supabase
       .from('profiles')
@@ -68,11 +69,34 @@ export default function ConnectionsSettingsScreen() {
       .eq('user_id', userId);
 
     if (error) {
-      setOpenToConnections(prev);
+      setShowInGroups(prev);
       Alert.alert('Update failed', error.message);
     }
 
     setBusyKey(null);
+  };
+
+  const bulkSetGroupOpenness = async (value: boolean) => {
+    if (!userId || busyKey) return;
+    setBusyKey(value ? 'bulk_on' : 'bulk_off');
+
+    const { error } = await supabase
+      .from('group_memberships')
+      .update({ is_open_to_connect: value, openness_set_at: value ? new Date().toISOString() : null })
+      .eq('user_id', userId);
+
+    setBusyKey(null);
+
+    if (error) {
+      Alert.alert('Update failed', error.message);
+    } else {
+      Alert.alert(
+        value ? 'Opened in all groups' : 'Closed in all groups',
+        value
+          ? 'You are now open to introductions in all your groups.'
+          : 'Your open signal has been removed from all groups.'
+      );
+    }
   };
 
   const persistDatingMode = async (value: boolean) => {
@@ -129,53 +153,114 @@ export default function ConnectionsSettingsScreen() {
           <View style={styles.spacer} />
         </View>
 
-        <View style={styles.card}>
-          <View style={styles.row}>
-            <View style={[styles.iconWrap, { backgroundColor: 'rgba(92,143,98,0.14)' }]}>
-              <Ionicons name="heart-half-outline" size={18} color={Colors.success} />
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.card}>
+            <View style={styles.row}>
+              <View style={[styles.iconWrap, { backgroundColor: 'rgba(92,143,98,0.14)' }]}>
+                <Ionicons name="heart-half-outline" size={18} color={Colors.success} />
+              </View>
+              <View style={styles.rowLeft}>
+                <Text style={styles.rowTitle}>Dating Mode</Text>
+                <Text style={styles.rowSub}>Use your dating preferences to show swipe candidates and match with potential partners.</Text>
+              </View>
+              <View style={styles.rowRight}>
+                {busyKey === 'dating' ? (
+                  <ActivityIndicator size="small" color={Colors.success} />
+                ) : (
+                  <Switch
+                    value={datingModeOn}
+                    onValueChange={(value) => { void updateDatingMode(value); }}
+                    trackColor={{ false: Colors.borderDark, true: Colors.success }}
+                    thumbColor={Colors.warmWhite}
+                    ios_backgroundColor={Colors.borderDark}
+                  />
+                )}
+              </View>
             </View>
-            <View style={styles.rowLeft}>
-              <Text style={styles.rowTitle}>Dating Mode</Text>
-              <Text style={styles.rowSub}>Use your dating preferences to show swipe candidates and match with potential partners.</Text>
-            </View>
-            <View style={styles.rowRight}>
-              {busyKey === 'dating' ? (
-                <ActivityIndicator size="small" color={Colors.success} />
-              ) : (
-                <Switch
-                  value={datingModeOn}
-                  onValueChange={(value) => { void updateDatingMode(value); }}
-                  trackColor={{ false: Colors.borderDark, true: Colors.success }}
-                  thumbColor={Colors.warmWhite}
-                  ios_backgroundColor={Colors.borderDark}
-                />
-              )}
+
+            <View style={[styles.row, styles.rowDivider]}>
+              <View style={[styles.iconWrap, { backgroundColor: 'rgba(196,98,45,0.12)' }]}>
+                <Ionicons name="sparkles-outline" size={18} color={Colors.terracotta} />
+              </View>
+              <View style={styles.rowLeft}>
+                <Text style={styles.rowTitle}>Visible in Groups</Text>
+                <Text style={styles.rowSub}>Allow others to know you're open to introductions. You still choose per group whether to signal openness.</Text>
+              </View>
+              <View style={styles.rowRight}>
+                {busyKey === 'open' ? (
+                  <ActivityIndicator size="small" color={Colors.terracotta} />
+                ) : (
+                  <Switch
+                    value={showInGroups}
+                    onValueChange={(value) => { void updateShowInGroups(value); }}
+                    trackColor={{ false: Colors.borderDark, true: Colors.terracotta }}
+                    thumbColor={Colors.warmWhite}
+                    ios_backgroundColor={Colors.borderDark}
+                  />
+                )}
+              </View>
             </View>
           </View>
 
-          <View style={[styles.row, styles.rowDivider]}>
-            <View style={[styles.iconWrap, { backgroundColor: 'rgba(92,143,98,0.14)' }]}>
-              <Ionicons name="sparkles-outline" size={18} color={Colors.success} />
-            </View>
-            <View style={styles.rowLeft}>
-              <Text style={styles.rowTitle}>Open to Connect</Text>
-              <Text style={styles.rowSub}>Find potential partner through shared groups, events, and mutual community introductions.</Text>
-            </View>
-            <View style={styles.rowRight}>
-              {busyKey === 'open' ? (
-                <ActivityIndicator size="small" color={Colors.success} />
-              ) : (
-                <Switch
-                  value={openToConnections}
-                  onValueChange={(value) => { void updateOpenToConnections(value); }}
-                  trackColor={{ false: Colors.borderDark, true: Colors.success }}
-                  thumbColor={Colors.warmWhite}
-                  ios_backgroundColor={Colors.borderDark}
-                />
-              )}
-            </View>
+          <Text style={styles.sectionLabel}>Group openness</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.row}
+              activeOpacity={0.75}
+              onPress={() => {
+                Alert.alert(
+                  'Turn on for all groups?',
+                  "You'll be marked as open to introductions in every group you belong to.",
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Turn on', onPress: () => { void bulkSetGroupOpenness(true); } },
+                  ]
+                );
+              }}
+            >
+              <View style={[styles.iconWrap, { backgroundColor: 'rgba(196,98,45,0.12)' }]}>
+                {busyKey === 'bulk_on' ? (
+                  <ActivityIndicator size="small" color={Colors.terracotta} />
+                ) : (
+                  <Ionicons name="leaf-outline" size={18} color={Colors.terracotta} />
+                )}
+              </View>
+              <View style={styles.rowLeft}>
+                <Text style={styles.rowTitle}>Open in all groups</Text>
+                <Text style={styles.rowSub}>Signal openness to introductions across every group at once.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.row, styles.rowDivider]}
+              activeOpacity={0.75}
+              onPress={() => {
+                Alert.alert(
+                  'Turn off for all groups?',
+                  'Your open signal will be removed from every group you belong to.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Turn off', style: 'destructive', onPress: () => { void bulkSetGroupOpenness(false); } },
+                  ]
+                );
+              }}
+            >
+              <View style={[styles.iconWrap, { backgroundColor: 'rgba(100,100,100,0.08)' }]}>
+                {busyKey === 'bulk_off' ? (
+                  <ActivityIndicator size="small" color={Colors.muted} />
+                ) : (
+                  <Ionicons name="eye-off-outline" size={18} color={Colors.muted} />
+                )}
+              </View>
+              <View style={styles.rowLeft}>
+                <Text style={styles.rowTitle}>Close in all groups</Text>
+                <Text style={styles.rowSub}>Remove your open signal from every group at once.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+            </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );
@@ -184,6 +269,17 @@ export default function ConnectionsSettingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   safe: { flex: 1 },
+  scroll: { paddingTop: Spacing.sm, paddingBottom: 40 },
+  sectionLabel: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.sm,
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
   loadingWrap: { flex: 1, backgroundColor: Colors.cream, alignItems: 'center', justifyContent: 'center' },
   header: {
     flexDirection: 'row',
