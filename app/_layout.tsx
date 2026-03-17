@@ -33,6 +33,7 @@ export default function RootLayout() {
         <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="notification-inbox" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="connections-settings" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="privacy-safety" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="terms" options={{ animation: 'slide_from_right' }} />
