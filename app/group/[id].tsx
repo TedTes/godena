@@ -117,8 +117,8 @@ const REACTION_CHOICES = ['❤️', '👍', '🔥', '👏', '😂', '🎉', '�
 export default function GroupDetailScreen() {
   const { id, tab: initialTab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'about' | 'members' | 'events' | 'activity'>(
-    (initialTab as 'about' | 'members' | 'events' | 'activity') ?? 'about'
+  const [activeTab, setActiveTab] = useState<'chat' | 'members' | 'events' | 'activity'>(
+    (initialTab as 'chat' | 'members' | 'events' | 'activity') ?? 'members'
   );
   const [loading, setLoading] = useState(true);
   const [group, setGroup] = useState<Group | null>(null);
@@ -649,30 +649,32 @@ export default function GroupDetailScreen() {
               disabled={!canEditGroupIcon}
             >
               <Text style={styles.heroEmoji}>{visuals.emoji}</Text>
-              {canEditGroupIcon ? (
-                <View style={styles.heroEmojiEditBadge}>
-                  <Ionicons name="pencil" size={11} color={Colors.white} />
-                </View>
-              ) : null}
             </TouchableOpacity>
           </View>
           <View style={styles.heroMeta}>
-            <View style={styles.heroMetaItem}>
-              <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.75)" />
-              <Text style={styles.heroMetaText}>{displayMemberCount} members</Text>
-            </View>
-            <View style={styles.heroDot} />
-            <View style={styles.heroMetaItem}>
-              <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.75)" />
-              <Text style={styles.heroMetaText}>
-                {group.is_virtual ? 'Virtual' : group.city || 'Unknown city'}
-              </Text>
-            </View>
-            <View style={styles.heroDot} />
+            <Text style={styles.heroMetaText}>{displayMemberCount} members</Text>
+            <Text style={styles.heroMetaSep}>·</Text>
+            <Text style={styles.heroMetaText}>
+              {group.is_virtual ? 'Virtual' : group.city || 'Unknown city'}
+            </Text>
+            <Text style={styles.heroMetaSep}>·</Text>
             <View style={styles.heroCategoryChip}>
               <Text style={styles.heroCategoryText}>{visuals.label}</Text>
             </View>
           </View>
+
+          {/* ── Openness Signal (inside hero) ── */}
+          {membership && (
+            <Animated.View style={[styles.heroOpenRow, { transform: [{ scale: openCardScale }] }]}>
+              <Text style={styles.heroOpenLabel}>{isOpen ? '🌱 Open to connect' : 'Open to connect?'}</Text>
+              <Switch
+                value={isOpen}
+                onValueChange={handleOpenToggle}
+                trackColor={{ false: 'rgba(255,255,255,0.2)', true: Colors.olive }}
+                thumbColor={Colors.white}
+              />
+            </Animated.View>
+          )}
         </View>
       </View>
 
@@ -714,58 +716,73 @@ export default function GroupDetailScreen() {
           </View>
         )}
 
-        {/* ── Openness Signal ── */}
-        <RAnimated.View entering={FadeInDown.delay(60).duration(300)}>
-          <Animated.View style={{ transform: [{ scale: openCardScale }] }}>
-            <View style={[styles.openCard, isOpen && styles.openCardActive]}>
-              <View style={styles.openLeft}>
-                <Text style={styles.openTitle}>
-                  {isOpen ? '🌱 Open to connect here' : 'Open to a connection?'}
-                </Text>
-                <Text style={styles.openDesc}>
-                  {isOpen
-                    ? "Your signal is private. We'll introduce you when both of you have been genuinely active here together."
-                    : 'Signal quietly. Introductions only happen when both of you are open — and have been showing up together recently.'}
-                </Text>
-              </View>
-              <Switch
-                value={isOpen}
-                onValueChange={handleOpenToggle}
-                disabled={!membership}
-                trackColor={{ false: Colors.border, true: Colors.olive }}
-                thumbColor={Colors.white}
-              />
-            </View>
-          </Animated.View>
-        </RAnimated.View>
 
-        {/* ── Chat CTA ── */}
+        {/* ── About (above tabs) ── */}
         <RAnimated.View entering={FadeInDown.delay(140).duration(300)}>
-          <TouchableOpacity
-            style={[styles.chatCta, !membership && styles.chatCtaDisabled]}
-            onPress={() => router.push(`/group/chat/${group.id}`)}
-            disabled={!membership}
-            activeOpacity={0.85}
-          >
-            <View style={styles.chatCtaIcon}>
-              <Ionicons name="chatbubbles-outline" size={18} color={Colors.terracotta} />
+          <View style={styles.aboutAboveTabs}>
+            {/* About header row */}
+            <View style={styles.aboutAboveTabsHeader}>
+              <Text style={styles.aboutAboveTabsLabel}>About</Text>
+              {canEditGroupDescription && !editingDescription && (
+                <TouchableOpacity style={styles.aboutPencilBtn} onPress={startEditDescription} activeOpacity={0.7}>
+                  <Ionicons name="pencil" size={13} color={Colors.terracotta} />
+                </TouchableOpacity>
+              )}
             </View>
-            <Text style={styles.chatCtaText}>Group Chat</Text>
-            <Ionicons name="chevron-forward" size={16} color={Colors.borderDark} />
-          </TouchableOpacity>
+            {editingDescription ? (
+              <>
+                <TextInput
+                  style={styles.aboutInput}
+                  value={descriptionDraft}
+                  onChangeText={setDescriptionDraft}
+                  placeholder="Add a short group description..."
+                  placeholderTextColor={Colors.muted}
+                  multiline
+                  textAlignVertical="top"
+                  scrollEnabled={false}
+                  autoFocus
+                />
+                <View style={styles.aboutActionsRow}>
+                  <TouchableOpacity style={styles.aboutCancelBtn} onPress={cancelEditDescription} disabled={savingDescription}>
+                    <Text style={styles.aboutCancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.aboutSaveBtn, savingDescription && styles.aboutSaveBtnDisabled]} onPress={() => void saveDescription()} disabled={savingDescription}>
+                    {savingDescription ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={styles.aboutSaveBtnText}>Save</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                {group.description ? (
+                  <Text style={styles.aboutText}>{group.description}</Text>
+                ) : canEditGroupDescription ? (
+                  <TouchableOpacity onPress={startEditDescription} activeOpacity={0.7} style={styles.aboutEmptyEditRow}>
+                    <Ionicons name="create-outline" size={14} color={Colors.muted} />
+                    <Text style={styles.aboutEmptyText}>Share what this group is about…</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </>
+            )}
+          </View>
         </RAnimated.View>
 
         {/* ── Tabs ── */}
         <RAnimated.View entering={FadeInDown.delay(220).duration(300)}>
           <View style={styles.tabs}>
-            {(['about', 'members', 'events', 'activity'] as const).map((t) => (
+            {(['chat', 'members', 'events', 'activity'] as const).map((t) => (
               <TouchableOpacity
                 key={t}
                 style={[styles.tab, activeTab === t && styles.tabActive]}
-                onPress={() => switchTab(t)}
+                onPress={() => {
+                  if (t === 'chat') {
+                    router.push(`/group/chat/${group.id}`);
+                  } else {
+                    switchTab(t);
+                  }
+                }}
               >
                 <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                  {t === 'chat' ? 'Chat' : t.charAt(0).toUpperCase() + t.slice(1)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -774,96 +791,6 @@ export default function GroupDetailScreen() {
 
         <Animated.View style={{ opacity: tabFade, transform: [{ translateY: tabSlide }] }}>
 
-        {/* ── About ── */}
-        {activeTab === 'about' && (
-          <View style={styles.tabContent}>
-            <View style={styles.aboutCard}>
-              {editingDescription ? (
-                <>
-                  <TextInput
-                    style={styles.aboutInput}
-                    value={descriptionDraft}
-                    onChangeText={setDescriptionDraft}
-                    placeholder="Add a short group description..."
-                    placeholderTextColor={Colors.muted}
-                    multiline
-                    textAlignVertical="top"
-                    scrollEnabled={false}
-                    autoFocus
-                  />
-                  <View style={styles.aboutActionsRow}>
-                    <TouchableOpacity
-                      style={styles.aboutCancelBtn}
-                      onPress={cancelEditDescription}
-                      disabled={savingDescription}
-                    >
-                      <Text style={styles.aboutCancelBtnText}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.aboutSaveBtn, savingDescription && styles.aboutSaveBtnDisabled]}
-                      onPress={() => void saveDescription()}
-                      disabled={savingDescription}
-                    >
-                      {savingDescription ? (
-                        <ActivityIndicator size="small" color={Colors.white} />
-                      ) : (
-                        <Text style={styles.aboutSaveBtnText}>Save</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </>
-              ) : (
-                <TouchableOpacity
-                  style={styles.aboutDescBox}
-                  onPress={canEditGroupDescription ? startEditDescription : undefined}
-                  activeOpacity={canEditGroupDescription ? 0.7 : 1}
-                  disabled={!canEditGroupDescription}
-                >
-                  {group.description ? (
-                    <Text style={styles.aboutText}>{group.description}</Text>
-                  ) : canEditGroupDescription ? (
-                    <View style={styles.aboutEmptyEditRow}>
-                      <Ionicons name="create-outline" size={14} color={Colors.muted} />
-                      <Text style={styles.aboutEmptyText}>Share what this group is about…</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.aboutEmptyText}>No description yet.</Text>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {groupEvents[0] && (
-              <>
-                <Text style={styles.sectionLabel}>Next Event</Text>
-                <TouchableOpacity
-                  style={styles.eventCard}
-                  activeOpacity={0.85}
-                  onPress={() => router.push(`/event/${groupEvents[0].id}`)}
-                >
-                  <View style={styles.eventDateBlock}>
-                    <Text style={styles.eventDateMonth}>
-                      {new Date(groupEvents[0].starts_at).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}
-                    </Text>
-                    <Text style={styles.eventDateDay}>
-                      {new Date(groupEvents[0].starts_at).getDate()}
-                    </Text>
-                  </View>
-                  <View style={styles.eventInfo}>
-                    <Text style={styles.eventTitle}>{groupEvents[0].title}</Text>
-                    <Text style={styles.eventTime}>{formatTime(groupEvents[0].starts_at)}</Text>
-                    <Text style={styles.eventLocation}>
-                      {groupEvents[0].is_virtual ? 'Virtual' : (groupEvents[0].location_name || 'TBD')}
-                    </Text>
-                  </View>
-                  <TouchableOpacity style={styles.rsvpBtn} onPress={() => setActiveTab('events')}>
-                    <Text style={styles.rsvpText}>RSVP</Text>
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        )}
 
         {/* ── Members ── */}
         {activeTab === 'members' && (
@@ -1454,7 +1381,9 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1470,7 +1399,9 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1634,12 +1565,12 @@ const styles = StyleSheet.create({
   },
   heroContent: {
     paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
+    paddingBottom: 14,
     alignItems: 'center',
   },
   heroIconGroup: {
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   heroEmojiWrap: {
     width: 72,
@@ -1653,18 +1584,32 @@ const styles = StyleSheet.create({
   heroEmoji: { fontSize: 36 },
   heroEmojiEditBadge: {
     position: 'absolute',
-    bottom: -7,
-    right: -7,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    bottom: -8,
+    right: -8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
-  heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  heroMetaText: { fontSize: 12, color: 'rgba(255,255,255,0.75)' },
-  heroDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.35)' },
+  heroMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, justifyContent: 'center', marginTop: 6 },
+  heroMetaSep: { fontSize: 11, color: 'rgba(255,255,255,0.35)', fontWeight: '300' },
+  heroOpenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    alignSelf: 'stretch',
+    marginTop: 10,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  heroOpenLabel: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.9)' },
+  heroMetaText: { fontSize: 12, color: 'rgba(255,255,255,0.72)', letterSpacing: 0.1 },
   heroCategoryChip: {
     backgroundColor: 'rgba(255,255,255,0.18)',
     borderRadius: Radius.full,
@@ -1730,53 +1675,7 @@ const styles = StyleSheet.create({
   joinGroupBtnDisabled: { opacity: 0.6 },
   joinGroupBtnText: { fontSize: 14, color: Colors.white, fontWeight: '700' },
 
-  // ── Openness Card ──
-  openCard: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: 12,
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.border,
-  },
-  openCardActive: {
-    backgroundColor: 'rgba(122,140,92,0.07)',
-    borderLeftColor: Colors.olive,
-    borderColor: 'rgba(122,140,92,0.25)',
-  },
-  openLeft: { flex: 1 },
-  openTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink, marginBottom: 3 },
-  openDesc: { fontSize: 12, color: Colors.muted, lineHeight: 18 },
 
-  // ── Chat CTA ──
-  chatCta: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-  },
-  chatCtaDisabled: { opacity: 0.5 },
-  chatCtaIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(196,98,45,0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chatCtaText: { flex: 1, fontSize: 14, fontWeight: '600', color: Colors.ink },
 
   // ── Tabs ──
   tabs: {
@@ -1784,11 +1683,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
     marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.md,
+    marginBottom: 8,
   },
   tab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
@@ -1810,7 +1709,41 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 13, color: Colors.muted, fontStyle: 'italic' },
 
-  // About
+  // About (above tabs)
+  aboutAboveTabs: {
+    marginHorizontal: Spacing.lg,
+    marginTop: 10,
+    marginBottom: 8,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  aboutAboveTabsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  aboutAboveTabsLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  aboutPencilBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: 'rgba(196,98,45,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   aboutCard: {
     marginBottom: Spacing.lg,
     gap: 10,
@@ -1868,15 +1801,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   aboutInput: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.warmWhite,
     color: Colors.ink,
-    fontSize: 14,
-    lineHeight: 22,
-    padding: Spacing.md,
+    fontSize: 13,
+    lineHeight: 20,
     marginBottom: 10,
+    padding: 0,
   },
   aboutActionsRow: {
     flexDirection: 'row',
@@ -1911,7 +1840,7 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontWeight: '700',
   },
-  aboutText: { fontSize: 14, color: Colors.ink, lineHeight: 22, textAlignVertical: 'top' },
+  aboutText: { fontSize: 13, color: Colors.brownMid, lineHeight: 20, fontWeight: '400' },
   aboutEmptyWrap: {
     borderWidth: 1,
     borderColor: Colors.border,
