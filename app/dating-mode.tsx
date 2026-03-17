@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,7 +28,7 @@ import { resolveProfilePhotoUrl } from '../lib/services/photoUrls';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type DatingState = 'loading' | 'error' | 'disabled' | 'caught_up' | 'active';
-type DatingTab   = 'discover' | 'matches' | 'messages' | 'profile';
+type DatingTab   = 'discover' | 'matches' | 'profile';
 
 type DatingCandidateRow = {
   user_id: string;
@@ -81,6 +82,9 @@ type DatingMatchRow = {
   city: string;
   photoUrl: string | null;
   matchedAt: string;
+  lastMessage: string | null;
+  lastMessageSentAt: string | null;
+  lastMessageSenderId: string | null;
 };
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -204,8 +208,7 @@ function DatingHeader({
 
 const TAB_CONFIG: { id: DatingTab; icon: string; label: string }[] = [
   { id: 'discover',  icon: 'compass',  label: 'Discover' },
-  { id: 'matches',   icon: 'heart',    label: 'Matches'  },
-  { id: 'messages',  icon: 'chatbubble', label: 'Messages' },
+  { id: 'matches',   icon: 'heart',    label: 'Connections' },
   { id: 'profile',   icon: 'person',   label: 'Profile'  },
 ];
 
@@ -412,11 +415,11 @@ function DiscoverEmpty({
   );
 }
 
-// ── MatchesTab ────────────────────────────────────────────────────────────────
+// ── MatchesTab (combined matches + messages) ──────────────────────────────────
 
 function MatchesTab({
-  matches, loading, onChat,
-}: { matches: DatingMatchRow[]; loading: boolean; onChat: (matchId: string) => void }) {
+  matches, loading, onChat, userId,
+}: { matches: DatingMatchRow[]; loading: boolean; onChat: (matchId: string) => void; userId: string | null }) {
   if (loading) {
     return (
       <View style={styles.emptyWrap}>
@@ -438,98 +441,96 @@ function MatchesTab({
       </View>
     );
   }
+
+  const newMatches = matches.filter((m) => !m.lastMessage);
+  const conversations = [...matches].sort((a, b) => {
+    const aTime = a.lastMessageSentAt ?? a.matchedAt;
+    const bTime = b.lastMessageSentAt ?? b.matchedAt;
+    return new Date(bTime).getTime() - new Date(aTime).getTime();
+  });
+
   return (
-    <ScrollView
-      contentContainerStyle={styles.matchesGrid}
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={styles.matchesHeading}>{matches.length} match{matches.length === 1 ? '' : 'es'}</Text>
-      <View style={styles.matchGridRow}>
-        {matches.map((m) => (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.connectionsContent}>
+      {/* New matches — horizontal scroll row */}
+      {newMatches.length > 0 && (
+        <View style={styles.newMatchesSection}>
+          <Text style={styles.newMatchesSectionLabel}>New Matches</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.newMatchesScroll}
+          >
+            {newMatches.map((m) => (
+              <TouchableOpacity
+                key={m.matchId}
+                style={styles.newMatchBubble}
+                onPress={() => onChat(m.matchId)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.newMatchAvatarWrap}>
+                  {m.photoUrl ? (
+                    <Image source={{ uri: m.photoUrl }} style={styles.newMatchAvatarImg} />
+                  ) : (
+                    <View style={styles.newMatchAvatarFallback}>
+                      <Text style={styles.newMatchAvatarInitials}>{getInitials(m.name)}</Text>
+                    </View>
+                  )}
+                  <View style={styles.matchNewDot} />
+                </View>
+                <Text style={styles.newMatchName} numberOfLines={1}>{m.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Conversations label — only shown when new matches row is visible above */}
+      {newMatches.length > 0 && (
+        <View style={styles.conversationsDivider}>
+          <Text style={styles.conversationsLabel}>Messages</Text>
+        </View>
+      )}
+      {conversations.map((m) => {
+        const isNew = !m.lastMessage;
+        const preview = m.lastMessage
+          ? (m.lastMessageSenderId === userId ? `You: ${m.lastMessage}` : m.lastMessage)
+          : 'New match · say hello';
+        const previewTime = m.lastMessageSentAt ?? m.matchedAt;
+        const isRecent = Date.now() - new Date(previewTime).getTime() < 86400 * 1000;
+        return (
           <TouchableOpacity
             key={m.matchId}
-            style={styles.matchCard}
+            style={styles.msgRow}
             onPress={() => onChat(m.matchId)}
-            activeOpacity={0.85}
+            activeOpacity={0.8}
           >
-            <View style={styles.matchAvatar}>
+            <View style={isNew ? styles.msgAvatarRingWrap : styles.msgAvatar}>
               {m.photoUrl ? (
-                <Image source={{ uri: m.photoUrl }} style={styles.matchAvatarImg} />
+                <Image source={{ uri: m.photoUrl }} style={styles.msgAvatarImg} />
               ) : (
-                <View style={styles.matchAvatarFallback}>
-                  <Text style={styles.matchAvatarInitials}>{getInitials(m.name)}</Text>
+                <View style={styles.msgAvatarFallback}>
+                  <Text style={styles.msgAvatarInitials}>{getInitials(m.name)}</Text>
                 </View>
               )}
-              <View style={styles.matchNewDot} />
             </View>
-            <Text style={styles.matchName} numberOfLines={1}>{m.name}</Text>
-            {m.city ? <Text style={styles.matchCity} numberOfLines={1}>{m.city}</Text> : null}
-            <View style={styles.matchChatBtn}>
-              <Ionicons name="chatbubble-outline" size={13} color={Colors.terracotta} />
-              <Text style={styles.matchChatBtnText}>Say hi</Text>
+            <View style={styles.msgBody}>
+              <Text style={styles.msgName}>{m.name}</Text>
+              <Text
+                style={[styles.msgPreview, isNew && styles.msgPreviewNew]}
+                numberOfLines={1}
+              >
+                {preview}
+              </Text>
+            </View>
+            <View style={styles.msgRight}>
+              <Text style={[styles.msgTime, isRecent && styles.msgTimeRecent]}>
+                {timeAgo(previewTime)}
+              </Text>
+              <Ionicons name="chevron-forward" size={13} color={Colors.border} />
             </View>
           </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
-  );
-}
-
-// ── MessagesTab ───────────────────────────────────────────────────────────────
-
-function MessagesTab({
-  matches, loading, onChat,
-}: { matches: DatingMatchRow[]; loading: boolean; onChat: (matchId: string) => void }) {
-  if (loading) {
-    return (
-      <View style={styles.emptyWrap}>
-        <ActivityIndicator color={Colors.terracotta} />
-        <Text style={styles.emptySub}>Loading…</Text>
-      </View>
-    );
-  }
-  if (matches.length === 0) {
-    return (
-      <View style={styles.emptyWrap}>
-        <View style={[styles.emptyIconWrap, { backgroundColor: 'rgba(196,98,45,0.08)' }]}>
-          <Ionicons name="chatbubbles-outline" size={32} color={Colors.terracotta} />
-        </View>
-        <Text style={styles.emptyTitle}>No conversations yet</Text>
-        <Text style={styles.emptySub}>
-          Once you match with someone, you can start a conversation here.
-        </Text>
-      </View>
-    );
-  }
-  return (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      {matches.map((m, i) => (
-        <TouchableOpacity
-          key={m.matchId}
-          style={[styles.msgRow, i === 0 && styles.msgRowFirst]}
-          onPress={() => onChat(m.matchId)}
-          activeOpacity={0.8}
-        >
-          <View style={styles.msgAvatar}>
-            {m.photoUrl ? (
-              <Image source={{ uri: m.photoUrl }} style={styles.msgAvatarImg} />
-            ) : (
-              <View style={styles.msgAvatarFallback}>
-                <Text style={styles.msgAvatarInitials}>{getInitials(m.name)}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.msgBody}>
-            <Text style={styles.msgName}>{m.name}</Text>
-            {m.city ? <Text style={styles.msgCity}>{m.city}</Text> : null}
-            <Text style={styles.msgHint}>Tap to start chatting</Text>
-          </View>
-          <View style={styles.msgRight}>
-            <Text style={styles.msgTime}>{timeAgo(m.matchedAt)}</Text>
-            <Ionicons name="chevron-forward" size={14} color={Colors.muted} />
-          </View>
-        </TouchableOpacity>
-      ))}
+        );
+      })}
     </ScrollView>
   );
 }
@@ -862,8 +863,7 @@ export default function DatingModeScreen() {
     if (activeTab === 'discover') return currentProfile
       ? `${currentProfile.name}${currentProfile.age != null ? `, ${currentProfile.age}` : ''}`
       : 'Dating';
-    if (activeTab === 'matches') return 'Matches';
-    if (activeTab === 'messages') return 'Messages';
+    if (activeTab === 'matches') return 'Connections';
     return 'Your profile';
   }, [activeTab, currentProfile]);
 
@@ -1082,6 +1082,7 @@ export default function DatingModeScreen() {
     const { data: matchData, error: matchErr } = await supabase
       .from('dating_matches')
       .select('id, user_a_id, user_b_id, created_at')
+      .eq('status', 'matched')
       .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
       .order('created_at', { ascending: false });
 
@@ -1090,12 +1091,36 @@ export default function DatingModeScreen() {
     const otherIds = matchData.map((m) => m.user_a_id === userId ? m.user_b_id : m.user_a_id);
     if (otherIds.length === 0) { setDatingMatches([]); setMatchesLoading(false); setMatchesLoaded(true); return; }
 
-    const { data: profData } = await supabase
-      .from('profiles')
-      .select('user_id, full_name, city, avatar_url')
-      .in('user_id', otherIds);
+    const matchIds = matchData.map((m) => m.id);
 
-    const profMap = Object.fromEntries((profData ?? []).map((p) => [p.user_id, p]));
+    const [{ data: profData }, { data: msgData }] = await Promise.all([
+      supabase.rpc('get_dating_match_profiles', { p_user_ids: otherIds }),
+      supabase
+        .from('dating_messages')
+        .select('match_id, content, sent_at, sender_id')
+        .in('match_id', matchIds)
+        .is('deleted_at', null)
+        .order('sent_at', { ascending: false }),
+    ]);
+
+    const profMap = Object.fromEntries(
+      (
+        (profData as Array<{
+          user_id: string;
+          full_name: string | null;
+          avatar_url: string | null;
+          birth_date?: string | null;
+        }> | null) ?? []
+      ).map((p) => [p.user_id, p])
+    );
+
+    // Latest message per match (rows are already sorted desc)
+    const lastMsgByMatch: Record<string, { content: string; sentAt: string; senderId: string }> = {};
+    for (const msg of (msgData as Array<{ match_id: string; content: string; sent_at: string; sender_id: string }> | null) ?? []) {
+      if (!lastMsgByMatch[msg.match_id]) {
+        lastMsgByMatch[msg.match_id] = { content: msg.content, sentAt: msg.sent_at, senderId: msg.sender_id };
+      }
+    }
 
     const resolved: DatingMatchRow[] = await Promise.all(
       matchData.map(async (m) => {
@@ -1104,13 +1129,17 @@ export default function DatingModeScreen() {
         const photoUrl = prof?.avatar_url
           ? await resolveProfilePhotoUrl(prof.avatar_url)
           : null;
+        const lastName = lastMsgByMatch[m.id];
         return {
-          matchId:     m.id,
-          otherUserId: otherId,
-          name:        prof?.full_name?.trim() || 'Member',
-          city:        prof?.city?.trim()       || '',
-          photoUrl:    photoUrl ?? null,
-          matchedAt:   m.created_at,
+          matchId:              m.id,
+          otherUserId:          otherId,
+          name:                 prof?.full_name?.trim() || 'Member',
+          city:                 '',
+          photoUrl:             photoUrl ?? null,
+          matchedAt:            m.created_at,
+          lastMessage:          lastName?.content ?? null,
+          lastMessageSentAt:    lastName?.sentAt ?? null,
+          lastMessageSenderId:  lastName?.senderId ?? null,
         };
       })
     );
@@ -1120,9 +1149,16 @@ export default function DatingModeScreen() {
     setMatchesLoaded(true);
   }, [userId, matchesLoading]);
 
-  // Load matches lazily when switching to matches/messages tab
   useEffect(() => {
-    if ((activeTab === 'matches' || activeTab === 'messages') && userId && !matchesLoaded) {
+    if (!userId || activeTab !== 'matches' || datingMatches.length === 0) return;
+    const latestMatchedAt = datingMatches[0]?.matchedAt;
+    if (!latestMatchedAt) return;
+    void AsyncStorage.setItem(`dating_matches_last_seen:${userId}`, latestMatchedAt);
+  }, [userId, activeTab, datingMatches]);
+
+  // Load matches lazily when switching to matches tab
+  useEffect(() => {
+    if (activeTab === 'matches' && userId && !matchesLoaded) {
       void loadMatches();
     }
   }, [activeTab, userId, matchesLoaded, loadMatches]);
@@ -1447,21 +1483,13 @@ export default function DatingModeScreen() {
           )
         ) : null}
 
-        {/* ── MATCHES ──────────────────────────────────────────────────────── */}
+        {/* ── MATCHES + MESSAGES ───────────────────────────────────────────── */}
         {activeTab === 'matches' ? (
           <MatchesTab
             matches={datingMatches}
             loading={matchesLoading}
             onChat={handleChat}
-          />
-        ) : null}
-
-        {/* ── MESSAGES ─────────────────────────────────────────────────────── */}
-        {activeTab === 'messages' ? (
-          <MessagesTab
-            matches={datingMatches}
-            loading={matchesLoading}
-            onChat={handleChat}
+            userId={userId}
           />
         ) : null}
 
@@ -1794,26 +1822,60 @@ const styles = StyleSheet.create({
   },
   matchChatBtnText: { fontSize: 12, color: Colors.terracotta, fontWeight: '700' },
 
-  // Messages list
+  // Conversation rows
   msgRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: Spacing.md, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
+    flexDirection: 'row', alignItems: 'center', gap: 13,
+    marginHorizontal: Spacing.md, marginBottom: 8,
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 14, paddingVertical: 12,
   },
-  msgRowFirst:        { borderTopWidth: 1, borderTopColor: Colors.border },
-  msgAvatarImg:       { width: 52, height: 52, borderRadius: 26 },
-  msgAvatar:          {},
+  msgAvatarImg: { width: 50, height: 50, borderRadius: 25 },
+  msgAvatar: {},
+  msgAvatarRingWrap: {
+    borderWidth: 2, borderColor: Colors.terracotta,
+    borderRadius: 27, padding: 2,
+  },
   msgAvatarFallback: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: Colors.terracotta,
+    width: 50, height: 50, borderRadius: 25, backgroundColor: Colors.terracotta,
     alignItems: 'center', justifyContent: 'center',
   },
-  msgAvatarInitials: { fontSize: 18, fontWeight: '900', color: Colors.white },
-  msgBody:  { flex: 1, gap: 2 },
+  msgAvatarInitials: { fontSize: 17, fontWeight: '900', color: Colors.white },
+  msgBody:  { flex: 1, gap: 3 },
   msgName:  { fontSize: 15, fontWeight: '700', color: Colors.ink },
-  msgCity:  { fontSize: 12, color: Colors.muted },
-  msgHint:  { fontSize: 12, color: Colors.terracotta, fontWeight: '600', marginTop: 2 },
-  msgRight: { alignItems: 'flex-end', gap: 4 },
-  msgTime:  { fontSize: 11, color: Colors.muted },
+  msgPreview: { fontSize: 13, color: Colors.muted, lineHeight: 17 },
+  msgPreviewNew: { color: Colors.terracotta, fontWeight: '600' },
+  msgRight: { alignItems: 'flex-end', gap: 5 },
+  msgTime:  { fontSize: 10, color: Colors.muted, fontWeight: '500' },
+  msgTimeRecent: { fontSize: 11, color: Colors.terracotta, fontWeight: '700' },
+
+  // New matches row
+  newMatchesSection: { paddingTop: Spacing.sm, paddingBottom: 4 },
+  newMatchesSectionLabel: {
+    fontSize: 11, fontWeight: '700', color: Colors.muted,
+    letterSpacing: 0.4, paddingHorizontal: Spacing.md, marginBottom: 10,
+  },
+  newMatchesScroll: { paddingHorizontal: Spacing.md, gap: 16 },
+  newMatchBubble: { alignItems: 'center', gap: 5, width: 64 },
+  newMatchAvatarWrap: { position: 'relative' },
+  newMatchAvatarImg: { width: 60, height: 60, borderRadius: 30 },
+  newMatchAvatarFallback: {
+    width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.terracotta,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  newMatchAvatarInitials: { fontSize: 20, fontWeight: '900', color: Colors.white },
+  newMatchName: { fontSize: 11, fontWeight: '600', color: Colors.ink, textAlign: 'center' },
+
+  connectionsContent: { paddingBottom: 24 },
+
+  // Section divider between new matches and conversations
+  conversationsDivider: {
+    paddingHorizontal: Spacing.md, paddingTop: Spacing.md, paddingBottom: 6,
+  },
+  conversationsLabel: {
+    fontSize: 11, fontWeight: '700', color: Colors.muted, letterSpacing: 0.4,
+  },
 
   // Profile + prefs tab
   tabScroll:        { flex: 1 },
