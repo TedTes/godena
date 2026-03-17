@@ -794,7 +794,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: 6,
   },
-  title: { fontSize: 28, fontWeight: '900', color: Colors.ink },
+  title: { fontSize: 22, fontWeight: '700', color: Colors.ink },
   subtitle: { fontSize: 13, color: Colors.muted, marginTop: 1 },
 
   // ── Tabs ──

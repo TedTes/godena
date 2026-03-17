@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: 4,
   },
-  headerTitle: { fontSize: 28, fontWeight: '900', color: Colors.ink },
+  headerTitle: { fontSize: 22, fontWeight: '700', color: Colors.ink },
   headerSub:   { fontSize: 13, color: Colors.muted, marginTop: 2 },
 
   // ── Tabs ──
