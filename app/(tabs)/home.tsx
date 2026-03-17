@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Image,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useScreenEnter } from '../../hooks/useScreenEnter';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -140,6 +141,16 @@ export default function HomeScreen() {
       const inboxItems = await fetchNotificationInboxItems(userId);
       setNotificationCount(inboxItems.length);
 
+      const lastSeenMatchesAt = await AsyncStorage.getItem(`dating_matches_last_seen:${userId}`);
+      const matchCountQuery = supabase
+        .from('dating_matches')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'matched')
+        .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
+      if (lastSeenMatchesAt) {
+        matchCountQuery.gt('matched_at', lastSeenMatchesAt);
+      }
+
       const [{ data: profile }, { data: datingProfile }, { count: matchCount }] = await Promise.all([
         supabase
           .from('profiles')
@@ -151,10 +162,7 @@ export default function HomeScreen() {
           .select('is_enabled')
           .eq('user_id', userId)
           .maybeSingle(),
-        supabase
-          .from('dating_matches')
-          .select('*', { count: 'exact', head: true })
-          .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`),
+        matchCountQuery,
       ]);
 
       if (profile?.full_name) {
@@ -423,7 +431,7 @@ export default function HomeScreen() {
                 onPress={() => router.push('/notification-inbox')}
                 activeOpacity={0.8}
               >
-                <Ionicons name="notifications-outline" size={22} color={C.brown} />
+                <Ionicons name="notifications" size={22} color={C.brown} />
                 {notificationCount > 0 && (
                   <View style={styles.notifDot}>
                     <Text style={styles.notifCountText}>{notificationCount > 9 ? '9+' : `${notificationCount}`}</Text>
@@ -479,26 +487,31 @@ export default function HomeScreen() {
           )}
 
           {datingModeEnabled && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Dating</Text>
-              </View>
+            <View style={styles.datingSection}>
               <TouchableOpacity
                 style={styles.datingCard}
                 activeOpacity={0.88}
                 onPress={() => router.push('/dating-mode')}
               >
                 <View style={styles.datingCardLeft}>
-                  <Text style={styles.datingEyebrow}>Discover</Text>
+                  <Text style={styles.datingEyebrow}>
+                    {datingCandidateCount > 0 ? 'Ready now' : 'Open dating'}
+                  </Text>
                   <Text style={styles.datingTitle}>
                     {datingCandidateCount > 0
-                      ? `${datingCandidateCount} ${datingCandidateCount === 1 ? 'person' : 'people'} to discover`
-                      : 'Dating mode is on'}
+                      ? `${datingCandidateCount} ${datingCandidateCount === 1 ? 'person' : 'people'} waiting`
+                      : datingMatchCount > 0
+                      ? `${datingMatchCount} ${datingMatchCount === 1 ? 'match' : 'matches'} waiting`
+                      : 'Open Dating Mode'}
                   </Text>
                   <Text style={styles.datingSub}>
-                    {datingCandidateCount > 0
-                      ? 'Open discover to swipe and see who matches your preferences.'
-                      : 'New dating candidates will appear here as they become available.'}
+                    {datingCandidateCount > 0 && datingMatchCount > 0
+                      ? `You have ${datingMatchCount} ${datingMatchCount === 1 ? 'match' : 'matches'}. Swipe to see who is next.`
+                      : datingCandidateCount > 0
+                      ? 'Swipe through new candidates matched to your preferences.'
+                      : datingMatchCount > 0
+                      ? 'Open dating to view your matches and keep browsing.'
+                      : 'See your dating profile, preferences, and new matches here.'}
                   </Text>
                 </View>
                 <View style={styles.datingCardRight}>
@@ -699,10 +712,10 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
   greetingLeft: { flex: 1, paddingRight: 8 },
   greeting: {
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: 20,
+    fontWeight: '700',
     color: C.ink,
-    lineHeight: 28,
+    lineHeight: 26,
   },
   greetingSub: {
     fontSize: 13,
@@ -788,6 +801,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
 
   section: { marginBottom: 32 },
+  datingSection: { marginBottom: 24 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -796,9 +810,11 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '700',
-    color: C.ink,
+    color: C.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   seeAll: {
     fontSize: 13,
@@ -808,13 +824,13 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
 
   hScroll: { paddingLeft: Spacing.lg },
   groupCard: {
-    width: 166,
-    height: 132,
+    width: 160,
+    height: 116,
     borderRadius: Radius.lg,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginRight: 12,
-    gap: 8,
+    gap: 6,
   },
   groupCardTop: {
     flexDirection: 'row',
@@ -862,7 +878,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     fontWeight: '600',
     color: 'rgba(255,255,255,0.92)',
     lineHeight: 18,
-    minHeight: 38,
+    minHeight: 32,
     flex: 1,
   },
   groupCardFooter: {
@@ -882,8 +898,8 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     fontWeight: '400',
   },
   addGroupCard: {
-    width: 166,
-    height: 132,
+    width: 160,
+    height: 116,
     borderRadius: Radius.lg,
     borderWidth: 1.5,
     borderColor: C.border,
@@ -918,7 +934,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
   eventIcon: { fontSize: 26 },
   eventInfo: { flex: 1 },
-  eventTitle: { fontSize: 16, fontWeight: '700', color: C.ink, marginBottom: 4 },
+  eventTitle: { fontSize: 14, fontWeight: '600', color: C.ink, marginBottom: 4 },
   eventMeta: { fontSize: 13, color: C.terracotta, fontWeight: '600', marginBottom: 2 },
   eventLocation: { fontSize: 12, color: C.muted },
   eventRight: { alignItems: 'flex-end', gap: 4 },
@@ -1008,38 +1024,38 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     marginHorizontal: Spacing.lg,
     backgroundColor: C.brown,
     borderRadius: Radius.lg,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
     overflow: 'hidden',
   },
   datingCardLeft: { flex: 1, paddingRight: 8 },
   datingEyebrow: {
-    fontSize: 11,
+    fontSize: 10,
     color: C.terraLight,
     fontWeight: '700',
     letterSpacing: 0.4,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   datingTitle: {
-    fontSize: 19,
-    lineHeight: 24,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: '800',
     color: C.cream,
-    marginBottom: 5,
+    marginBottom: 4,
   },
   datingSub: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 17,
     color: C.brownLight,
   },
   datingCardRight: {
     alignItems: 'flex-end',
     justifyContent: 'space-between',
-    minHeight: 72,
-    gap: 10,
+    minHeight: 62,
+    gap: 8,
   },
   datingCountPill: {
     flexDirection: 'row',
@@ -1047,18 +1063,18 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     gap: 5,
     borderRadius: Radius.full,
     backgroundColor: 'rgba(255,255,255,0.14)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
   },
   datingCountText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: C.cream,
   },
   datingArrowWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: C.terracotta,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1079,13 +1095,12 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     borderColor: C.border,
   },
   activityAccent: {
-    width: 3,
+    width: 4,
     alignSelf: 'stretch',
     backgroundColor: C.terracotta,
     borderTopRightRadius: 2,
     borderBottomRightRadius: 2,
-    marginRight: 1,
-    opacity: 0.7,
+    marginRight: 2,
   },
   activityAvatarWrap: {
     width: 34,
@@ -1109,7 +1124,7 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
   activityAuthor: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
     color: C.ink,
   },
   activityTime: {
