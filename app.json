@@ -14,8 +14,12 @@
     },
     "scheme": "godena",
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.godena.app"
+      "supportsTablet": false,
+      "bundleIdentifier": "com.godena.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.godena.app",
@@ -33,7 +37,14 @@
       "expo-router",
       "expo-font",
       "expo-apple-authentication",
-      "@react-native-community/datetimepicker"
-    ]
+      "@react-native-community/datetimepicker",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e54a2492-653b-4f8e-ba99-cac8dfdc8bd6"
+      }
+    }
   }
 }
