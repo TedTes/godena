@@ -1,38 +1,274 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Godena</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="page">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Godena — Find your community. Meet your people.</title>
+  <meta name="description" content="Godena connects people through shared groups, events, and meaningful introductions. Community first, connections second." />
+  <link rel="icon" type="image/png" href="../assets/favicon.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="marketing">
 
-      <section class="hero">
-        <div class="brand">Godena</div>
-        <h1>Find your community.<br>Meet your people.</h1>
-        <p class="lead">
-          Godena helps people connect through shared events, group interests, and meaningful introductions.
-          The links below contain our public policy documents for App Store and Play Store review.
-        </p>
-        <nav class="nav">
-          <a class="pill primary" href="./privacy.html">Privacy Policy</a>
-          <a class="pill" href="./terms.html">Terms of Service</a>
-          <a class="pill" href="./delete-account.html">Delete Account</a>
-          <a class="pill" href="./csae-policy.html">Child Safety</a>
-        </nav>
-      </section>
+  <!-- ── Navigation ──────────────────────────────────── -->
+  <header class="site-nav">
+    <a href="./index.html" class="nav-logo" aria-label="Godena home">
+      <span class="nav-logo-mark" aria-hidden="true">G</span>
+      Godena
+    </a>
+    <nav class="nav-links" aria-label="Site">
+      <a href="./privacy.html" class="nav-hide">Privacy</a>
+      <a href="./terms.html"   class="nav-hide">Terms</a>
+      <a href="mailto:support@godena.app" class="nav-cta">Contact us</a>
+    </nav>
+  </header>
 
-      <footer class="footer">
-        <span>© 2026 Godena</span>
-        <div class="footer-links">
-          <a href="./privacy.html">Privacy</a>
-          <a href="./terms.html">Terms</a>
-          <a href="mailto:support@godena.app">support@godena.app</a>
+  <main>
+
+    <!-- ── Hero ────────────────────────────────────────── -->
+    <section class="hero-section" aria-label="Hero">
+      <div class="hero-inner">
+
+        <div class="hero-text">
+          <p class="eyebrow">Community · Events · Connection</p>
+          <h1>Find your<br>community.<br>Meet your<br>people.</h1>
+          <p class="hero-sub">
+            Godena connects you through shared groups and real events —
+            then helps you build meaningful relationships with the people you meet along the way.
+          </p>
+
+          <div class="store-row">
+            <a href="#" class="store-badge" aria-label="Download on the App Store">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+              </svg>
+              <div class="store-badge-text">
+                <small>Download on the</small>
+                <strong>App Store</strong>
+              </div>
+            </a>
+
+            <a href="#" class="store-badge" aria-label="Get it on Google Play">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M3.18 23.76c.37.21.8.22 1.2.03l12.54-7.17-2.75-2.75L3.18 23.76zM20.7 10.3l-2.79-1.6-3.09 3.09 3.09 3.09 2.8-1.6c.8-.46.8-1.52-.01-1.98zM2.01 1.05C1.7 1.38 1.5 1.86 1.5 2.48v19.04c0 .62.2 1.1.52 1.44l.08.07 10.66-10.66v-.25L2.09.98l-.08.07zM14.96 8.18l-3.04-3.04L4.38.97c-.4-.2-.83-.19-1.2.03l10.99 10.99 2.79-3.81z"/>
+              </svg>
+              <div class="store-badge-text">
+                <small>Get it on</small>
+                <strong>Google Play</strong>
+              </div>
+            </a>
+          </div>
         </div>
-      </footer>
 
-    </main>
-  </body>
+        <div class="hero-phones" aria-hidden="true">
+          <div class="phone phone-secondary">
+            <img src="../assets/groups-screen.jpg" alt="" />
+          </div>
+          <div class="phone phone-primary">
+            <img src="../assets/homescreen.jpg" alt="" />
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Value strip ──────────────────────────────────── -->
+    <div class="value-strip">
+      <div class="value-strip-inner">
+        <div class="value-item">
+          <span class="value-icon" aria-hidden="true">🏘️</span>
+          <div>
+            <span class="value-label">Interest Groups</span>
+            <span class="value-desc">Join or create groups around what you actually do.</span>
+          </div>
+        </div>
+        <div class="value-sep" aria-hidden="true"></div>
+        <div class="value-item">
+          <span class="value-icon" aria-hidden="true">📅</span>
+          <div>
+            <span class="value-label">Real Events</span>
+            <span class="value-desc">RSVP to group events and show up in person.</span>
+          </div>
+        </div>
+        <div class="value-sep" aria-hidden="true"></div>
+        <div class="value-item">
+          <span class="value-icon" aria-hidden="true">🤝</span>
+          <div>
+            <span class="value-label">Meaningful Introductions</span>
+            <span class="value-desc">Dating through shared context, not cold swiping.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Features ─────────────────────────────────────── -->
+    <section class="features-section" aria-label="Features">
+
+      <!-- Groups -->
+      <div class="feature-block">
+        <div class="feature-visual">
+          <div class="feature-blob feature-blob-terra" aria-hidden="true"></div>
+          <div class="phone">
+            <img src="../assets/groups-screen.jpg" alt="Groups screen showing Cooking, Soccer, Hikers, and Coffee groups" />
+          </div>
+        </div>
+        <div class="feature-text">
+          <p class="eyebrow">Groups</p>
+          <h2>Built around what you actually do</h2>
+          <p>
+            Join or create groups centered on cooking, hiking, faith, professional growth —
+            whatever brings your community together. Browse locally, invite friends,
+            and keep everyone connected with a shared activity feed.
+          </p>
+          <ul class="feature-bullets">
+            <li>Local groups in your city</li>
+            <li>Interest categories and search</li>
+            <li>Shared group activity feed</li>
+            <li>Private groups with invite codes</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Events -->
+      <div class="feature-block flip">
+        <div class="feature-visual">
+          <div class="feature-blob feature-blob-olive" aria-hidden="true"></div>
+          <div class="phone">
+            <img src="../assets/event-detail.jpg" alt="Event detail screen showing a running event" />
+          </div>
+        </div>
+        <div class="feature-text">
+          <p class="eyebrow">Events</p>
+          <h2>Meet in person,<br>not just online</h2>
+          <p>
+            Groups host events. RSVP, see who's going, and show up.
+            Shared presence builds trust faster than any profile or message thread ever could.
+          </p>
+          <ul class="feature-bullets">
+            <li>Events tied to your groups</li>
+            <li>See attendees before RSVPing</li>
+            <li>Location, time, and details in one place</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Connections / Dating -->
+      <div class="feature-block">
+        <div class="feature-visual">
+          <div class="feature-blob feature-blob-warm" aria-hidden="true"></div>
+          <div class="phone">
+            <img src="../assets/profile-screen.jpg" alt="Profile screen" />
+          </div>
+        </div>
+        <div class="feature-text">
+          <p class="eyebrow">Introductions</p>
+          <h2>Meet through groups,<br>not strangers</h2>
+          <p>
+            Dating Mode surfaces people within your shared groups —
+            not the entire internet. Opt in, set your preferences, and connect
+            with people who already share your world.
+          </p>
+          <ul class="feature-bullets">
+            <li>Opt-in, intentional matching</li>
+            <li>Only within your shared groups</li>
+            <li>Filter by intent, age, and preferences</li>
+            <li>No cold swiping strangers</li>
+          </ul>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── Screenshot gallery ───────────────────────────── -->
+    <section class="gallery-section" aria-label="App screenshots">
+      <div class="gallery-header">
+        <p class="eyebrow">The app</p>
+        <h2>Everything in one place</h2>
+      </div>
+      <div class="gallery-track" role="list">
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/homescreen.jpg" alt="Home screen" />
+          <p class="gallery-label">Home</p>
+        </div>
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/groups-screen.jpg" alt="Groups screen" />
+          <p class="gallery-label">Groups</p>
+        </div>
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/group-detail.jpg" alt="Group detail" />
+          <p class="gallery-label">Group detail</p>
+        </div>
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/events-screen.jpg" alt="Events screen" />
+          <p class="gallery-label">Events</p>
+        </div>
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/event-detail.jpg" alt="Event detail" />
+          <p class="gallery-label">Event detail</p>
+        </div>
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/connections-screen.jpg" alt="Connections screen" />
+          <p class="gallery-label">Connections</p>
+        </div>
+        <div class="phone gallery-phone" role="listitem">
+          <img src="../assets/profile-screen.jpg" alt="Profile screen" />
+          <p class="gallery-label">Profile</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── CTA ──────────────────────────────────────────── -->
+    <div class="cta-section">
+      <div class="cta-inner">
+        <div class="cta-text">
+          <p class="eyebrow">Available now</p>
+          <h2>Your community is waiting</h2>
+          <p>Join groups, attend events, and meet people who share your world — not just your feed.</p>
+        </div>
+        <div class="store-row">
+          <a href="#" class="store-badge" aria-label="Download on the App Store">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+            </svg>
+            <div class="store-badge-text">
+              <small>Download on the</small>
+              <strong>App Store</strong>
+            </div>
+          </a>
+          <a href="#" class="store-badge" aria-label="Get it on Google Play">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M3.18 23.76c.37.21.8.22 1.2.03l12.54-7.17-2.75-2.75L3.18 23.76zM20.7 10.3l-2.79-1.6-3.09 3.09 3.09 3.09 2.8-1.6c.8-.46.8-1.52-.01-1.98zM2.01 1.05C1.7 1.38 1.5 1.86 1.5 2.48v19.04c0 .62.2 1.1.52 1.44l.08.07 10.66-10.66v-.25L2.09.98l-.08.07zM14.96 8.18l-3.04-3.04L4.38.97c-.4-.2-.83-.19-1.2.03l10.99 10.99 2.79-3.81z"/>
+            </svg>
+            <div class="store-badge-text">
+              <small>Get it on</small>
+              <strong>Google Play</strong>
+            </div>
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────── -->
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <a href="./index.html" class="footer-logo" aria-label="Godena home">
+        <span class="footer-logo-mark" aria-hidden="true">G</span>
+        Godena
+      </a>
+      <nav class="footer-nav" aria-label="Footer">
+        <a href="./privacy.html">Privacy Policy</a>
+        <a href="./terms.html">Terms of Service</a>
+        <a href="./delete-account.html">Delete Account</a>
+        <a href="./csae-policy.html">Child Safety</a>
+      </nav>
+      <p class="footer-copy">
+        © 2026 Godena &nbsp;·&nbsp;
+        <a href="mailto:support@godena.app">support@godena.app</a>
+      </p>
+    </div>
+  </footer>
+
+</body>
 </html>
