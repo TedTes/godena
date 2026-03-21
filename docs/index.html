@@ -112,9 +112,11 @@
         <div class="demo-phone-wrap">
           <div class="phone demo-phone">
             <video
+              id="demo-video"
               src="assets/demo-app-video.mov"
               poster="assets/demo-app-video.png"
               controls
+              muted
               playsinline
               preload="metadata"
               aria-label="Godena app demo video"
@@ -293,5 +295,21 @@
     </div>
   </footer>
 
+  <script>
+    (function () {
+      var video = document.getElementById('demo-video');
+      if (!video) return;
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            video.play();
+          } else {
+            video.pause();
+          }
+        });
+      }, { threshold: 0.5 });
+      observer.observe(video);
+    })();
+  </script>
 </body>
 </html>
