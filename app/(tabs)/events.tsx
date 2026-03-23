@@ -15,6 +15,7 @@ import { Colors, Spacing, Radius } from '../../constants/theme';
 import {
   fetchEventRsvps,
   fetchEventsForGroups,
+  fetchExternalEventsForCity,
   fetchGoingUserProfiles,
   fetchGroupsByIds,
   fetchMembershipGroupIds,
@@ -23,13 +24,16 @@ import {
   subscribeToGroupEvents,
   type EventRsvpRow,
   type EventRow,
+  type ExternalEventRow,
   type GroupRow,
 } from '../../lib/services/events';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import { EventCardSkeleton } from '../../components/Skeleton';
+import { supabase } from '../../lib/supabase';
 
 type EventCard = {
   id: string;
+  source: 'group' | 'external';
   groupId: string;
   groupName: string;
   groupEmoji: string;
@@ -41,6 +45,7 @@ type EventCard = {
   attendeeCount: number;
   myStatus: 'going' | 'interested' | 'not_going' | null;
   goingAvatars: (string | null)[];
+  externalUrl?: string | null;
 };
 
 function categoryEmoji(category?: string) {
@@ -53,6 +58,17 @@ function categoryEmoji(category?: string) {
     case 'culture':      return '🎉';
     default:             return '👥';
   }
+}
+
+function normalizeExternalCategory(raw?: string | null) {
+  if (!raw) return 'other';
+  const v = raw.toLowerCase();
+  if (v.includes('food') || v.includes('drink') || v.includes('coffee')) return 'food_drink';
+  if (v.includes('outdoor') || v.includes('hiking') || v.includes('run')) return 'outdoors';
+  if (v.includes('faith') || v.includes('religion') || v.includes('church')) return 'faith';
+  if (v.includes('language') || v.includes('culture') || v.includes('community')) return 'culture';
+  if (v.includes('professional') || v.includes('business') || v.includes('career')) return 'professional';
+  return 'other';
 }
 
 function formatTime(iso: string) {
@@ -84,23 +100,31 @@ export default function EventsScreen() {
     const uid = await getSessionUserId();
     if (!uid) { setEvents([]); setLoading(false); return; }
 
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('city')
+      .eq('user_id', uid)
+      .maybeSingle();
+    const userCity = (profileRow as { city?: string | null } | null)?.city ?? null;
+
     const { data: membershipRows, error: membershipError } = await fetchMembershipGroupIds(uid);
     if (membershipError) { setError(membershipError.message); setLoading(false); return; }
 
     const groupIds = Array.from(
       new Set(((membershipRows ?? []) as Array<{ group_id: string }>).map((m) => m.group_id))
     );
-    if (groupIds.length === 0) { setEvents([]); setLoading(false); return; }
 
-    const [eventsRes, groupsRes] = await Promise.all([
-      fetchEventsForGroups(groupIds),
-      fetchGroupsByIds(groupIds),
+    const [eventsRes, groupsRes, externalRes] = await Promise.all([
+      groupIds.length > 0 ? fetchEventsForGroups(groupIds) : Promise.resolve({ data: [] as EventRow[], error: null }),
+      groupIds.length > 0 ? fetchGroupsByIds(groupIds) : Promise.resolve({ data: [] as GroupRow[], error: null }),
+      fetchExternalEventsForCity(userCity),
     ]);
 
     if (eventsRes.error) { setError(eventsRes.error.message); setLoading(false); return; }
 
     const eventRows  = (eventsRes.data ?? []) as EventRow[];
     const groupRows  = (groupsRes.data ?? []) as GroupRow[];
+    const externalRows = (externalRes.data ?? []) as ExternalEventRow[];
     const eventIds   = eventRows.map((e) => e.id);
     const { data: rsvpRows } = await fetchEventRsvps(eventIds);
     const rsvps      = (rsvpRows ?? []) as EventRsvpRow[];
@@ -134,10 +158,11 @@ export default function EventsScreen() {
       for (const { id, url } of resolved) userAvatarMap[id] = url;
     }
 
-    const mapped: EventCard[] = eventRows.map((e) => {
+    const mappedGroup: EventCard[] = eventRows.map((e) => {
       const g = groupById.get(e.group_id);
       return {
         id:            e.id,
+        source:        'group',
         groupId:       e.group_id,
         groupName:     g?.name || 'Group',
         groupEmoji:    categoryEmoji(g?.category),
@@ -149,10 +174,36 @@ export default function EventsScreen() {
         attendeeCount: goingCountByEvent[e.id] ?? 0,
         myStatus:      (myRsvpByEvent.get(e.id) ?? null) as EventCard['myStatus'],
         goingAvatars:  (goingUserIdsByEvent[e.id] ?? []).map((id) => userAvatarMap[id] ?? null),
+        externalUrl:   null,
       };
     });
 
-    setEvents(mapped);
+    const mappedExternal: EventCard[] = externalRows.map((e) => {
+      const cat = normalizeExternalCategory(e.category);
+      const cityLabel = e.city ?? 'Local event';
+      return {
+        id:            e.id,
+        source:        'external',
+        groupId:       'external',
+        groupName:     cityLabel,
+        groupEmoji:    categoryEmoji(cat),
+        title:         e.title,
+        startsAt:      e.start_at,
+        time:          formatTime(e.start_at),
+        location:      e.venue_name || e.city || 'Location TBA',
+        isVirtual:     false,
+        attendeeCount: 0,
+        myStatus:      null,
+        goingAvatars:  [],
+        externalUrl:   e.source_url,
+      };
+    });
+
+    const merged = [...mappedGroup, ...mappedExternal].sort((a, b) => {
+      return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+    });
+
+    setEvents(merged);
     setLoading(false);
   }, []);
 
@@ -180,7 +231,7 @@ export default function EventsScreen() {
 
   const visibleEvents = useMemo(() => {
     if (filter === 'all') return events;
-    return events.filter((e) => e.myStatus === 'going' || e.myStatus === 'interested');
+    return events.filter((e) => e.source === 'group' && (e.myStatus === 'going' || e.myStatus === 'interested'));
   }, [events, filter]);
 
   return (
@@ -226,7 +277,16 @@ export default function EventsScreen() {
             ListEmptyComponent={<EmptyState error={error} filter={filter} />}
             renderItem={({ item: ev }) => (
               <View>
-                <EventItem ev={ev} onPress={() => router.push(`/event/${ev.id}`)} />
+                <EventItem
+                  ev={ev}
+                  onPress={() => {
+                    if (ev.source === 'external') {
+                      router.push(`/event/external/${ev.id}`);
+                    } else {
+                      router.push(`/event/${ev.id}`);
+                    }
+                  }}
+                />
               </View>
             )}
           />
@@ -257,11 +317,17 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
   const isMaybe  = ev.myStatus === 'interested';
   const relDate  = formatRelativeDate(ev.startsAt);
   const isToday  = relDate === 'Today';
+  const isExternal = ev.source === 'external';
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
       {/* Date block */}
-      <View style={[styles.dateBlock, isGoing && styles.dateBlockGoing, isToday && styles.dateBlockToday]}>
+      <View style={[
+        styles.dateBlock,
+        isGoing && styles.dateBlockGoing,
+        isToday && styles.dateBlockToday,
+        isExternal && styles.dateBlockExternal,
+      ]}>
         <Text style={styles.dateMonth}>{month}</Text>
         <Text style={styles.dateDay}>{day}</Text>
       </View>
@@ -298,7 +364,7 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
 
         {/* Footer: avatar stack + status badge */}
         <View style={styles.cardFooter}>
-          {ev.goingAvatars.length > 0 ? (
+          {!isExternal && ev.goingAvatars.length > 0 ? (
             <View style={styles.avatarStack}>
               {ev.goingAvatars.map((uri, i) =>
                 uri ? (
@@ -320,7 +386,7 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
               )}
               <Text style={styles.goingLabel}>{ev.attendeeCount} going</Text>
             </View>
-          ) : ev.attendeeCount > 0 ? (
+          ) : !isExternal && ev.attendeeCount > 0 ? (
             <View style={styles.attendeePill}>
               <Ionicons name="people-outline" size={11} color={Colors.muted} />
               <Text style={styles.attendeeText}>{ev.attendeeCount} going</Text>
@@ -328,7 +394,12 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
           ) : (
             <View />
           )}
-          {isGoing ? (
+          {isExternal ? (
+            <View style={styles.statusExternal}>
+              <Text style={styles.statusExternalText}>View details</Text>
+              <Ionicons name="arrow-forward" size={12} color={Colors.terracotta} />
+            </View>
+          ) : isGoing ? (
             <View style={styles.statusGoing}>
               <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
               <Text style={styles.statusGoingText}>Going</Text>
@@ -424,6 +495,7 @@ const styles = StyleSheet.create({
   },
   dateBlockGoing: { backgroundColor: Colors.olive },
   dateBlockToday: { backgroundColor: Colors.terraDim },
+  dateBlockExternal: { backgroundColor: Colors.brownMid },
   dateMonth: {
     fontSize: 10,
     fontWeight: '800',
@@ -509,6 +581,8 @@ const styles = StyleSheet.create({
 
   statusRsvp: { flexDirection: 'row', alignItems: 'center', gap: 1 },
   statusRsvpText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
+  statusExternal: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusExternalText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
 
   // ── Empty ──
   emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 12, paddingHorizontal: Spacing.lg },

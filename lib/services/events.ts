@@ -11,6 +11,29 @@ export type EventRow = {
   created_by?: string;
 };
 
+export type ExternalEventRow = {
+  id: string;
+  source: string;
+  source_id: string;
+  source_url: string | null;
+  title: string;
+  description: string | null;
+  category: string | null;
+  image_url: string | null;
+  start_at: string;
+  end_at: string | null;
+  timezone: string | null;
+  venue_name: string | null;
+  city: string | null;
+  country: string | null;
+  lat: number | null;
+  lng: number | null;
+  is_free: boolean | null;
+  price_min: number | null;
+  organizer_name: string | null;
+  organizer_source_id: string | null;
+};
+
 export type GroupRow = {
   id: string;
   name: string;
@@ -48,6 +71,24 @@ export async function fetchEventsForGroups(groupIds: string[]) {
     .limit(200);
 }
 
+export async function fetchExternalEventsForCity(city: string | null) {
+  // Keep a small grace window to avoid timezone/input edge-cases hiding newly created events.
+  const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  let query = supabase
+    .from('external_events')
+    .select('id, source, source_id, source_url, title, description, category, image_url, start_at, end_at, timezone, venue_name, city, country, lat, lng, is_free, price_min, organizer_name, organizer_source_id')
+    .eq('is_archived', false)
+    .gte('start_at', cutoffIso)
+    .order('start_at', { ascending: true })
+    .limit(200);
+
+  if (city && city.trim().length > 0) {
+    query = query.ilike('city', city.trim());
+  }
+
+  return query;
+}
+
 export async function fetchGroupsByIds(groupIds: string[]) {
   if (groupIds.length === 0) return { data: [] as GroupRow[], error: null };
   return supabase
@@ -80,6 +121,14 @@ export async function fetchEventById(eventId: string) {
   return supabase
     .from('group_events')
     .select('id, group_id, title, description, starts_at, location_name, is_virtual, created_by')
+    .eq('id', eventId)
+    .maybeSingle();
+}
+
+export async function fetchExternalEventById(eventId: string) {
+  return supabase
+    .from('external_events')
+    .select('id, source, source_id, source_url, title, description, category, image_url, start_at, end_at, timezone, venue_name, city, country, lat, lng, is_free, price_min, organizer_name, organizer_source_id')
     .eq('id', eventId)
     .maybeSingle();
 }
