@@ -19,12 +19,15 @@ import {
   fetchGoingUserProfiles,
   fetchGroupsByIds,
   fetchMembershipGroupIds,
+  fetchExternalEventRsvps,
+  fetchProfilesBasic,
   getSessionUserId,
   removeChannel,
   subscribeToGroupEvents,
   type EventRsvpRow,
   type EventRow,
   type ExternalEventRow,
+  type ExternalEventRsvpRow,
   type GroupRow,
 } from '../../lib/services/events';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
@@ -45,6 +48,7 @@ type EventCard = {
   attendeeCount: number;
   myStatus: 'going' | 'interested' | 'not_going' | null;
   goingAvatars: (string | null)[];
+  attendeeLabel?: string | null;
   externalUrl?: string | null;
 };
 
@@ -174,9 +178,67 @@ export default function EventsScreen() {
         attendeeCount: goingCountByEvent[e.id] ?? 0,
         myStatus:      (myRsvpByEvent.get(e.id) ?? null) as EventCard['myStatus'],
         goingAvatars:  (goingUserIdsByEvent[e.id] ?? []).map((id) => userAvatarMap[id] ?? null),
+        attendeeLabel: null,
         externalUrl:   null,
       };
     });
+
+    const externalIds = externalRows.map((e) => e.id);
+    const { data: externalRsvpRows } = await fetchExternalEventRsvps(externalIds);
+    const externalRsvps = (externalRsvpRows ?? []) as ExternalEventRsvpRow[];
+    const externalMyStatusByEvent = new Map(
+      externalRsvps.filter((r) => r.user_id === uid).map((r) => [r.event_id, r.status])
+    );
+    const externalGoingCountByEvent: Record<string, number> = {};
+    const externalGoingUserIdsByEvent: Record<string, string[]> = {};
+    for (const r of externalRsvps) {
+      if (r.status === 'going') {
+        externalGoingCountByEvent[r.event_id] = (externalGoingCountByEvent[r.event_id] ?? 0) + 1;
+        if (!externalGoingUserIdsByEvent[r.event_id]) externalGoingUserIdsByEvent[r.event_id] = [];
+        if (externalGoingUserIdsByEvent[r.event_id].length < 2) {
+          externalGoingUserIdsByEvent[r.event_id].push(r.user_id);
+        }
+      }
+    }
+
+    const externalTopUserIds = Array.from(new Set(Object.values(externalGoingUserIdsByEvent).flat()));
+    const externalProfileMap: Record<string, { full_name: string | null }> = {};
+    const externalAvatarMap: Record<string, string | null> = {};
+    if (externalTopUserIds.length > 0) {
+      const [{ data: basicProfiles }, { data: avatarProfiles }] = await Promise.all([
+        fetchProfilesBasic(externalTopUserIds),
+        fetchGoingUserProfiles(externalTopUserIds),
+      ]);
+      for (const p of (basicProfiles ?? [])) {
+        externalProfileMap[p.user_id] = { full_name: p.full_name ?? null };
+      }
+      const rawAvatarMap: Record<string, string | null> = {};
+      for (const p of (avatarProfiles ?? []) as Array<{ user_id: string; avatar_url: string | null }>) {
+        rawAvatarMap[p.user_id] = p.avatar_url;
+      }
+      const resolved = await Promise.all(
+        externalTopUserIds.map(async (id) => ({ id, url: await resolveProfilePhotoUrl(rawAvatarMap[id] ?? null) }))
+      );
+      for (const { id, url } of resolved) externalAvatarMap[id] = url;
+    }
+
+    const buildAttendeeLabel = (eventId: string) => {
+      const count = externalGoingCountByEvent[eventId] ?? 0;
+      if (count === 0) return null;
+      const topIds = externalGoingUserIdsByEvent[eventId] ?? [];
+      const names = topIds
+        .map((id) => externalProfileMap[id]?.full_name)
+        .filter((v): v is string => Boolean(v));
+      if (count === 1) return `${names[0] ?? 'Someone'} is going`;
+      if (count === 2) {
+        const a = names[0] ?? 'Someone';
+        const b = names[1] ?? 'someone';
+        return `${a} and ${b} are going`;
+      }
+      const a = names[0] ?? 'Someone';
+      const b = names[1] ?? 'someone';
+      return `${a}, ${b} and ${count - 2} others are going`;
+    };
 
     const mappedExternal: EventCard[] = externalRows.map((e) => {
       const cat = normalizeExternalCategory(e.category);
@@ -192,9 +254,10 @@ export default function EventsScreen() {
         time:          formatTime(e.start_at),
         location:      e.venue_name || e.city || 'Location TBA',
         isVirtual:     false,
-        attendeeCount: 0,
-        myStatus:      null,
-        goingAvatars:  [],
+        attendeeCount: externalGoingCountByEvent[e.id] ?? 0,
+        myStatus:      (externalMyStatusByEvent.get(e.id) ?? null) as EventCard['myStatus'],
+        goingAvatars:  (externalGoingUserIdsByEvent[e.id] ?? []).map((id) => externalAvatarMap[id] ?? null),
+        attendeeLabel: buildAttendeeLabel(e.id),
         externalUrl:   e.source_url,
       };
     });
@@ -231,7 +294,7 @@ export default function EventsScreen() {
 
   const visibleEvents = useMemo(() => {
     if (filter === 'all') return events;
-    return events.filter((e) => e.source === 'group' && (e.myStatus === 'going' || e.myStatus === 'interested'));
+    return events.filter((e) => e.myStatus === 'going' || e.myStatus === 'interested');
   }, [events, filter]);
 
   return (
@@ -364,7 +427,7 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
 
         {/* Footer: avatar stack + status badge */}
         <View style={styles.cardFooter}>
-          {!isExternal && ev.goingAvatars.length > 0 ? (
+          {ev.goingAvatars.length > 0 ? (
             <View style={styles.avatarStack}>
               {ev.goingAvatars.map((uri, i) =>
                 uri ? (
@@ -386,19 +449,31 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
               )}
               <Text style={styles.goingLabel}>{ev.attendeeCount} going</Text>
             </View>
-          ) : !isExternal && ev.attendeeCount > 0 ? (
+          ) : ev.attendeeCount > 0 ? (
             <View style={styles.attendeePill}>
               <Ionicons name="people-outline" size={11} color={Colors.muted} />
               <Text style={styles.attendeeText}>{ev.attendeeCount} going</Text>
+            </View>
+          ) : isExternal && ev.attendeeLabel ? (
+            <View style={styles.attendeePill}>
+              <Ionicons name="people-outline" size={11} color={Colors.muted} />
+              <Text style={styles.attendeeText} numberOfLines={1}>{ev.attendeeLabel}</Text>
             </View>
           ) : (
             <View />
           )}
           {isExternal ? (
-            <View style={styles.statusExternal}>
-              <Text style={styles.statusExternalText}>View details</Text>
-              <Ionicons name="arrow-forward" size={12} color={Colors.terracotta} />
-            </View>
+            ev.myStatus === 'going' ? (
+              <View style={styles.statusGoing}>
+                <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
+                <Text style={styles.statusGoingText}>Going</Text>
+              </View>
+            ) : (
+              <View style={styles.statusExternal}>
+                <Text style={styles.statusExternalText}>View details</Text>
+                <Ionicons name="arrow-forward" size={12} color={Colors.terracotta} />
+              </View>
+            )
           ) : isGoing ? (
             <View style={styles.statusGoing}>
               <Ionicons name="checkmark-circle" size={12} color={Colors.success} />

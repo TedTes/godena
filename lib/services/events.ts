@@ -46,6 +46,18 @@ export type EventRsvpRow = {
   status: 'going' | 'interested' | 'not_going';
 };
 
+export type ExternalEventRsvpRow = {
+  event_id: string;
+  user_id: string;
+  status: 'going' | 'interested' | 'not_going';
+};
+
+export type BasicProfileRow = {
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
 export async function getSessionUserId() {
   const { data } = await supabase.auth.getSession();
   return data.session?.user.id ?? null;
@@ -74,19 +86,30 @@ export async function fetchEventsForGroups(groupIds: string[]) {
 export async function fetchExternalEventsForCity(city: string | null) {
   // Keep a small grace window to avoid timezone/input edge-cases hiding newly created events.
   const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-  let query = supabase
-    .from('external_events')
-    .select('id, source, source_id, source_url, title, description, category, image_url, start_at, end_at, timezone, venue_name, city, country, lat, lng, is_free, price_min, organizer_name, organizer_source_id')
-    .eq('is_archived', false)
-    .gte('start_at', cutoffIso)
-    .order('start_at', { ascending: true })
-    .limit(200);
+  const buildBase = () =>
+    supabase
+      .from('external_events')
+      .select('id, source, source_id, source_url, title, description, category, image_url, start_at, end_at, timezone, venue_name, city, country, lat, lng, is_free, price_min, organizer_name, organizer_source_id')
+      .eq('is_archived', false)
+      .gte('start_at', cutoffIso)
+      .order('start_at', { ascending: true })
+      .limit(200);
 
-  if (city && city.trim().length > 0) {
-    query = query.ilike('city', city.trim());
+  const trimmed = city?.trim();
+  if (!trimmed) {
+    return buildBase();
   }
 
-  return query;
+  // Try city match first. If nothing returns, fall back to all external events.
+  const cityQuery = buildBase().ilike('city', `%${trimmed}%`);
+  const { data, error } = await cityQuery;
+  if (error) {
+    return { data: null, error };
+  }
+  if (data && data.length > 0) {
+    return { data, error: null };
+  }
+  return buildBase();
 }
 
 export async function fetchGroupsByIds(groupIds: string[]) {
@@ -105,6 +128,14 @@ export async function fetchEventRsvps(eventIds: string[]) {
     .in('event_id', eventIds);
 }
 
+export async function fetchExternalEventRsvps(eventIds: string[]) {
+  if (eventIds.length === 0) return { data: [] as ExternalEventRsvpRow[], error: null };
+  return supabase
+    .from('external_event_rsvps')
+    .select('event_id, user_id, status')
+    .in('event_id', eventIds);
+}
+
 export async function upsertEventRsvp(
   eventId: string,
   userId: string,
@@ -115,6 +146,26 @@ export async function upsertEventRsvp(
     .upsert({ event_id: eventId, user_id: userId, status, attended_at: null }, { onConflict: 'event_id,user_id' })
     .select('event_id, user_id, status')
     .single();
+}
+
+export async function upsertExternalEventRsvp(
+  eventId: string,
+  userId: string,
+  status: 'going' | 'interested' | 'not_going'
+) {
+  return supabase
+    .from('external_event_rsvps')
+    .upsert({ event_id: eventId, user_id: userId, status }, { onConflict: 'event_id,user_id' })
+    .select('event_id, user_id, status')
+    .single();
+}
+
+export async function deleteExternalEventRsvp(eventId: string, userId: string) {
+  return supabase
+    .from('external_event_rsvps')
+    .delete()
+    .eq('event_id', eventId)
+    .eq('user_id', userId);
 }
 
 export async function fetchEventById(eventId: string) {
@@ -192,5 +243,13 @@ export async function fetchGoingUserProfiles(userIds: string[]) {
   return supabase
     .from('profiles')
     .select('user_id, avatar_url')
+    .in('user_id', userIds);
+}
+
+export async function fetchProfilesBasic(userIds: string[]) {
+  if (userIds.length === 0) return { data: [] as BasicProfileRow[], error: null };
+  return supabase
+    .from('profiles')
+    .select('user_id, full_name, avatar_url')
     .in('user_id', userIds);
 }
