@@ -41,7 +41,7 @@ function toIsoMaybe(value: string | null | undefined) {
 }
 
 function parseDateValue(raw: string) {
-  // Handles: YYYYMMDD, YYYYMMDDTHHmmssZ
+  // Handles: YYYYMMDD, YYYYMMDDTHHmmssZ, YYYYMMDDTHHmmss, YYYYMMDDTHHmmss±HHMM
   if (!raw) return null;
   if (/^\d{8}$/.test(raw)) {
     const y = raw.slice(0, 4);
@@ -56,6 +56,29 @@ function parseDateValue(raw: string) {
     const hh = raw.slice(9, 11);
     const mm = raw.slice(11, 13);
     const ss = raw.slice(13, 15);
+    return `${y}-${m}-${d}T${hh}:${mm}:${ss}Z`;
+  }
+  if (/^\d{8}T\d{6}[+-]\d{4}$/.test(raw)) {
+    const y = raw.slice(0, 4);
+    const m = raw.slice(4, 6);
+    const d = raw.slice(6, 8);
+    const hh = raw.slice(9, 11);
+    const mm = raw.slice(11, 13);
+    const ss = raw.slice(13, 15);
+    const sign = raw.slice(15, 16);
+    const offH = raw.slice(16, 18);
+    const offM = raw.slice(18, 20);
+    const iso = `${y}-${m}-${d}T${hh}:${mm}:${ss}${sign}${offH}:${offM}`;
+    return toIsoMaybe(iso);
+  }
+  if (/^\d{8}T\d{6}$/.test(raw)) {
+    const y = raw.slice(0, 4);
+    const m = raw.slice(4, 6);
+    const d = raw.slice(6, 8);
+    const hh = raw.slice(9, 11);
+    const mm = raw.slice(11, 13);
+    const ss = raw.slice(13, 15);
+    // Treat as UTC when timezone isn't provided.
     return `${y}-${m}-${d}T${hh}:${mm}:${ss}Z`;
   }
   return toIsoMaybe(raw);
@@ -74,8 +97,16 @@ function parseIcsEvents(icsText: string) {
       if (idx === -1) continue;
       const keyPart = line.slice(0, idx);
       const val = line.slice(idx + 1);
-      const key = keyPart.split(";")[0].toUpperCase();
+      const [rawKey, ...params] = keyPart.split(";");
+      const key = rawKey.toUpperCase();
       ev[key] = val;
+      if (key === "DTSTART" || key === "DTEND") {
+        for (const p of params) {
+          if (p.toUpperCase().startsWith("TZID=")) {
+            ev.__timezone = p.split("=")[1];
+          }
+        }
+      }
     }
     if (!ev.UID && !ev.SUMMARY) continue;
     events.push(ev);
@@ -84,9 +115,10 @@ function parseIcsEvents(icsText: string) {
 }
 
 function normalizeIcsEvent(ev: Record<string, string>, feed: any) {
-  const startRaw = ev.DTSTART || ev["DTSTART;VALUE=DATE"];
-  const endRaw = ev.DTEND || ev["DTEND;VALUE=DATE"];
-  const start_at = parseDateValue(startRaw) ?? new Date().toISOString();
+  const startRaw = ev.DTSTART;
+  const endRaw = ev.DTEND;
+  const start_at = parseDateValue(startRaw);
+  if (!start_at) return null;
   const end_at = parseDateValue(endRaw);
   const sourceId = `${feed.id || feed.url}:${ev.UID || ev.SUMMARY || start_at}`;
 
@@ -100,7 +132,7 @@ function normalizeIcsEvent(ev: Record<string, string>, feed: any) {
     image_url: null,
     start_at,
     end_at,
-    timezone: null,
+    timezone: ev.__timezone || feed.timezone || null,
     venue_name: ev.LOCATION || null,
     city: feed.city || null,
     country: feed.country || null,
@@ -179,7 +211,10 @@ Deno.serve(async (req) => {
       }
       const events = parseIcsEvents(text);
       for (const ev of events) {
-        allRows.push(normalizeIcsEvent(ev, feed));
+        const row = normalizeIcsEvent(ev, feed);
+        if (row) {
+          allRows.push(row);
+        }
         if (allRows.length >= limit) break;
       }
       if (allRows.length >= limit) break;
