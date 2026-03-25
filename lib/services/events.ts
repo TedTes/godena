@@ -282,6 +282,12 @@ export async function fetchProfilesBasic(userIds: string[]) {
     .in('user_id', userIds);
 }
 
+export async function createExternalEventChat(eventId: string): Promise<{ groupId: string | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('create_external_event_chat', { p_event_id: eventId });
+  if (error) return { groupId: null, error: error.message };
+  return { groupId: data as string, error: null };
+}
+
 export async function fetchUnifiedEventsForUser(userId: string, city: string | null) {
   const { data: membershipRows, error: membershipError } = await fetchMembershipGroupIds(userId);
   if (membershipError) return { data: null, error: membershipError };

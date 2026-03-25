@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../../constants/theme';
 import RAnimated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import {
+  createExternalEventChat,
   deleteExternalEventRsvp,
   fetchExternalEventById,
   fetchExternalEventRsvps,
@@ -126,6 +127,7 @@ export default function ExternalEventDetailScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [creatingChat, setCreatingChat] = useState(false);
   const [eventRow, setEventRow] = useState<ExternalEventRow | null>(null);
   const [attendeeLabel, setAttendeeLabel] = useState<string | null>(null);
   const [goingCount, setGoingCount] = useState(0);
@@ -194,6 +196,17 @@ export default function ExternalEventDetailScreen() {
       }
       setSaving(false);
       await loadRsvpState(userId);
+    })();
+  };
+
+  const handleStartGroupChat = () => {
+    void (async () => {
+      if (!id || creatingChat) return;
+      setCreatingChat(true);
+      const { groupId, error } = await createExternalEventChat(id);
+      setCreatingChat(false);
+      if (error || !groupId) return;
+      router.push(`/group/chat/${groupId}`);
     })();
   };
 
@@ -336,6 +349,33 @@ export default function ExternalEventDetailScreen() {
               />
             ))}
           </RAnimated.View>
+
+          {/* ── Group chat CTA ── */}
+          {goingCount >= 3 ? (
+            <RAnimated.View entering={FadeInDown.delay(300).duration(300)}>
+              <TouchableOpacity
+                style={styles.chatCta}
+                onPress={handleStartGroupChat}
+                disabled={creatingChat}
+                activeOpacity={0.85}
+              >
+                <View style={styles.chatCtaLeft}>
+                  <View style={styles.chatCtaIconBox}>
+                    <Ionicons name="chatbubbles" size={18} color={Colors.olive} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.chatCtaTitle}>Start group chat</Text>
+                    <Text style={styles.chatCtaSub}>Connect with people attending this event</Text>
+                  </View>
+                </View>
+                {creatingChat ? (
+                  <ActivityIndicator size="small" color={Colors.olive} />
+                ) : (
+                  <Ionicons name="chevron-forward" size={16} color={Colors.olive} />
+                )}
+              </TouchableOpacity>
+            </RAnimated.View>
+          ) : null}
 
           {/* ── Open event ── */}
           {eventRow.source_url ? (
@@ -554,6 +594,43 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   radioInner: { width: 10, height: 10, borderRadius: 5 },
+
+  // ── Group chat CTA ──
+  chatCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+  },
+  chatCtaLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  chatCtaIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: 'rgba(122,140,92,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  chatCtaTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.ink,
+    marginBottom: 2,
+  },
+  chatCtaSub: {
+    fontSize: 12,
+    color: Colors.muted,
+  },
 
   // ── Open event ──
   openBtn: {
