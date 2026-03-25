@@ -171,11 +171,21 @@ export async function upsertExternalEventRsvp(
   userId: string,
   status: 'going' | 'interested' | 'not_going'
 ) {
-  return supabase
+  const result = await supabase
     .from('external_event_rsvps')
     .upsert({ event_id: eventId, user_id: userId, status }, { onConflict: 'event_id,user_id' })
     .select('event_id, user_id, status')
     .single();
+
+  if (!result.error && status !== 'not_going') {
+    const { error: rpcError } = await supabase.rpc('log_external_event_rsvp', { p_event_id: eventId });
+    if (rpcError) {
+      // Surface RPC errors in dev to avoid silent failures
+      console.warn('log_external_event_rsvp failed', rpcError);
+    }
+  }
+
+  return result;
 }
 
 export async function deleteExternalEventRsvp(eventId: string, userId: string) {
