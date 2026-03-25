@@ -368,6 +368,9 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
     const names = topIds
       .map((id) => externalProfileMap[id]?.full_name)
       .filter((v): v is string => Boolean(v));
+    if (names.length === 0) {
+      return count === 1 ? '1 person going' : `${count} people going`;
+    }
     if (count === 1) return `${names[0] ?? 'Someone'} is going`;
     if (count === 2) {
       const a = names[0] ?? 'Someone';

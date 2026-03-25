@@ -66,6 +66,15 @@ function normalizeExternalCategory(raw?: string | null) {
   return 'other';
 }
 
+function cleanText(value: string) {
+  return value
+    .replace(/\\n/gi, ' ')
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\/g, '');
+}
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
@@ -126,6 +135,8 @@ export default function EventsScreen() {
     const mapped: EventCard[] = unified.map((e) => {
       const isExternal = e.source === 'external';
       const cat = normalizeExternalCategory(e.category);
+      const rawLocation = e.is_virtual ? 'Virtual' : (e.location_name || 'TBA');
+      const location = isExternal ? cleanText(rawLocation) : rawLocation;
       return {
         id:            e.id,
         source:        e.source,
@@ -135,7 +146,7 @@ export default function EventsScreen() {
         title:         e.title,
         startsAt:      e.starts_at,
         time:          formatTime(e.starts_at),
-        location:      e.is_virtual ? 'Virtual' : (e.location_name || 'TBA'),
+        location,
         isVirtual:     e.is_virtual,
         attendeeCount: e.attendee_count,
         myStatus:      e.my_status as EventCard['myStatus'],

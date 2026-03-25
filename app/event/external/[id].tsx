@@ -137,11 +137,26 @@ export default function ExternalEventDetailScreen() {
   const buildAttendeeLabel = (rsvps: ExternalEventRsvpRow[], names: string[]) => {
     const going = rsvps.filter((r) => r.status === 'going');
     if (going.length === 0) { setAttendeeLabel(null); return; }
-    const a = names[0] ?? 'Someone';
-    const b = names[1] ?? 'someone';
-    if (going.length === 1) setAttendeeLabel(`${a} is going`);
-    else if (going.length === 2) setAttendeeLabel(`${a} and ${b} are going`);
-    else setAttendeeLabel(`${a}, ${b} and ${going.length - 2} others are going`);
+    if (names.length === 0) {
+      setAttendeeLabel(going.length === 1 ? '1 person going' : `${going.length} people going`);
+      return;
+    }
+    const a = names[0];
+    if (going.length === 1) {
+      setAttendeeLabel(`${a} is going`);
+      return;
+    }
+    if (names.length < 2) {
+      const others = going.length - 1;
+      setAttendeeLabel(`${a} and ${others} other${others === 1 ? '' : 's'} are going`);
+      return;
+    }
+    const b = names[1];
+    if (going.length === 2) {
+      setAttendeeLabel(`${a} and ${b} are going`);
+      return;
+    }
+    setAttendeeLabel(`${a}, ${b} and ${going.length - 2} others are going`);
   };
 
   const loadRsvpState = async (uid: string) => {
@@ -216,6 +231,14 @@ export default function ExternalEventDetailScreen() {
     if (eventRow.city && eventRow.country) return `${eventRow.city}, ${eventRow.country}`;
     return eventRow.city ?? 'Location TBA';
   }, [eventRow]);
+
+  const cleanText = (value: string) =>
+    value
+      .replace(/\\n/gi, '\n')
+      .replace(/\\,/g, ',')
+      .replace(/\\;/g, ';')
+      .replace(/\\\\/g, '\\')
+      .replace(/\\/g, '');
 
   if (loading) {
     return (
@@ -303,7 +326,7 @@ export default function ExternalEventDetailScreen() {
               </View>
               <View style={styles.detailText}>
                 <Text style={styles.detailLabel}>Location</Text>
-                <Text style={styles.detailValue}>{locationLine}</Text>
+                <Text style={styles.detailValue}>{cleanText(locationLine)}</Text>
               </View>
             </View>
 
@@ -331,7 +354,7 @@ export default function ExternalEventDetailScreen() {
           <RAnimated.View entering={FadeInDown.delay(140).duration(300)} style={styles.aboutCard}>
             <Text style={styles.aboutTitle}>About</Text>
             <Text style={[styles.aboutText, !eventRow.description?.trim() && styles.aboutEmpty]}>
-              {eventRow.description?.trim() || 'No description provided.'}
+              {eventRow.description ? cleanText(eventRow.description.trim()) : 'No description provided.'}
             </Text>
           </RAnimated.View>
 
