@@ -34,6 +34,24 @@ export type ExternalEventRow = {
   organizer_source_id: string | null;
 };
 
+export type UnifiedEventRow = {
+  id: string;
+  source: 'group' | 'external';
+  title: string;
+  starts_at: string;
+  location_name: string | null;
+  is_virtual: boolean;
+  category: string | null;
+  city: string | null;
+  source_url: string | null;
+  group_id: string | null;
+  group_name: string | null;
+  attendee_count: number;
+  my_status: 'going' | 'interested' | 'not_going' | null;
+  going_user_ids: string[];
+  attendee_label: string | null;
+};
+
 export type GroupRow = {
   id: string;
   name: string;
@@ -252,4 +270,141 @@ export async function fetchProfilesBasic(userIds: string[]) {
     .from('profiles')
     .select('user_id, full_name, avatar_url')
     .in('user_id', userIds);
+}
+
+export async function fetchUnifiedEventsForUser(userId: string, city: string | null) {
+  const { data: membershipRows, error: membershipError } = await fetchMembershipGroupIds(userId);
+  if (membershipError) return { data: null, error: membershipError };
+
+  const groupIds = Array.from(
+    new Set(((membershipRows ?? []) as Array<{ group_id: string }>).map((m) => m.group_id))
+  );
+
+  const [eventsRes, groupsRes, externalRes] = await Promise.all([
+    groupIds.length > 0 ? fetchEventsForGroups(groupIds) : Promise.resolve({ data: [] as EventRow[], error: null }),
+    groupIds.length > 0 ? fetchGroupsByIds(groupIds) : Promise.resolve({ data: [] as GroupRow[], error: null }),
+    fetchExternalEventsForCity(city),
+  ]);
+
+  if (eventsRes.error) return { data: null, error: eventsRes.error };
+  if (groupsRes.error) return { data: null, error: groupsRes.error };
+  if (externalRes.error) return { data: null, error: externalRes.error };
+
+  const eventRows = (eventsRes.data ?? []) as EventRow[];
+  const groupRows = (groupsRes.data ?? []) as GroupRow[];
+  const externalRows = (externalRes.data ?? []) as ExternalEventRow[];
+
+  const eventIds = eventRows.map((e) => e.id);
+  const externalIds = externalRows.map((e) => e.id);
+
+  const [rsvpRes, externalRsvpRes] = await Promise.all([
+    fetchEventRsvps(eventIds),
+    fetchExternalEventRsvps(externalIds),
+  ]);
+  if (rsvpRes.error) return { data: null, error: rsvpRes.error };
+  if (externalRsvpRes.error) return { data: null, error: externalRsvpRes.error };
+
+  const rsvps = (rsvpRes.data ?? []) as EventRsvpRow[];
+  const externalRsvps = (externalRsvpRes.data ?? []) as ExternalEventRsvpRow[];
+
+  const myRsvpByEvent = new Map(
+    rsvps.filter((r) => r.user_id === userId).map((r) => [r.event_id, r.status])
+  );
+  const myExternalRsvpByEvent = new Map(
+    externalRsvps.filter((r) => r.user_id === userId).map((r) => [r.event_id, r.status])
+  );
+
+  const goingCountByEvent: Record<string, number> = {};
+  const goingUserIdsByEvent: Record<string, string[]> = {};
+  for (const r of rsvps) {
+    if (r.status === 'going') {
+      goingCountByEvent[r.event_id] = (goingCountByEvent[r.event_id] ?? 0) + 1;
+      if (!goingUserIdsByEvent[r.event_id]) goingUserIdsByEvent[r.event_id] = [];
+      if (goingUserIdsByEvent[r.event_id].length < 3) goingUserIdsByEvent[r.event_id].push(r.user_id);
+    }
+  }
+
+  const externalGoingCountByEvent: Record<string, number> = {};
+  const externalGoingUserIdsByEvent: Record<string, string[]> = {};
+  for (const r of externalRsvps) {
+    if (r.status === 'going') {
+      externalGoingCountByEvent[r.event_id] = (externalGoingCountByEvent[r.event_id] ?? 0) + 1;
+      if (!externalGoingUserIdsByEvent[r.event_id]) externalGoingUserIdsByEvent[r.event_id] = [];
+      if (externalGoingUserIdsByEvent[r.event_id].length < 2) {
+        externalGoingUserIdsByEvent[r.event_id].push(r.user_id);
+      }
+    }
+  }
+
+  const externalTopUserIds = Array.from(new Set(Object.values(externalGoingUserIdsByEvent).flat()));
+  const externalProfileMap: Record<string, { full_name: string | null }> = {};
+  if (externalTopUserIds.length > 0) {
+    const { data: basicProfiles } = await fetchProfilesBasic(externalTopUserIds);
+    for (const p of (basicProfiles ?? [])) {
+      externalProfileMap[p.user_id] = { full_name: p.full_name ?? null };
+    }
+  }
+
+  const buildAttendeeLabel = (eventId: string) => {
+    const count = externalGoingCountByEvent[eventId] ?? 0;
+    if (count === 0) return null;
+    const topIds = externalGoingUserIdsByEvent[eventId] ?? [];
+    const names = topIds
+      .map((id) => externalProfileMap[id]?.full_name)
+      .filter((v): v is string => Boolean(v));
+    if (count === 1) return `${names[0] ?? 'Someone'} is going`;
+    if (count === 2) {
+      const a = names[0] ?? 'Someone';
+      const b = names[1] ?? 'someone';
+      return `${a} and ${b} are going`;
+    }
+    const a = names[0] ?? 'Someone';
+    const b = names[1] ?? 'someone';
+    return `${a}, ${b} and ${count - 2} others are going`;
+  };
+
+  const groupById = new Map(groupRows.map((g) => [g.id, g]));
+
+  const unified: UnifiedEventRow[] = [
+    ...eventRows.map((e) => {
+      const g = groupById.get(e.group_id);
+      return {
+        id: e.id,
+        source: 'group',
+        title: e.title,
+        starts_at: e.starts_at,
+        location_name: e.location_name,
+        is_virtual: e.is_virtual ?? false,
+        category: g?.category ?? null,
+        city: null,
+        source_url: null,
+        group_id: e.group_id,
+        group_name: g?.name ?? 'Group',
+        attendee_count: goingCountByEvent[e.id] ?? 0,
+        my_status: (myRsvpByEvent.get(e.id) ?? null) as UnifiedEventRow['my_status'],
+        going_user_ids: goingUserIdsByEvent[e.id] ?? [],
+        attendee_label: null,
+      };
+    }),
+    ...externalRows.map((e) => ({
+      id: e.id,
+      source: 'external',
+      title: e.title,
+      starts_at: e.start_at,
+      location_name: e.venue_name || e.city || null,
+      is_virtual: false,
+      category: e.category ?? null,
+      city: e.city ?? null,
+      source_url: e.source_url,
+      group_id: null,
+      group_name: e.city ?? 'Local event',
+      attendee_count: externalGoingCountByEvent[e.id] ?? 0,
+      my_status: (myExternalRsvpByEvent.get(e.id) ?? null) as UnifiedEventRow['my_status'],
+      going_user_ids: [],
+      attendee_label: buildAttendeeLabel(e.id),
+    })),
+  ];
+
+  unified.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+  return { data: unified, error: null };
 }

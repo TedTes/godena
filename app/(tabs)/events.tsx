@@ -13,22 +13,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import {
-  fetchEventRsvps,
-  fetchEventsForGroups,
-  fetchExternalEventsForCity,
   fetchGoingUserProfiles,
-  fetchGroupsByIds,
   fetchMembershipGroupIds,
-  fetchExternalEventRsvps,
-  fetchProfilesBasic,
+  fetchUnifiedEventsForUser,
   getSessionUserId,
   removeChannel,
   subscribeToGroupEvents,
-  type EventRsvpRow,
-  type EventRow,
-  type ExternalEventRow,
-  type ExternalEventRsvpRow,
-  type GroupRow,
+  type UnifiedEventRow,
 } from '../../lib/services/events';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import { EventCardSkeleton } from '../../components/Skeleton';
@@ -111,162 +102,50 @@ export default function EventsScreen() {
       .maybeSingle();
     const userCity = (profileRow as { city?: string | null } | null)?.city ?? null;
 
-    const { data: membershipRows, error: membershipError } = await fetchMembershipGroupIds(uid);
-    if (membershipError) { setError(membershipError.message); setLoading(false); return; }
+    const { data: unifiedRows, error: unifiedError } = await fetchUnifiedEventsForUser(uid, userCity);
+    if (unifiedError) { setError(unifiedError.message); setLoading(false); return; }
 
-    const groupIds = Array.from(
-      new Set(((membershipRows ?? []) as Array<{ group_id: string }>).map((m) => m.group_id))
+    const unified = (unifiedRows ?? []) as UnifiedEventRow[];
+    const groupGoingIds = Array.from(
+      new Set(unified.filter((e) => e.source === 'group').flatMap((e) => e.going_user_ids))
     );
 
-    const [eventsRes, groupsRes, externalRes] = await Promise.all([
-      groupIds.length > 0 ? fetchEventsForGroups(groupIds) : Promise.resolve({ data: [] as EventRow[], error: null }),
-      groupIds.length > 0 ? fetchGroupsByIds(groupIds) : Promise.resolve({ data: [] as GroupRow[], error: null }),
-      fetchExternalEventsForCity(userCity),
-    ]);
-
-    if (eventsRes.error) { setError(eventsRes.error.message); setLoading(false); return; }
-
-    const eventRows  = (eventsRes.data ?? []) as EventRow[];
-    const groupRows  = (groupsRes.data ?? []) as GroupRow[];
-    const externalRows = (externalRes.data ?? []) as ExternalEventRow[];
-    const eventIds   = eventRows.map((e) => e.id);
-    const { data: rsvpRows } = await fetchEventRsvps(eventIds);
-    const rsvps      = (rsvpRows ?? []) as EventRsvpRow[];
-
-    const groupById = new Map(groupRows.map((g) => [g.id, g]));
-    const myRsvpByEvent = new Map(
-      rsvps.filter((r) => r.user_id === uid).map((r) => [r.event_id, r.status])
-    );
-    const goingCountByEvent: Record<string, number> = {};
-    const goingUserIdsByEvent: Record<string, string[]> = {};
-    for (const r of rsvps) {
-      if (r.status === 'going') {
-        goingCountByEvent[r.event_id] = (goingCountByEvent[r.event_id] ?? 0) + 1;
-        if (!goingUserIdsByEvent[r.event_id]) goingUserIdsByEvent[r.event_id] = [];
-        if (goingUserIdsByEvent[r.event_id].length < 3) goingUserIdsByEvent[r.event_id].push(r.user_id);
-      }
-    }
-
-    // Batch-fetch avatars for all unique going users, resolve in parallel
-    const allGoingIds = Array.from(new Set(Object.values(goingUserIdsByEvent).flat()));
     const userAvatarMap: Record<string, string | null> = {};
-    if (allGoingIds.length > 0) {
-      const { data: profileRows } = await fetchGoingUserProfiles(allGoingIds);
+    if (groupGoingIds.length > 0) {
+      const { data: profileRows } = await fetchGoingUserProfiles(groupGoingIds);
       const rawMap: Record<string, string | null> = {};
       for (const p of (profileRows ?? []) as Array<{ user_id: string; avatar_url: string | null }>) {
         rawMap[p.user_id] = p.avatar_url;
       }
       const resolved = await Promise.all(
-        allGoingIds.map(async (id) => ({ id, url: await resolveProfilePhotoUrl(rawMap[id] ?? null) }))
+        groupGoingIds.map(async (id) => ({ id, url: await resolveProfilePhotoUrl(rawMap[id] ?? null) }))
       );
       for (const { id, url } of resolved) userAvatarMap[id] = url;
     }
 
-    const mappedGroup: EventCard[] = eventRows.map((e) => {
-      const g = groupById.get(e.group_id);
+    const mapped: EventCard[] = unified.map((e) => {
+      const isExternal = e.source === 'external';
+      const cat = normalizeExternalCategory(e.category);
       return {
         id:            e.id,
-        source:        'group',
-        groupId:       e.group_id,
-        groupName:     g?.name || 'Group',
-        groupEmoji:    categoryEmoji(g?.category),
+        source:        e.source,
+        groupId:       e.group_id ?? 'external',
+        groupName:     e.group_name ?? (e.city ?? 'Local event'),
+        groupEmoji:    categoryEmoji(isExternal ? cat : e.category ?? undefined),
         title:         e.title,
         startsAt:      e.starts_at,
         time:          formatTime(e.starts_at),
         location:      e.is_virtual ? 'Virtual' : (e.location_name || 'TBA'),
-        isVirtual:     e.is_virtual ?? false,
-        attendeeCount: goingCountByEvent[e.id] ?? 0,
-        myStatus:      (myRsvpByEvent.get(e.id) ?? null) as EventCard['myStatus'],
-        goingAvatars:  (goingUserIdsByEvent[e.id] ?? []).map((id) => userAvatarMap[id] ?? null),
-        attendeeLabel: null,
-        externalUrl:   null,
-      };
-    });
-
-    const externalIds = externalRows.map((e) => e.id);
-    const { data: externalRsvpRows } = await fetchExternalEventRsvps(externalIds);
-    const externalRsvps = (externalRsvpRows ?? []) as ExternalEventRsvpRow[];
-    const externalMyStatusByEvent = new Map(
-      externalRsvps.filter((r) => r.user_id === uid).map((r) => [r.event_id, r.status])
-    );
-    const externalGoingCountByEvent: Record<string, number> = {};
-    const externalGoingUserIdsByEvent: Record<string, string[]> = {};
-    for (const r of externalRsvps) {
-      if (r.status === 'going') {
-        externalGoingCountByEvent[r.event_id] = (externalGoingCountByEvent[r.event_id] ?? 0) + 1;
-        if (!externalGoingUserIdsByEvent[r.event_id]) externalGoingUserIdsByEvent[r.event_id] = [];
-        if (externalGoingUserIdsByEvent[r.event_id].length < 2) {
-          externalGoingUserIdsByEvent[r.event_id].push(r.user_id);
-        }
-      }
-    }
-
-    const externalTopUserIds = Array.from(new Set(Object.values(externalGoingUserIdsByEvent).flat()));
-    const externalProfileMap: Record<string, { full_name: string | null }> = {};
-    const externalAvatarMap: Record<string, string | null> = {};
-    if (externalTopUserIds.length > 0) {
-      const [{ data: basicProfiles }, { data: avatarProfiles }] = await Promise.all([
-        fetchProfilesBasic(externalTopUserIds),
-        fetchGoingUserProfiles(externalTopUserIds),
-      ]);
-      for (const p of (basicProfiles ?? [])) {
-        externalProfileMap[p.user_id] = { full_name: p.full_name ?? null };
-      }
-      const rawAvatarMap: Record<string, string | null> = {};
-      for (const p of (avatarProfiles ?? []) as Array<{ user_id: string; avatar_url: string | null }>) {
-        rawAvatarMap[p.user_id] = p.avatar_url;
-      }
-      const resolved = await Promise.all(
-        externalTopUserIds.map(async (id) => ({ id, url: await resolveProfilePhotoUrl(rawAvatarMap[id] ?? null) }))
-      );
-      for (const { id, url } of resolved) externalAvatarMap[id] = url;
-    }
-
-    const buildAttendeeLabel = (eventId: string) => {
-      const count = externalGoingCountByEvent[eventId] ?? 0;
-      if (count === 0) return null;
-      const topIds = externalGoingUserIdsByEvent[eventId] ?? [];
-      const names = topIds
-        .map((id) => externalProfileMap[id]?.full_name)
-        .filter((v): v is string => Boolean(v));
-      if (count === 1) return `${names[0] ?? 'Someone'} is going`;
-      if (count === 2) {
-        const a = names[0] ?? 'Someone';
-        const b = names[1] ?? 'someone';
-        return `${a} and ${b} are going`;
-      }
-      const a = names[0] ?? 'Someone';
-      const b = names[1] ?? 'someone';
-      return `${a}, ${b} and ${count - 2} others are going`;
-    };
-
-    const mappedExternal: EventCard[] = externalRows.map((e) => {
-      const cat = normalizeExternalCategory(e.category);
-      const cityLabel = e.city ?? 'Local event';
-      return {
-        id:            e.id,
-        source:        'external',
-        groupId:       'external',
-        groupName:     cityLabel,
-        groupEmoji:    categoryEmoji(cat),
-        title:         e.title,
-        startsAt:      e.start_at,
-        time:          formatTime(e.start_at),
-        location:      e.venue_name || e.city || 'Location TBA',
-        isVirtual:     false,
-        attendeeCount: externalGoingCountByEvent[e.id] ?? 0,
-        myStatus:      (externalMyStatusByEvent.get(e.id) ?? null) as EventCard['myStatus'],
-        goingAvatars:  (externalGoingUserIdsByEvent[e.id] ?? []).map((id) => externalAvatarMap[id] ?? null),
-        attendeeLabel: buildAttendeeLabel(e.id),
+        isVirtual:     e.is_virtual,
+        attendeeCount: e.attendee_count,
+        myStatus:      e.my_status as EventCard['myStatus'],
+        goingAvatars:  isExternal ? [] : e.going_user_ids.map((id) => userAvatarMap[id] ?? null),
+        attendeeLabel: e.attendee_label ?? null,
         externalUrl:   e.source_url,
       };
     });
 
-    const merged = [...mappedGroup, ...mappedExternal].sort((a, b) => {
-      return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
-    });
-
-    setEvents(merged);
+    setEvents(mapped);
     setLoading(false);
   }, []);
 
