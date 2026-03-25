@@ -34,6 +34,16 @@ function unfoldLines(ics: string) {
   return ics.replace(/\r?\n[ \t]/g, "");
 }
 
+function unescapeIcsText(value: string | null | undefined) {
+  if (!value) return null;
+  return value
+    .replace(/\\n/gi, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\")
+    .replace(/\\/g, "");
+}
+
 function toIsoMaybe(value: string | null | undefined) {
   if (!value) return null;
   const d = new Date(value);
@@ -127,13 +137,13 @@ function normalizeIcsEvent(ev: Record<string, string>, feed: any) {
     source_id: sourceId,
     source_url: ev.URL || feed.url || null,
     title: ev.SUMMARY || "Untitled event",
-    description: ev.DESCRIPTION || null,
+    description: unescapeIcsText(ev.DESCRIPTION),
     category: feed.category || feed.name || null,
     image_url: null,
     start_at,
     end_at,
     timezone: ev.__timezone || feed.timezone || null,
-    venue_name: ev.LOCATION || null,
+    venue_name: unescapeIcsText(ev.LOCATION),
     city: feed.city || null,
     country: feed.country || null,
     lat: null,
