@@ -196,6 +196,17 @@ export default function HomeScreen() {
         .select('group_id, is_open_to_connect')
         .eq('user_id', userId);
 
+      const { data: blockedRows } = await supabase
+        .from('blocked_users')
+        .select('blocker_id, blocked_id')
+        .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
+
+      const blockedUserIds = new Set<string>();
+      for (const row of (blockedRows as Array<{ blocker_id: string; blocked_id: string }> | null) ?? []) {
+        const otherId = row.blocker_id === userId ? row.blocked_id : row.blocker_id;
+        if (otherId) blockedUserIds.add(otherId);
+      }
+
       const memberships =
         (membershipRows as Array<{ group_id: string; is_open_to_connect: boolean }> | null) ?? [];
       const groupIds = memberships.map((m) => m.group_id);
@@ -316,6 +327,7 @@ export default function HomeScreen() {
         const allActivityRows = (activityRes.data as ActivityRow[] | null) ?? [];
         const seenAuthors = new Set<string>();
         const activityRows = allActivityRows.filter((r) => {
+          if (blockedUserIds.has(r.author_id)) return false;
           if (seenAuthors.has(r.author_id)) return false;
           seenAuthors.add(r.author_id);
           return true;

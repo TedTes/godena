@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
@@ -13,7 +13,7 @@ import {
   Alert,
   TextInput,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
@@ -21,6 +21,7 @@ import { GroupDetailSkeleton } from '../../components/Skeleton';
 import RAnimated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { GROUP_ICON_CHOICES } from '../../lib/services/groupIcons';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
+import { supabase } from '../../lib/supabase';
 import {
   createGroupEvent,
   createGroupPost,
@@ -211,22 +212,38 @@ export default function GroupDetailScreen() {
 
     if (!uid) { setLoading(false); return; }
 
-    const [membershipRes, membersRes, eventsRes, postsRes] = await Promise.all([
+    const [membershipRes, membersRes, eventsRes, postsRes, blockedRes] = await Promise.all([
       fetchMembership(id, uid),
       fetchMembers(id),
       fetchUpcomingEvents(id),
       fetchGroupPosts(id),
+      uid
+        ? supabase
+            .from('blocked_users')
+            .select('blocker_id, blocked_id')
+            .or(`blocker_id.eq.${uid},blocked_id.eq.${uid}`)
+        : Promise.resolve({ data: [] as Array<{ blocker_id: string; blocked_id: string }> }),
     ]);
 
     setMembership((membershipRes.data as Membership | null) ?? null);
     const membersData = (membersRes.data as Member[] | null) ?? [];
     const eventsData = (eventsRes.data as Event[] | null) ?? [];
     const postsData = (postsRes.data as Post[] | null) ?? [];
-    setMembers(membersData);
-    setGroupEvents(eventsData);
-    setPosts(postsData);
+    const blockedRows =
+      (blockedRes.data as Array<{ blocker_id: string; blocked_id: string }> | null) ?? [];
+    const blockedUserIds = new Set<string>();
+    for (const row of blockedRows) {
+      const otherId = row.blocker_id === uid ? row.blocked_id : row.blocker_id;
+      if (otherId) blockedUserIds.add(otherId);
+    }
 
-    const postIds = postsData.map((p) => p.id);
+    const visibleMembers = membersData.filter((m) => !blockedUserIds.has(m.user_id));
+    const visiblePosts = postsData.filter((p) => !blockedUserIds.has(p.author_id));
+    setMembers(visibleMembers);
+    setGroupEvents(eventsData);
+    setPosts(visiblePosts);
+
+    const postIds = visiblePosts.map((p) => p.id);
     const { data: reactionsData } = await fetchPostReactions(postIds);
     setReactionRows((reactionsData as ReactionRow[] | null) ?? []);
 
@@ -236,7 +253,7 @@ export default function GroupDetailScreen() {
 
     const map: Record<string, { name: string; avatar: string | null }> = {};
     const resolved = await Promise.all(
-      membersData.map(async (m) => ({
+      visibleMembers.map(async (m) => ({
         user_id: m.user_id,
         name: m.full_name || 'Member',
         avatar: await resolveProfilePhotoUrl(m.avatar_url || null),
@@ -251,6 +268,11 @@ export default function GroupDetailScreen() {
   };
 
   useEffect(() => { void load(); }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [id])
+  );
 
   const handleCreatePost = async () => {
     if (!id || !userId || !membership || posting) return;
@@ -331,6 +353,34 @@ export default function GroupDetailScreen() {
 
   const handleReportGroup = () =>
     Alert.alert('Report submitted', "Thanks \u2014 we'll review this group shortly.");
+
+  const handleReportPost = (post: Post) => {
+    if (!userId) return;
+    if (post.author_id === userId) return;
+    Alert.alert('Report post', 'Choose a reason', [
+      { text: 'Harassment', onPress: () => void submitPostReport(post, 'Harassment') },
+      { text: 'Spam', onPress: () => void submitPostReport(post, 'Spam') },
+      { text: 'Inappropriate content', onPress: () => void submitPostReport(post, 'Inappropriate content') },
+      { text: 'Other', onPress: () => void submitPostReport(post, 'Other') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const submitPostReport = async (post: Post, reason: string) => {
+    if (!userId) return;
+    const { error } = await supabase.from('reports').insert({
+      reporter_id: userId,
+      reported_user_id: post.author_id,
+      target_type: 'post',
+      target_id: post.id,
+      reason,
+    });
+    if (error) {
+      Alert.alert('Report failed', error.message);
+      return;
+    }
+    Alert.alert('Report submitted', 'Thanks — our team will review this report.');
+  };
 
   const handleLeaveGroup = () => {
     if (!id || !userId || !membership) return;
@@ -1028,6 +1078,13 @@ export default function GroupDetailScreen() {
                           <Text style={styles.postAuthor}>{author?.name || 'Member'}</Text>
                           <Text style={styles.postMeta}>{formatDate(p.created_at)}</Text>
                         </View>
+                        <TouchableOpacity
+                          style={styles.postReportBtn}
+                          onPress={() => handleReportPost(p)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="flag-outline" size={16} color={Colors.brownMid} />
+                        </TouchableOpacity>
                       </View>
                       <Text style={styles.postText}>{p.content}</Text>
                       <View style={styles.reactionsWrap}>
@@ -2224,6 +2281,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   postHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  postReportBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   postAvatar: {
     width: 36,
     height: 36,

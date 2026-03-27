@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -16,6 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../../constants/theme';
+import { supabase } from '../../../lib/supabase';
 import {
   fetchGroup,
   fetchGroupMemberCount,
@@ -176,6 +178,33 @@ export default function GroupChatScreen() {
   const markGroupSeen = async () => {
     if (!id || !userId) return;
     await markGroupSeenMembership(id, userId);
+  };
+
+  const handleReportMessage = (msg: RawMsg) => {
+    if (!userId || msg.senderId === userId) return;
+    Alert.alert('Report message', 'Choose a reason', [
+      { text: 'Harassment', onPress: () => void submitMessageReport(msg, 'Harassment') },
+      { text: 'Spam', onPress: () => void submitMessageReport(msg, 'Spam') },
+      { text: 'Inappropriate content', onPress: () => void submitMessageReport(msg, 'Inappropriate content') },
+      { text: 'Other', onPress: () => void submitMessageReport(msg, 'Other') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const submitMessageReport = async (msg: RawMsg, reason: string) => {
+    if (!userId) return;
+    const { error } = await supabase.from('reports').insert({
+      reporter_id: userId,
+      reported_user_id: msg.senderId,
+      target_type: 'group_message',
+      target_id: msg.id,
+      reason,
+    });
+    if (error) {
+      Alert.alert('Report failed', error.message);
+      return;
+    }
+    Alert.alert('Report submitted', 'Thanks — our team will review this report.');
   };
 
   useEffect(() => {
@@ -465,17 +494,23 @@ export default function GroupChatScreen() {
                     </Text>
                   )}
 
-                  <View style={[
-                    styles.bubble,
-                    item.isOwn ? styles.bubbleOwn : styles.bubbleOther,
-                    // Tail only on the last bubble in a visual group
-                    item.isOwn && isLastInGroup  && styles.bubbleTailOwn,
-                    !item.isOwn && isLastInGroup && styles.bubbleTailOther,
-                  ]}>
-                    <Text style={[styles.bubbleText, item.isOwn && styles.bubbleTextOwn]}>
-                      {item.content}
-                    </Text>
-                  </View>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    disabled={item.isOwn}
+                    onLongPress={() => handleReportMessage(item)}
+                  >
+                    <View style={[
+                      styles.bubble,
+                      item.isOwn ? styles.bubbleOwn : styles.bubbleOther,
+                      // Tail only on the last bubble in a visual group
+                      item.isOwn && isLastInGroup  && styles.bubbleTailOwn,
+                      !item.isOwn && isLastInGroup && styles.bubbleTailOther,
+                    ]}>
+                      <Text style={[styles.bubbleText, item.isOwn && styles.bubbleTextOwn]}>
+                        {item.content}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
 
                   {/* Timestamp + sent tick — only at bottom of each group */}
                   {isLastInGroup && (

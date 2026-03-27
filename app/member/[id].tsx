@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -14,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../../constants/theme';
 import { fetchGroupMemberProfile } from '../../lib/services/groupDetail';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
+import { blockUser, getSessionUserId, reportUser } from '../../lib/services/privacySafety';
 
 type MemberProfileRow = {
   user_id: string;
@@ -46,6 +48,7 @@ export default function MemberProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<MemberProfileRow | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -72,6 +75,93 @@ export default function MemberProfileScreen() {
   }, [id, groupId]);
 
   const age = useMemo(() => calcAge(profile?.birth_date ?? null), [profile?.birth_date]);
+
+  const handleReport = (reason: string) => {
+    if (!id || actionBusy) return;
+    void (async () => {
+      setActionBusy(true);
+      const reporterId = await getSessionUserId();
+      if (!reporterId) {
+        setActionBusy(false);
+        return;
+      }
+      const { error } = await reportUser({
+        reporterId,
+        reportedUserId: id,
+        reason,
+      });
+      setActionBusy(false);
+      if (error) {
+        Alert.alert('Report failed', error.message);
+        return;
+      }
+      Alert.alert('Report submitted', 'Thanks — our team will review this report.');
+    })();
+  };
+
+  const confirmBlock = () => {
+    if (!id || actionBusy) return;
+    Alert.alert(
+      'Block this user?',
+      "They won't be able to contact you and will disappear from your feed.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setActionBusy(true);
+              const blockerId = await getSessionUserId();
+              if (!blockerId) {
+                setActionBusy(false);
+                return;
+              }
+              const [blockRes, reportRes] = await Promise.all([
+                blockUser({ blockerId, blockedId: id, reason: 'Blocked from member profile' }),
+                reportUser({
+                  reporterId: blockerId,
+                  reportedUserId: id,
+                  reason: 'Blocked user',
+                }),
+              ]);
+              setActionBusy(false);
+              if (blockRes.error || reportRes.error) {
+                Alert.alert('Block failed', blockRes.error?.message || reportRes.error?.message || 'Please try again.');
+                return;
+              }
+              Alert.alert('User blocked', 'They have been removed from your feed.');
+              router.back();
+            })();
+          },
+        },
+      ]
+    );
+  };
+
+  const openActions = () => {
+    if (!id || actionBusy) return;
+    Alert.alert(
+      'Member actions',
+      'What would you like to do?',
+      [
+        {
+          text: 'Report',
+          onPress: () => {
+            Alert.alert('Report reason', 'Choose a reason', [
+              { text: 'Harassment', onPress: () => handleReport('Harassment') },
+              { text: 'Spam', onPress: () => handleReport('Spam') },
+              { text: 'Inappropriate content', onPress: () => handleReport('Inappropriate content') },
+              { text: 'Other', onPress: () => handleReport('Other') },
+              { text: 'Cancel', style: 'cancel' },
+            ]);
+          },
+        },
+        { text: 'Block', style: 'destructive', onPress: confirmBlock },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
 
   if (loading) {
     return (
@@ -100,13 +190,21 @@ export default function MemberProfileScreen() {
     );
   }
 
-  const chips = [
-    profile.city,
-    profile.gender,
-    profile.ethnicity,
-    profile.religion,
-    profile.languages?.length ? profile.languages.join(', ') : null,
-  ].filter(Boolean) as string[];
+  const infoRows = [
+    { icon: 'location-outline' as const, label: 'City', value: profile.city },
+    { icon: 'person-outline' as const, label: 'Gender', value: profile.gender },
+    { icon: 'globe-outline' as const, label: 'Ethnicity', value: profile.ethnicity },
+    { icon: 'leaf-outline' as const, label: 'Religion', value: profile.religion },
+    {
+      icon: 'chatbubble-ellipses-outline' as const,
+      label: 'Languages',
+      value: profile.languages?.length ? profile.languages.join(' • ') : null,
+    },
+  ].filter((row) => row.value && row.value !== 'Prefer not to say') as Array<{
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    label: string;
+    value: string;
+  }>;
 
   return (
     <View style={styles.container}>
@@ -116,7 +214,9 @@ export default function MemberProfileScreen() {
             <Ionicons name="arrow-back" size={20} color={Colors.ink} />
           </TouchableOpacity>
           <Text style={styles.title}>Member Profile</Text>
-          <View style={styles.backBtn} />
+          <TouchableOpacity style={styles.moreBtn} onPress={openActions} disabled={actionBusy}>
+            <Ionicons name="ellipsis-horizontal" size={18} color={Colors.ink} />
+          </TouchableOpacity>
         </View>
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -140,13 +240,19 @@ export default function MemberProfileScreen() {
             </View>
           ) : null}
 
-          {chips.length > 0 ? (
+          {infoRows.length > 0 ? (
             <View style={styles.card}>
               <Text style={styles.sectionLabel}>Info</Text>
-              <View style={styles.chipsWrap}>
-                {chips.map((chip) => (
-                  <View key={chip} style={styles.chip}>
-                    <Text style={styles.chipText}>{chip}</Text>
+              <View style={styles.infoList}>
+                {infoRows.map((row, idx) => (
+                  <View key={row.label} style={[styles.infoRow, idx > 0 && styles.infoRowDivider]}>
+                    <View style={styles.infoIconWrap}>
+                      <Ionicons name={row.icon} size={16} color={Colors.brownMid} />
+                    </View>
+                    <View style={styles.infoTextWrap}>
+                      <Text style={styles.infoLabel}>{row.label}</Text>
+                      <Text style={styles.infoValue}>{row.value}</Text>
+                    </View>
                   </View>
                 ))}
               </View>
@@ -175,6 +281,16 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.sm,
   },
   backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.warmWhite,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -218,14 +334,20 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   bioText: { fontSize: 14, lineHeight: 21, color: Colors.brownMid },
-  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    borderRadius: Radius.full,
+  infoList: { gap: 10 },
+  infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  infoRowDivider: { paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.border },
+  infoIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
-    backgroundColor: Colors.paper,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
   },
-  chipText: { fontSize: 12, color: Colors.ink, fontWeight: '600' },
+  infoTextWrap: { flex: 1 },
+  infoLabel: { fontSize: 11, color: Colors.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6 },
+  infoValue: { fontSize: 14, color: Colors.brownMid, fontWeight: '600', marginTop: 2 },
 });
