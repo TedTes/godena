@@ -73,6 +73,15 @@ export default function AuthChoiceScreen() {
       return false;
     }
 
+    const fullNameParts = [
+      credential?.fullName?.givenName,
+      credential?.fullName?.familyName,
+    ].filter(Boolean);
+    if (fullNameParts.length > 0) {
+      const fullName = fullNameParts.join(' ');
+      await supabase.auth.updateUser({ data: { full_name: fullName, name: fullName } });
+    }
+
     const userId = idTokenData.user?.id;
     if (!userId) {
       router.replace('/');
@@ -115,6 +124,9 @@ export default function AuthChoiceScreen() {
         options: {
           redirectTo: oauthRedirectTo,
           skipBrowserRedirect: true,
+          queryParams: {
+            prompt: 'select_account',
+          },
         },
       });
 
