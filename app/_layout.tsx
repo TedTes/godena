@@ -21,6 +21,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="onboarding" />
         <Stack.Screen name="profile-setup" />
+        <Stack.Screen name="terms-accept" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         {/* OAuth callback — must be outside (auth) group so the deep-link scheme routes here */}
