@@ -63,6 +63,55 @@ const GENDER_OPTIONS = [
   { value: 'non_binary', label: 'Non-binary' },
 ] as const;
 
+const RELIGION_OPTIONS = [
+  { value: 'Christian', label: 'Christian' },
+  { value: 'Catholic', label: 'Catholic' },
+  { value: 'Orthodox', label: 'Orthodox' },
+  { value: 'Protestant', label: 'Protestant' },
+  { value: 'Muslim', label: 'Muslim' },
+  { value: 'Jewish', label: 'Jewish' },
+  { value: 'Hindu', label: 'Hindu' },
+  { value: 'Buddhist', label: 'Buddhist' },
+  { value: 'Sikh', label: 'Sikh' },
+  { value: 'Spiritual', label: 'Spiritual' },
+  { value: 'Other', label: 'Other' },
+  { value: 'Prefer not to say', label: 'Prefer not to say' },
+] as const;
+
+const ETHNICITY_OPTIONS = [
+  { value: 'African', label: 'African' },
+  { value: 'Black', label: 'Black' },
+  { value: 'Caribbean', label: 'Caribbean' },
+  { value: 'East Asian', label: 'East Asian' },
+  { value: 'South Asian', label: 'South Asian' },
+  { value: 'Southeast Asian', label: 'Southeast Asian' },
+  { value: 'Middle Eastern', label: 'Middle Eastern' },
+  { value: 'North African', label: 'North African' },
+  { value: 'Latino/Hispanic', label: 'Latino/Hispanic' },
+  { value: 'White', label: 'White' },
+  { value: 'Indigenous', label: 'Indigenous' },
+  { value: 'Mixed', label: 'Mixed' },
+  { value: 'Other', label: 'Other' },
+  { value: 'Prefer not to say', label: 'Prefer not to say' },
+] as const;
+
+const LANGUAGE_OPTIONS = [
+  { value: 'English', label: 'English' },
+  { value: 'French', label: 'French' },
+  { value: 'Spanish', label: 'Spanish' },
+  { value: 'Amharic', label: 'Amharic' },
+  { value: 'Tigrinya', label: 'Tigrinya' },
+  { value: 'Arabic', label: 'Arabic' },
+  { value: 'Hindi', label: 'Hindi' },
+  { value: 'Urdu', label: 'Urdu' },
+  { value: 'Somali', label: 'Somali' },
+  { value: 'Mandarin', label: 'Mandarin' },
+  { value: 'Cantonese', label: 'Cantonese' },
+  { value: 'Tagalog', label: 'Tagalog' },
+  { value: 'Swahili', label: 'Swahili' },
+  { value: 'Other', label: 'Other' },
+] as const;
+
 type EditableField =
   | 'bio'
   | 'birth_date'
@@ -115,6 +164,7 @@ export default function ProfileScreen() {
   const [editingField, setEditingField] = useState<EditableField | null>(null);
   const [isBioFocused, setIsBioFocused] = useState(false);
   const [editingValue, setEditingValue] = useState('');
+  const [editingLanguages, setEditingLanguages] = useState<string[]>([]);
   const [editingDate, setEditingDate] = useState<Date>(new Date());
   const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
 
@@ -294,7 +344,7 @@ export default function ProfileScreen() {
     LayoutAnimation.configureNext(LAYOUT_SPRING);
     setEditingField(field);
     if (field === 'languages') {
-      setEditingValue((profile.languages ?? []).join(', '));
+      setEditingLanguages(profile.languages ?? []);
     } else if (field === 'bio') {
       setEditingValue(profile.bio ?? '');
     } else if (field === 'ethnicity') {
@@ -335,6 +385,78 @@ export default function ProfileScreen() {
       );
     }
 
+    if (field === 'religion') {
+      return (
+        <View style={styles.inlineOptionsWrap}>
+          {RELIGION_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.inlineOptionChip, editingValue === opt.value && styles.inlineOptionChipActive]}
+              onPress={() => {
+                setEditingValue(opt.value);
+                void updateProfilePatch({ religion: opt.value }).then(closeEditRow);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.inlineOptionText, editingValue === opt.value && styles.inlineOptionTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      );
+    }
+
+    if (field === 'ethnicity') {
+      return (
+        <View style={styles.inlineOptionsWrap}>
+          {ETHNICITY_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.inlineOptionChip, editingValue === opt.value && styles.inlineOptionChipActive]}
+              onPress={() => {
+                setEditingValue(opt.value);
+                void updateProfilePatch({ ethnicity: opt.value }).then(closeEditRow);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.inlineOptionText, editingValue === opt.value && styles.inlineOptionTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      );
+    }
+
+    if (field === 'languages') {
+      const toggleLanguage = (value: string) => {
+        setEditingLanguages((prev) => {
+          const next = prev.includes(value)
+            ? prev.filter((v) => v !== value)
+            : [...prev, value];
+          void updateProfilePatch({ languages: next }).then(closeEditRow);
+          return next;
+        });
+      };
+      return (
+        <View style={styles.inlineOptionsWrap}>
+          {LANGUAGE_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.inlineOptionChip, editingLanguages.includes(opt.value) && styles.inlineOptionChipActive]}
+              onPress={() => toggleLanguage(opt.value)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.inlineOptionText, editingLanguages.includes(opt.value) && styles.inlineOptionTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      );
+    }
+
     const handleBlur = () => {
       if (field === 'languages') {
         const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
@@ -365,8 +487,7 @@ export default function ProfileScreen() {
     if (editingField === 'bio') return;
 
     if (editingField === 'languages') {
-      const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
-      await updateProfilePatch({ languages: parsed });
+      await updateProfilePatch({ languages: editingLanguages });
       closeEditRow();
       return;
     }
