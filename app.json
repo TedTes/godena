@@ -2,7 +2,7 @@
   "expo": {
     "name": "Godena",
     "slug": "godena",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,13 +16,15 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.godena.app",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "We use your photos to upload a profile picture, for example to show it on your profile and in groups."
       }
     },
     "android": {
       "package": "com.godena.app",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
