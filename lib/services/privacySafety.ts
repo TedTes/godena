@@ -70,3 +70,33 @@ export async function fetchMyReports(userId: string) {
     .limit(30);
 }
 
+export async function blockUser(params: { blockerId: string; blockedId: string; reason?: string }) {
+  return supabase
+    .from('blocked_users')
+    .upsert(
+      {
+        blocker_id: params.blockerId,
+        blocked_id: params.blockedId,
+        reason: params.reason ?? null,
+      },
+      { onConflict: 'blocker_id,blocked_id' }
+    );
+}
+
+export async function reportUser(params: {
+  reporterId: string;
+  reportedUserId: string;
+  reason: string;
+  details?: string;
+}) {
+  return supabase
+    .from('reports')
+    .insert({
+      reporter_id: params.reporterId,
+      reported_user_id: params.reportedUserId,
+      target_type: 'user',
+      target_id: params.reportedUserId,
+      reason: params.reason,
+      details: params.details ?? null,
+    });
+}

@@ -13,10 +13,10 @@ export async function hasProfile(userId: string): Promise<boolean> {
   return Boolean(data?.user_id && !data.deleted_at);
 }
 
-export async function resolvePostAuthRoute(userId: string): Promise<'/(tabs)/home' | '/profile-setup' | '/(auth)'> {
+export async function resolvePostAuthRoute(userId: string): Promise<string> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('user_id, deleted_at')
+    .select('user_id, deleted_at, terms_accepted_at')
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -25,6 +25,9 @@ export async function resolvePostAuthRoute(userId: string): Promise<'/(tabs)/hom
   if (data.deleted_at) {
     await supabase.auth.signOut();
     return '/(auth)';
+  }
+  if (!data.terms_accepted_at) {
+    return '/terms-accept?next=/(tabs)/home';
   }
   return '/(tabs)/home';
 }
