@@ -29,6 +29,55 @@ const GENDER_OPTIONS = [
   { value: 'non_binary', label: 'Non-binary' },
 ] as const;
 
+const RELIGION_OPTIONS = [
+  { value: 'Christian', label: 'Christian' },
+  { value: 'Catholic', label: 'Catholic' },
+  { value: 'Orthodox', label: 'Orthodox' },
+  { value: 'Protestant', label: 'Protestant' },
+  { value: 'Muslim', label: 'Muslim' },
+  { value: 'Jewish', label: 'Jewish' },
+  { value: 'Hindu', label: 'Hindu' },
+  { value: 'Buddhist', label: 'Buddhist' },
+  { value: 'Sikh', label: 'Sikh' },
+  { value: 'Spiritual', label: 'Spiritual' },
+  { value: 'Other', label: 'Other' },
+  { value: 'Prefer not to say', label: 'Prefer not to say' },
+] as const;
+
+const ETHNICITY_OPTIONS = [
+  { value: 'African', label: 'African' },
+  { value: 'Black', label: 'Black' },
+  { value: 'Caribbean', label: 'Caribbean' },
+  { value: 'East Asian', label: 'East Asian' },
+  { value: 'South Asian', label: 'South Asian' },
+  { value: 'Southeast Asian', label: 'Southeast Asian' },
+  { value: 'Middle Eastern', label: 'Middle Eastern' },
+  { value: 'North African', label: 'North African' },
+  { value: 'Latino/Hispanic', label: 'Latino/Hispanic' },
+  { value: 'White', label: 'White' },
+  { value: 'Indigenous', label: 'Indigenous' },
+  { value: 'Mixed', label: 'Mixed' },
+  { value: 'Other', label: 'Other' },
+  { value: 'Prefer not to say', label: 'Prefer not to say' },
+] as const;
+
+const LANGUAGE_OPTIONS = [
+  { value: 'English', label: 'English' },
+  { value: 'French', label: 'French' },
+  { value: 'Spanish', label: 'Spanish' },
+  { value: 'Amharic', label: 'Amharic' },
+  { value: 'Tigrinya', label: 'Tigrinya' },
+  { value: 'Arabic', label: 'Arabic' },
+  { value: 'Hindi', label: 'Hindi' },
+  { value: 'Urdu', label: 'Urdu' },
+  { value: 'Somali', label: 'Somali' },
+  { value: 'Mandarin', label: 'Mandarin' },
+  { value: 'Cantonese', label: 'Cantonese' },
+  { value: 'Tagalog', label: 'Tagalog' },
+  { value: 'Swahili', label: 'Swahili' },
+  { value: 'Other', label: 'Other' },
+] as const;
+
 type GenderValue = (typeof GENDER_OPTIONS)[number]['value'];
 
 type SelectedPhoto = {
@@ -52,7 +101,7 @@ export default function ProfileSetupScreen() {
   const [bio, setBio] = useState('');
   const [ethnicity, setEthnicity] = useState('');
   const [religion, setReligion] = useState('');
-  const [languagesInput, setLanguagesInput] = useState('');
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [gender, setGender] = useState<GenderValue | null>(null);
   const [isOpenToConnections, setIsOpenToConnections] = useState(true);
   const [datingModeEnabled, setDatingModeEnabled] = useState(false);
@@ -64,16 +113,8 @@ export default function ProfileSetupScreen() {
 
   const canSubmit =
     fullName.trim().length >= 2 &&
-    city.trim().length >= 2 &&
-    birthDate.trim().length > 0 &&
-    ethnicity.trim().length >= 2 &&
     !!gender &&
     !saving;
-
-  const parsedLanguages = languagesInput
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -100,6 +141,13 @@ export default function ProfileSetupScreen() {
         .maybeSingle();
 
       if (profileError || !existingProfile) {
+        const meta = user.user_metadata ?? {};
+        const metaName =
+          (meta.full_name as string | undefined) ||
+          (meta.name as string | undefined) ||
+          ([meta.given_name, meta.family_name].filter(Boolean).join(' ') || '') ||
+          '';
+        if (metaName) setFullName(metaName);
         setInitialLoading(false);
         return;
       }
@@ -109,9 +157,30 @@ export default function ProfileSetupScreen() {
       setCity(existingProfile.city ?? '');
       setBirthDate(existingProfile.birth_date ?? '');
       setBio(existingProfile.bio ?? '');
-      setEthnicity(existingProfile.ethnicity ?? '');
-      setReligion(existingProfile.religion ?? '');
-      setLanguagesInput((existingProfile.languages ?? []).join(', '));
+      const existingEthnicity = existingProfile.ethnicity ?? '';
+      setEthnicity(
+        ETHNICITY_OPTIONS.some((opt) => opt.value === existingEthnicity)
+          ? existingEthnicity
+          : existingEthnicity
+            ? 'Other'
+            : ''
+      );
+      const existingReligion = existingProfile.religion ?? '';
+      setReligion(
+        RELIGION_OPTIONS.some((opt) => opt.value === existingReligion)
+          ? existingReligion
+          : existingReligion
+            ? 'Other'
+            : ''
+      );
+      const existingLanguages = (existingProfile.languages ?? []) as string[];
+      const normalizedLanguages = existingLanguages.filter((lang) =>
+        LANGUAGE_OPTIONS.some((opt) => opt.value === lang)
+      );
+      if (existingLanguages.length > normalizedLanguages.length && !normalizedLanguages.includes('Other')) {
+        normalizedLanguages.push('Other');
+      }
+      setSelectedLanguages(normalizedLanguages);
       const existingGender = existingProfile.gender as GenderValue | null;
       setGender(existingGender && GENDER_OPTIONS.some((g) => g.value === existingGender) ? existingGender : null);
       setIsOpenToConnections(existingProfile.is_open_to_connections ?? true);
@@ -200,28 +269,30 @@ export default function ProfileSetupScreen() {
     }
 
     const normalizedBirthDate = birthDate.trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
-      setError('Birth date must use YYYY-MM-DD format.');
-      return;
-    }
-    const parsedBirthDate = new Date(`${normalizedBirthDate}T00:00:00.000Z`);
-    if (Number.isNaN(parsedBirthDate.getTime())) {
-      setError('Birth date is invalid.');
-      return;
-    }
-    if (parsedBirthDate > new Date()) {
-      setError('Birth date cannot be in the future.');
-      return;
-    }
-    const now = new Date();
-    let age = now.getFullYear() - parsedBirthDate.getUTCFullYear();
-    const monthDiff = now.getMonth() - parsedBirthDate.getUTCMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < parsedBirthDate.getUTCDate())) {
-      age -= 1;
-    }
-    if (age < 18) {
-      setError('You must be at least 18 years old.');
-      return;
+    if (normalizedBirthDate.length > 0) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
+        setError('Birth date must use YYYY-MM-DD format.');
+        return;
+      }
+      const parsedBirthDate = new Date(`${normalizedBirthDate}T00:00:00.000Z`);
+      if (Number.isNaN(parsedBirthDate.getTime())) {
+        setError('Birth date is invalid.');
+        return;
+      }
+      if (parsedBirthDate > new Date()) {
+        setError('Birth date cannot be in the future.');
+        return;
+      }
+      const now = new Date();
+      let age = now.getFullYear() - parsedBirthDate.getUTCFullYear();
+      const monthDiff = now.getMonth() - parsedBirthDate.getUTCMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < parsedBirthDate.getUTCDate())) {
+        age -= 1;
+      }
+      if (age < 18) {
+        setError('You must be at least 18 years old.');
+        return;
+      }
     }
     setError('');
     setSaving(true);
@@ -284,12 +355,12 @@ export default function ProfileSetupScreen() {
     const { error: upsertError } = await supabase.from('profiles').upsert({
       user_id: user.id,
       full_name: fullName.trim(),
-      city: city.trim(),
+      city: city.trim() || null,
       birth_date: normalizedBirthDate || null,
       bio: bio.trim() || null,
-      ethnicity: ethnicity.trim(),
+      ethnicity: ethnicity.trim() || null,
       religion: religion.trim() || null,
-      languages: parsedLanguages,
+      languages: selectedLanguages,
       gender,
       is_open_to_connections: isOpenToConnections,
       avatar_url: nextAvatarUrl,
@@ -334,7 +405,8 @@ export default function ProfileSetupScreen() {
       return;
     }
 
-    router.replace(datingModeEnabled ? '/dating-mode' : '/(tabs)/home');
+    const nextRoute = datingModeEnabled ? '/dating-mode' : '/(tabs)/home';
+    router.replace(`/terms-accept?next=${encodeURIComponent(nextRoute)}`);
   };
 
   if (initialLoading) {
@@ -417,7 +489,7 @@ export default function ProfileSetupScreen() {
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>City <Text style={styles.required}>*</Text></Text>
+            <Text style={styles.label}>City</Text>
             <TextInput
               style={styles.input}
               value={city}
@@ -429,7 +501,7 @@ export default function ProfileSetupScreen() {
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Birth date <Text style={styles.required}>*</Text></Text>
+            <Text style={styles.label}>Birth date</Text>
             <TouchableOpacity
               style={styles.dateInput}
               onPress={() => setShowDatePicker(true)}
@@ -462,37 +534,66 @@ export default function ProfileSetupScreen() {
           <Text style={styles.sectionHeader}>Culture &amp; Identity</Text>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Ethnicity <Text style={styles.required}>*</Text></Text>
-            <TextInput
-              style={styles.input}
-              value={ethnicity}
-              onChangeText={setEthnicity}
-              placeholder="Ethiopian, Eritrean, Habesha..."
-              placeholderTextColor={Colors.muted}
-            />
+            <Text style={styles.label}>Ethnicity</Text>
+            <View style={styles.intentRow}>
+              {ETHNICITY_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.intentChip, ethnicity === option.value && styles.intentChipActive]}
+                  onPress={() => setEthnicity(option.value)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.intentChipText, ethnicity === option.value && styles.intentChipTextActive]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           <View style={styles.field}>
             <Text style={styles.label}>Religion</Text>
-            <TextInput
-              style={styles.input}
-              value={religion}
-              onChangeText={setReligion}
-              placeholder="Orthodox Christian, Muslim..."
-              placeholderTextColor={Colors.muted}
-            />
+            <View style={styles.intentRow}>
+              {RELIGION_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.intentChip, religion === option.value && styles.intentChipActive]}
+                  onPress={() => setReligion(option.value)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.intentChipText, religion === option.value && styles.intentChipTextActive]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           <View style={styles.field}>
             <Text style={styles.label}>Languages</Text>
-            <TextInput
-              style={styles.input}
-              value={languagesInput}
-              onChangeText={setLanguagesInput}
-              placeholder="Amharic, English, Tigrinya"
-              placeholderTextColor={Colors.muted}
-              autoCapitalize="words"
-            />
+            <View style={styles.intentRow}>
+              {LANGUAGE_OPTIONS.map((option) => {
+                const isSelected = selectedLanguages.includes(option.value);
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[styles.intentChip, isSelected && styles.intentChipActive]}
+                    onPress={() => {
+                      setSelectedLanguages((prev) => (
+                        prev.includes(option.value)
+                          ? prev.filter((v) => v !== option.value)
+                          : [...prev, option.value]
+                      ));
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.intentChipText, isSelected && styles.intentChipTextActive]}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
 
           <View style={styles.field}>
