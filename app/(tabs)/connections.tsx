@@ -94,6 +94,9 @@ export default function ConnectionsScreen() {
   const [loading, setLoading] = useState(true);
   const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  const [datingModeEnabled, setDatingModeEnabled] = useState(false);
+  const [datingCandidateCount, setDatingCandidateCount] = useState(0);
+  const [datingMatchCount, setDatingMatchCount] = useState(0);
 
   const screenFade = useRef(new Animated.Value(0)).current;
 
@@ -218,21 +221,21 @@ export default function ConnectionsScreen() {
         }
 
         const connectionCards: ActiveConnection[] = accepted.map((c) => {
-            const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
-            const p = profileByUser.get(otherId);
-            const g = groupById.get(c.group_id);
-            const m = lastMsgByConnection.get(c.id);
-            return {
-              id: c.id,
-              source: 'connection',
-              name: p?.full_name || 'Connection',
-              photo: p?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=200&q=80',
-              groupName: g?.name || 'Group',
-              groupEmoji: groupEmoji(g?.category),
-              lastMessage: m?.content || 'No messages yet',
-              lastAt: m?.sent_at ? new Date(m.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
-            };
-          });
+          const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
+          const p = profileByUser.get(otherId);
+          const g = groupById.get(c.group_id);
+          const m = lastMsgByConnection.get(c.id);
+          return {
+            id: c.id,
+            source: 'connection',
+            name: p?.full_name || 'Connection',
+            photo: p?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=200&q=80',
+            groupName: g?.name || 'Group',
+            groupEmoji: groupEmoji(g?.category),
+            lastMessage: m?.content || 'No messages yet',
+            lastAt: m?.sent_at ? new Date(m.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
+          };
+        });
 
         const datingCards: ActiveConnection[] = datingMatches.map((m) => {
           const otherId = m.user_a_id === uid ? m.user_b_id : m.user_a_id;
@@ -254,6 +257,25 @@ export default function ConnectionsScreen() {
 
         setActiveConnections([...datingCards, ...connectionCards]);
 
+        // Dating state
+        const [{ data: datingProfile }, { count: matchCount }] = await Promise.all([
+          supabase.from('dating_profiles').select('is_enabled').eq('user_id', uid).maybeSingle(),
+          supabase
+            .from('dating_matches')
+            .select('id', { count: 'exact', head: true })
+            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
+            .eq('status', 'matched'),
+        ]);
+        const datingEnabled = (datingProfile as { is_enabled?: boolean } | null)?.is_enabled ?? false;
+        setDatingModeEnabled(datingEnabled);
+        setDatingMatchCount(matchCount ?? 0);
+        if (datingEnabled) {
+          const { data: candidates } = await supabase.rpc('get_dating_candidates', { p_limit: 12 });
+          setDatingCandidateCount(((candidates as Array<unknown> | null) ?? []).length);
+        } else {
+          setDatingCandidateCount(0);
+        }
+
         setLoading(false);
       };
 
@@ -261,7 +283,6 @@ export default function ConnectionsScreen() {
     }, [])
   );
 
-  // Fade in after data loads
   useEffect(() => {
     if (!loading) {
       Animated.timing(screenFade, {
@@ -274,12 +295,34 @@ export default function ConnectionsScreen() {
 
   const hasAnyData = pendingReveal !== null || activeConnections.length > 0;
 
+  // Count badge on dating pill: candidates or matches
+  const datingBadgeCount = datingCandidateCount > 0 ? datingCandidateCount : datingMatchCount;
+
   return (
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
 
+        {/* ── Header ── */}
         <View style={styles.header}>
-          <Text style={styles.title}>Connections</Text>
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>Connections</Text>
+            <Text style={styles.subtitle}>Introductions &amp; conversations</Text>
+          </View>
+          {datingModeEnabled && (
+            <TouchableOpacity
+              style={styles.datingPill}
+              onPress={() => router.push('/dating-mode')}
+              activeOpacity={0.82}
+            >
+              <Text style={styles.datingPillEmoji}>💘</Text>
+              <Text style={styles.datingPillLabel}>Dating</Text>
+              {datingBadgeCount > 0 && (
+                <View style={styles.datingPillBadge}>
+                  <Text style={styles.datingPillBadgeText}>{datingBadgeCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
 
         {loading ? (
@@ -292,10 +335,12 @@ export default function ConnectionsScreen() {
           /* ── Empty State ── */
           <Animated.View style={[styles.emptyWrap, { opacity: screenFade }]}>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.emptyScroll}>
+
+              {/* Hero */}
               <View style={styles.emptyHero}>
                 <View style={styles.emptyIconRing}>
                   <View style={styles.emptyIconBox}>
-                    <Ionicons name="heart-outline" size={34} color={Colors.terracotta} />
+                    <Ionicons name="heart-outline" size={30} color={Colors.terracotta} />
                   </View>
                 </View>
                 <Text style={styles.emptyTitle}>No introductions yet</Text>
@@ -304,84 +349,96 @@ export default function ConnectionsScreen() {
                 </Text>
               </View>
 
+              {/* How it works */}
               <View style={styles.howBox}>
-                <Text style={styles.howTitle}>How introductions work</Text>
+                <View style={styles.howTitleRow}>
+                  <Ionicons name="sparkles-outline" size={14} color={Colors.terracotta} />
+                  <Text style={styles.howTitle}>How introductions work</Text>
+                </View>
                 <View style={styles.howSteps}>
-                  <View style={styles.howStep}>
-                    <Text style={styles.howStepNum}>1</Text>
-                    <Text style={styles.howStepText}>Toggle "Open" in a group you're active in</Text>
-                  </View>
-                  <View style={styles.howStep}>
-                    <Text style={styles.howStepNum}>2</Text>
-                    <Text style={styles.howStepText}>We look for genuine, consistent activity between open members</Text>
-                  </View>
-                  <View style={styles.howStep}>
-                    <Text style={styles.howStepNum}>3</Text>
-                    <Text style={styles.howStepText}>When both signals align — warm introduction. Always mutual.</Text>
-                  </View>
+                  {[
+                    'Toggle "Open" in a group you\'re active in',
+                    'We look for genuine, consistent activity between open members',
+                    'When both signals align — warm introduction. Always mutual.',
+                  ].map((text, i) => (
+                    <View key={i} style={styles.howStep}>
+                      <View style={styles.howStepNumWrap}>
+                        <Text style={styles.howStepNum}>{i + 1}</Text>
+                        {i < 2 && <View style={styles.howStepLine} />}
+                      </View>
+                      <Text style={styles.howStepText}>{text}</Text>
+                    </View>
+                  ))}
                 </View>
               </View>
-              <View style={{ height: 40 }} />
+
+              <View style={{ height: 48 }} />
             </ScrollView>
           </Animated.View>
 
         ) : (
 
           /* ── Connections Layout ── */
-          <Animated.View style={[styles.tabbedWrap, { opacity: screenFade }]}>
-            <Animated.View style={styles.tabContentWrap}>
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: Spacing.lg, paddingBottom: 24 }}>
-                {/* Pending reveal */}
-                {pendingReveal && (
-                  <View style={styles.section}>
-                    <View style={styles.sectionHeader}>
-                      <Text style={styles.sectionLabel}>New Introduction</Text>
-                      <View style={styles.newBadge}><Text style={styles.newBadgeText}>New</Text></View>
-                    </View>
-                    <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
-                      <View style={styles.revealGlow} />
-                      <View style={styles.revealRow}>
-                        <View style={styles.revealLeftCol}>
-                          <View style={styles.revealTop}>
-                            <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
-                            <View style={styles.revealBadge}>
-                              <Text style={styles.revealBadgeText}>✨</Text>
-                            </View>
-                          </View>
-                        </View>
-                        <View style={styles.revealContent}>
-                          <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
-                          <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
-                          <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
-                        </View>
-                        <View style={styles.revealChevronWrap}>
-                          <Ionicons name="chevron-forward" size={20} color="rgba(245,240,232,0.85)" />
+          <Animated.View style={[styles.contentWrap, { opacity: screenFade }]}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+
+              {/* Pending reveal */}
+              {pendingReveal && (
+                <View style={styles.section}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionLabel}>New Introduction</Text>
+                    <View style={styles.newBadge}><Text style={styles.newBadgeText}>New</Text></View>
+                  </View>
+                  <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
+                    <View style={styles.revealGlow} />
+                    <View style={styles.revealRow}>
+                      <View style={styles.revealTop}>
+                        <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
+                        <View style={styles.revealBadge}>
+                          <Text style={styles.revealBadgeText}>✨</Text>
                         </View>
                       </View>
-                    </TouchableOpacity>
-                  </View>
-                )}
+                      <View style={styles.revealContent}>
+                        <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
+                        <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
+                        <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
+                      </View>
+                      <View style={styles.revealChevronWrap}>
+                        <Ionicons name="chevron-forward" size={20} color="rgba(245,240,232,0.85)" />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              )}
 
-                {/* Active connections */}
-                <View style={styles.section}>
+              {/* Active connections */}
+              <View style={styles.section}>
+                {activeConnections.length > 0 && (
+                  <Text style={styles.sectionLabel}>Conversations</Text>
+                )}
+                <View style={styles.connectionList}>
                   {activeConnections.length > 0 ? (
                     activeConnections.map((c) => (
                       <TouchableOpacity
                         key={c.id}
                         style={styles.connectionCard}
                         onPress={() => router.push(c.source === 'dating' ? `/chat/${c.id}?source=dating` : `/chat/${c.id}`)}
-                        activeOpacity={0.85}
+                        activeOpacity={0.82}
                       >
-                        <Image source={{ uri: c.photo }} style={styles.connPhoto} />
+                        <View style={styles.connPhotoWrap}>
+                          <Image source={{ uri: c.photo }} style={styles.connPhoto} />
+                          {c.source === 'dating' && (
+                            <View style={styles.connDatingDot}>
+                              <Text style={styles.connDatingDotText}>💘</Text>
+                            </View>
+                          )}
+                        </View>
                         <View style={styles.connInfo}>
                           <View style={styles.connTopRow}>
                             <Text style={styles.connName} numberOfLines={1}>{c.name}</Text>
-                            <View style={styles.connTopRight}>
-                              <Text style={styles.connDate}>{c.lastAt}</Text>
-                              <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
-                            </View>
+                            <Text style={styles.connDate}>{c.lastAt}</Text>
                           </View>
-                          <Text style={styles.connGroup}>{c.groupEmoji} {c.groupName}</Text>
+                          <Text style={styles.connGroup} numberOfLines={1}>{c.groupEmoji} {c.groupName}</Text>
                           <Text
                             style={[styles.connLast, c.lastAt ? styles.connLastMsg : styles.connLastEmpty]}
                             numberOfLines={1}
@@ -389,6 +446,7 @@ export default function ConnectionsScreen() {
                             {c.lastAt ? c.lastMessage : 'Start the conversation'}
                           </Text>
                         </View>
+                        <Ionicons name="chevron-forward" size={16} color={Colors.border} />
                       </TouchableOpacity>
                     ))
                   ) : (
@@ -396,18 +454,17 @@ export default function ConnectionsScreen() {
                       <View style={styles.activeEmptyIconBox}>
                         <Ionicons name="chatbubbles-outline" size={22} color={Colors.brownLight} />
                       </View>
-                      <Text style={styles.activeEmptyTitle}>No active connections yet</Text>
+                      <Text style={styles.activeEmptyTitle}>No conversations yet</Text>
                       <Text style={styles.activeEmptyText}>
-                        Accepted introductions will appear here as conversations.
+                        Accepted introductions will appear here.
                       </Text>
                     </View>
                   )}
                 </View>
+              </View>
 
-                <View style={{ height: 40 }} />
-              </ScrollView>
-            </Animated.View>
-
+              <View style={{ height: 48 }} />
+            </ScrollView>
           </Animated.View>
         )}
 
@@ -421,62 +478,103 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
+  // ── Header ──
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.md,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  title: { fontSize: 22, fontWeight: '700', color: Colors.ink },
+  headerLeft: { flex: 1 },
+  title: { fontSize: 24, fontWeight: '800', color: Colors.ink, letterSpacing: -0.3 },
+  subtitle: { fontSize: 13, color: Colors.muted, marginTop: 2 },
+
+  // Dating pill in header
+  datingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.brown,
+    borderRadius: Radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginLeft: 12,
+  },
+  datingPillEmoji: { fontSize: 13 },
+  datingPillLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.cream,
+  },
+  datingPillBadge: {
+    backgroundColor: Colors.terracotta,
+    borderRadius: Radius.full,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    marginLeft: 2,
+  },
+  datingPillBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.white,
+  },
+
+  // ── Layout ──
+  contentWrap: { flex: 1 },
+  scrollContent: { paddingTop: Spacing.lg, paddingBottom: 24 },
+
   // ── Empty State ──
   emptyWrap: { flex: 1 },
-  emptyScroll: { paddingHorizontal: Spacing.lg },
+  emptyScroll: { paddingHorizontal: Spacing.lg, paddingTop: 12 },
   emptyHero: {
     alignItems: 'center',
-    paddingTop: 48,
+    paddingTop: 44,
     paddingBottom: 32,
-    gap: 12,
+    gap: 10,
   },
   emptyIconRing: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: 'rgba(196,98,45,0.08)',
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: 'rgba(196,98,45,0.07)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
   },
   emptyIconBox: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: 'rgba(196,98,45,0.12)',
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: 'rgba(196,98,45,0.11)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: { fontSize: 20, fontWeight: '900', color: Colors.ink, textAlign: 'center' },
+  emptyTitle: { fontSize: 19, fontWeight: '800', color: Colors.ink, textAlign: 'center' },
   emptySubtext: {
     fontSize: 14,
     color: Colors.muted,
     textAlign: 'center',
     lineHeight: 21,
-    maxWidth: 280,
+    maxWidth: 270,
   },
-
-  // ── Tabbed layout ──
-  tabbedWrap: { flex: 1 },
-  tabContentWrap: { flex: 1 },
 
   // ── Sections ──
   section: { marginBottom: Spacing.lg, paddingHorizontal: Spacing.lg },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   sectionLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.muted,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 1.1,
+    marginBottom: 12,
   },
   newBadge: {
     backgroundColor: Colors.terracotta,
@@ -486,30 +584,32 @@ const styles = StyleSheet.create({
   },
   newBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '700' },
 
+  connectionList: { gap: 8 },
+
   activeEmptyWrap: {
-    paddingVertical: 32,
+    paddingVertical: 36,
     paddingHorizontal: 24,
     alignItems: 'center',
     gap: 6,
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.lg,
   },
   activeEmptyIconBox: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: Colors.paper,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: Colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  activeEmptyTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink },
+  activeEmptyTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink },
   activeEmptyText: {
     fontSize: 13,
     color: Colors.muted,
     textAlign: 'center',
     lineHeight: 19,
-    maxWidth: 240,
+    maxWidth: 220,
   },
 
   // ── Reveal card ──
@@ -524,9 +624,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
-  },
-  revealLeftCol: {
-    width: 68,
   },
   revealContent: {
     flex: 1,
@@ -562,10 +659,7 @@ const styles = StyleSheet.create({
   revealName: { fontSize: 17, fontWeight: '800', color: Colors.cream, marginBottom: 2 },
   revealGroup: { fontSize: 11, color: Colors.brownLight, marginBottom: 8 },
   revealMsg: { fontSize: 13, color: 'rgba(245,240,232,0.72)', lineHeight: 19 },
-  revealChevronWrap: {
-    alignSelf: 'center',
-    paddingLeft: 4,
-  },
+  revealChevronWrap: { alignSelf: 'center', paddingLeft: 4 },
 
   // ── Connection cards ──
   connectionCard: {
@@ -573,49 +667,69 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: Colors.warmWhite,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: 10,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
   },
-  connPhoto: { width: 52, height: 52, borderRadius: 26 },
-  connInfo: { flex: 1 },
+  connPhotoWrap: { position: 'relative' },
+  connPhoto: { width: 54, height: 54, borderRadius: 27 },
+  connDatingDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -3,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: Colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connDatingDotText: { fontSize: 11 },
+  connInfo: { flex: 1, minWidth: 0 },
   connTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 2,
   },
-  connTopRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginLeft: 8,
-  },
   connName: { flex: 1, fontSize: 15, fontWeight: '700', color: Colors.ink, marginRight: 8 },
-  connGroup: { fontSize: 11, color: Colors.terracotta, fontWeight: '600', marginBottom: 4 },
-  connLast: { fontSize: 12, color: Colors.muted },
-  connLastMsg: { color: Colors.brownMid, fontWeight: '500' },
-  connLastEmpty: { fontStyle: 'italic' },
-  connDate: { fontSize: 11, color: Colors.muted },
+  connGroup: { fontSize: 11, color: Colors.terracotta, fontWeight: '600', marginBottom: 3 },
+  connLast: { fontSize: 12 },
+  connLastMsg: { color: Colors.brownMid },
+  connLastEmpty: { color: Colors.muted, fontStyle: 'italic' },
+  connDate: { fontSize: 11, color: Colors.muted, flexShrink: 0 },
 
   // ── How it works ──
   howBox: {
     backgroundColor: Colors.paper,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 18,
     borderWidth: 1,
     borderColor: Colors.borderDark,
+  },
+  howTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 18,
   },
   howTitle: {
     fontSize: 13,
     fontWeight: '700',
     color: Colors.brownMid,
-    marginBottom: 12,
   },
-  howSteps: { gap: 10 },
-  howStep: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  howSteps: { gap: 0 },
+  howStep: {
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  howStepNumWrap: {
+    alignItems: 'center',
+    width: 22,
+  },
   howStepNum: {
     width: 22,
     height: 22,
@@ -626,7 +740,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     lineHeight: 22,
-    flexShrink: 0,
+    overflow: 'hidden',
   },
-  howStepText: { flex: 1, fontSize: 13, color: Colors.muted, lineHeight: 19 },
+  howStepLine: {
+    width: 1.5,
+    height: 18,
+    backgroundColor: 'rgba(196,98,45,0.2)',
+    marginTop: 3,
+  },
+  howStepText: { flex: 1, fontSize: 13, color: Colors.muted, lineHeight: 20, paddingTop: 2 },
 });

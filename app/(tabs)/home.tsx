@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
   Image,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useScreenEnter } from '../../hooks/useScreenEnter';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -122,9 +121,6 @@ export default function HomeScreen() {
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const [notificationCount, setNotificationCount] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivityPost[]>([]);
-  const [datingModeEnabled, setDatingModeEnabled] = useState(false);
-  const [datingCandidateCount, setDatingCandidateCount] = useState(0);
-  const [datingMatchCount, setDatingMatchCount] = useState(0);
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -141,43 +137,16 @@ export default function HomeScreen() {
       const inboxItems = await fetchNotificationInboxItems(userId);
       setNotificationCount(inboxItems.length);
 
-      const lastSeenMatchesAt = await AsyncStorage.getItem(`dating_matches_last_seen:${userId}`);
-      const matchCountQuery = supabase
-        .from('dating_matches')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'matched')
-        .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
-      if (lastSeenMatchesAt) {
-        matchCountQuery.gt('matched_at', lastSeenMatchesAt);
-      }
-
-      const [{ data: profile }, { data: datingProfile }, { count: matchCount }] = await Promise.all([
+      const [{ data: profile }] = await Promise.all([
         supabase
           .from('profiles')
           .select('full_name')
           .eq('user_id', userId)
           .maybeSingle(),
-        supabase
-          .from('dating_profiles')
-          .select('is_enabled')
-          .eq('user_id', userId)
-          .maybeSingle(),
-        matchCountQuery,
       ]);
 
       if (profile?.full_name) {
         setFirstName(profile.full_name.split(' ')[0] ?? profile.full_name);
-      }
-
-      const datingEnabled = datingProfile?.is_enabled ?? false;
-      setDatingModeEnabled(datingEnabled);
-      setDatingMatchCount(matchCount ?? 0);
-
-      if (datingEnabled) {
-        const { data: candidates } = await supabase.rpc('get_dating_candidates', { p_limit: 12 });
-        setDatingCandidateCount(((candidates as Array<unknown> | null) ?? []).length);
-      } else {
-        setDatingCandidateCount(0);
       }
 
       const startOfMonth = new Date();
@@ -498,50 +467,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {datingModeEnabled && (
-            <View style={styles.datingSection}>
-              <TouchableOpacity
-                style={styles.datingCard}
-                activeOpacity={0.88}
-                onPress={() => router.push('/dating-mode')}
-              >
-                <View style={styles.datingCardLeft}>
-                  <Text style={styles.datingEyebrow}>
-                    {datingCandidateCount > 0 ? 'Ready now' : 'Open dating'}
-                  </Text>
-                  <Text style={styles.datingTitle}>
-                    {datingCandidateCount > 0
-                      ? `${datingCandidateCount} ${datingCandidateCount === 1 ? 'person' : 'people'} waiting`
-                      : datingMatchCount > 0
-                      ? `${datingMatchCount} ${datingMatchCount === 1 ? 'match' : 'matches'} waiting`
-                      : 'Open Dating Mode'}
-                  </Text>
-                  <Text style={styles.datingSub}>
-                    {datingCandidateCount > 0 && datingMatchCount > 0
-                      ? `You have ${datingMatchCount} ${datingMatchCount === 1 ? 'match' : 'matches'}. Swipe to see who is next.`
-                      : datingCandidateCount > 0
-                      ? 'Swipe through new candidates matched to your preferences.'
-                      : datingMatchCount > 0
-                      ? 'Open dating to view your matches and keep browsing.'
-                      : 'See your dating profile, preferences, and new matches here.'}
-                  </Text>
-                </View>
-                <View style={styles.datingCardRight}>
-                  {datingMatchCount > 0 && (
-                    <View style={styles.datingCountPill}>
-                      <Ionicons name="heart" size={12} color={C.terracotta} />
-                      <Text style={styles.datingCountText}>
-                        {datingMatchCount} {datingMatchCount === 1 ? 'match' : 'matches'}
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.datingArrowWrap}>
-                    <Ionicons name="arrow-forward" size={16} color={C.white} />
-                  </View>
-                </View>
-              </TouchableOpacity>
-            </View>
-          )}
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -813,7 +738,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
 
   section: { marginBottom: 32 },
-  datingSection: { marginBottom: 24 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1032,65 +956,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     lineHeight: 17,
   },
 
-  datingCard: {
-    marginHorizontal: Spacing.lg,
-    backgroundColor: C.brown,
-    borderRadius: Radius.lg,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    overflow: 'hidden',
-  },
-  datingCardLeft: { flex: 1, paddingRight: 8 },
-  datingEyebrow: {
-    fontSize: 10,
-    color: C.terraLight,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    marginBottom: 4,
-  },
-  datingTitle: {
-    fontSize: 17,
-    lineHeight: 22,
-    fontWeight: '800',
-    color: C.cream,
-    marginBottom: 4,
-  },
-  datingSub: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: C.brownLight,
-  },
-  datingCardRight: {
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    minHeight: 62,
-    gap: 8,
-  },
-  datingCountPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderRadius: Radius.full,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-  },
-  datingCountText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: C.cream,
-  },
-  datingArrowWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: C.terracotta,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
   activityFeed: { gap: 8, paddingHorizontal: Spacing.lg },
   activityItem: {
