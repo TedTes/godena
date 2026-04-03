@@ -311,11 +311,16 @@ export default function ConnectionsScreen() {
           {datingModeEnabled && (
             <TouchableOpacity
               style={styles.datingPill}
-              onPress={() => router.push('/dating-mode')}
+              onPress={() => router.push('/dating-discover')}
               activeOpacity={0.82}
             >
-              <Text style={styles.datingPillEmoji}>💘</Text>
-              <Text style={styles.datingPillLabel}>Dating</Text>
+              <View style={styles.datingPillIcon}>
+                <Text style={styles.datingPillEmoji}>💘</Text>
+              </View>
+              <View style={styles.datingPillText}>
+                <Text style={styles.datingPillLabel}>Dating</Text>
+                <Text style={styles.datingPillSub}>Discover</Text>
+              </View>
               {datingBadgeCount > 0 && (
                 <View style={styles.datingPillBadge}>
                   <Text style={styles.datingPillBadgeText}>{datingBadgeCount}</Text>
@@ -497,18 +502,40 @@ const styles = StyleSheet.create({
   datingPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 8,
     backgroundColor: Colors.brown,
     borderRadius: Radius.full,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
     marginLeft: 12,
+    borderWidth: 1,
+    borderColor: Colors.terraDim,
+    shadowColor: Colors.brown,
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  datingPillEmoji: { fontSize: 13 },
+  datingPillIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(232,133,90,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  datingPillEmoji: { fontSize: 12 },
+  datingPillText: { alignItems: 'flex-start' },
   datingPillLabel: {
     fontSize: 13,
     fontWeight: '700',
     color: Colors.cream,
+  },
+  datingPillSub: {
+    fontSize: 10,
+    color: Colors.terraLight,
+    fontWeight: '600',
+    marginTop: -1,
   },
   datingPillBadge: {
     backgroundColor: Colors.terracotta,
