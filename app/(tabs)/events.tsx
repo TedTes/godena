@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Linking,
   View,
   Text,
   StyleSheet,
@@ -24,6 +25,11 @@ import {
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import { EventCardSkeleton } from '../../components/Skeleton';
 import { supabase } from '../../lib/supabase';
+import {
+  fetchAgentEventSuggestions,
+  logAgentFeedbackEvent,
+  type AgentEventSuggestion,
+} from '../../lib/services/agentPipeline';
 
 type EventCard = {
   id: string;
@@ -95,6 +101,8 @@ export default function EventsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [events, setEvents]   = useState<EventCard[]>([]);
+  const [agentSuggestions, setAgentSuggestions] = useState<AgentEventSuggestion[]>([]);
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const enterStyle = useScreenEnter();
 
   const load = useCallback(async () => {
@@ -103,6 +111,7 @@ export default function EventsScreen() {
 
     const uid = await getSessionUserId();
     if (!uid) { setEvents([]); setLoading(false); return; }
+    setSessionUserId(uid);
 
     const { data: profileRow } = await supabase
       .from('profiles')
@@ -111,8 +120,28 @@ export default function EventsScreen() {
       .maybeSingle();
     const userCity = (profileRow as { city?: string | null } | null)?.city ?? null;
 
-    const { data: unifiedRows, error: unifiedError } = await fetchUnifiedEventsForUser(uid, userCity);
+    const [{ data: unifiedRows, error: unifiedError }, { data: suggestionRows, error: suggestionError }] = await Promise.all([
+      fetchUnifiedEventsForUser(uid, userCity),
+      fetchAgentEventSuggestions({ city: userCity, userId: uid, limit: 6 }),
+    ]);
     if (unifiedError) { setError(unifiedError.message); setLoading(false); return; }
+    if (suggestionError) {
+      console.warn('fetchAgentEventSuggestions failed', suggestionError.message);
+      setAgentSuggestions([]);
+    } else {
+      setAgentSuggestions(suggestionRows ?? []);
+      for (const suggestion of suggestionRows ?? []) {
+        const { error: feedbackError } = await logAgentFeedbackEvent({
+          proposalId: suggestion.proposalId,
+          userId: uid,
+          eventType: 'viewed',
+          metadata: { source: 'events_screen' },
+        });
+        if (feedbackError) {
+          console.warn('logAgentFeedbackEvent(viewed) failed', feedbackError.message);
+        }
+      }
+    }
 
     const unified = (unifiedRows ?? []) as UnifiedEventRow[];
     const groupGoingIds = Array.from(
@@ -187,6 +216,71 @@ export default function EventsScreen() {
     return events.filter((e) => e.myStatus === 'going' || e.myStatus === 'interested');
   }, [events, filter]);
 
+  const renderHeader = () => (
+    <>
+      {agentSuggestions.length > 0 && (
+        <View style={styles.suggestionSection}>
+          <View style={styles.suggestionHeaderRow}>
+            <Text style={styles.suggestionSectionLabel}>Suggested For You</Text>
+            <View style={styles.suggestionHintPill}>
+              <Ionicons name="sparkles-outline" size={12} color={Colors.terracotta} />
+              <Text style={styles.suggestionHintText}>Agent-screened</Text>
+            </View>
+          </View>
+          <View style={styles.suggestionList}>
+            {agentSuggestions.map((suggestion) => (
+              <TouchableOpacity
+                key={suggestion.proposalId}
+                style={styles.suggestionCard}
+                activeOpacity={0.88}
+                onPress={async () => {
+                  const { error: feedbackError } = await logAgentFeedbackEvent({
+                    proposalId: suggestion.proposalId,
+                    userId: sessionUserId,
+                    eventType: 'clicked',
+                    metadata: { source: 'events_screen' },
+                  });
+                  if (feedbackError) {
+                    console.warn('logAgentFeedbackEvent(clicked) failed', feedbackError.message);
+                  }
+                  if (suggestion.externalEventId) {
+                    router.push(`/event/external/${suggestion.externalEventId}`);
+                    return;
+                  }
+                  if (suggestion.sourceUrl) {
+                    await Linking.openURL(suggestion.sourceUrl);
+                  }
+                }}
+              >
+                <View style={styles.suggestionTopRow}>
+                  <View style={styles.suggestionBadge}>
+                    <Text style={styles.suggestionBadgeText}>Suggested</Text>
+                  </View>
+                  <Text style={styles.suggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
+                </View>
+                <Text style={styles.suggestionTitle} numberOfLines={2}>{suggestion.title}</Text>
+                <Text style={styles.suggestionMeta} numberOfLines={1}>
+                  {suggestion.startsAt ? `${formatRelativeDate(suggestion.startsAt)} · ${formatTime(suggestion.startsAt)}` : 'Flexible timing'}
+                  {suggestion.venueName ? ` · ${suggestion.venueName}` : suggestion.city ? ` · ${suggestion.city}` : ''}
+                </Text>
+                {suggestion.body ? (
+                  <Text style={styles.suggestionBody} numberOfLines={2}>{suggestion.body}</Text>
+                ) : null}
+                <View style={styles.suggestionReasonRow}>
+                  {suggestion.reasons.slice(0, 2).map((reason) => (
+                    <View key={reason.id} style={styles.suggestionReasonPill}>
+                      <Text style={styles.suggestionReasonText}>{reason.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+    </>
+  );
+
   return (
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
@@ -227,6 +321,7 @@ export default function EventsScreen() {
             keyExtractor={(e) => e.id}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
+            ListHeaderComponent={renderHeader}
             ListEmptyComponent={<EmptyState error={error} filter={filter} />}
             renderItem={({ item: ev }) => (
               <View>
@@ -433,6 +528,99 @@ const styles = StyleSheet.create({
   // ── List ──
   list: { paddingHorizontal: Spacing.lg, gap: 10, paddingBottom: 32 },
   skeletonList: { paddingHorizontal: Spacing.lg, gap: 10, paddingTop: 4 },
+  suggestionSection: { paddingBottom: 16, gap: 12 },
+  suggestionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 4,
+  },
+  suggestionSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    color: Colors.muted,
+  },
+  suggestionHintPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(196,98,45,0.10)',
+  },
+  suggestionHintText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.terracotta,
+  },
+  suggestionList: { gap: 10 },
+  suggestionCard: {
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    gap: 8,
+  },
+  suggestionTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  suggestionBadge: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.brown,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  suggestionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.cream,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  suggestionScore: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.olive,
+  },
+  suggestionTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Colors.ink,
+    lineHeight: 22,
+  },
+  suggestionMeta: {
+    fontSize: 12,
+    color: Colors.brownMid,
+  },
+  suggestionBody: {
+    fontSize: 13,
+    color: Colors.muted,
+    lineHeight: 19,
+  },
+  suggestionReasonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  suggestionReasonPill: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  suggestionReasonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.brownMid,
+  },
 
   // ── Card ──
   card: {
