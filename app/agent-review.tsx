@@ -23,13 +23,24 @@ type FilterStatus = 'draft' | 'approved' | 'rejected';
 
 type ProposalRow = {
   id: string;
+  opportunity_id: string | null;
   title: string;
   body: string | null;
+  proposal_kind: 'event' | 'group' | 'introduction';
   status: FilterStatus | 'published' | 'expired';
   approval_policy: 'auto_suggest' | 'organizer_confirm' | 'manual_only';
   target_surface: 'home' | 'groups' | 'events' | 'connections' | 'profile';
   confidence_score: number;
   city: string | null;
+  rationale: {
+    feedback_summary?: {
+      views?: number;
+      clicks?: number;
+      dismisses?: number;
+      ignores?: number;
+    };
+  } | null;
+  expires_at: string | null;
   created_at: string;
 };
 
@@ -53,8 +64,21 @@ export default function AgentReviewScreen() {
     draftCount: 0,
     approvedCount: 0,
     rejectedCount: 0,
+    publishedCount: 0,
+    expiredCount: 0,
     feedbackCount: 0,
+    eventOpportunityCount: 0,
+    groupOpportunityCount: 0,
+    introOpportunityCount: 0,
   });
+  const [latestRun, setLatestRun] = useState<null | {
+    source: string;
+    status: string;
+    records_received: number;
+    records_rejected: number;
+    opportunities_upserted: number;
+    created_at: string;
+  }>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,18 +91,46 @@ export default function AgentReviewScreen() {
       limit: 50,
     });
 
-    const [{ count: draftCount }, { count: approvedCount }, { count: rejectedCount }, { count: feedbackCount }] = await Promise.all([
+    const [
+      { count: draftCount },
+      { count: approvedCount },
+      { count: rejectedCount },
+      { count: publishedCount },
+      { count: expiredCount },
+      { count: feedbackCount },
+      { count: eventOpportunityCount },
+      { count: groupOpportunityCount },
+      { count: introOpportunityCount },
+      latestRunRes,
+    ] = await Promise.all([
       supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
       supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
       supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
+      supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'published'),
+      supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'expired'),
       supabase.from('agent_feedback_events').select('id', { count: 'exact', head: true }),
+      supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'event'),
+      supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'group'),
+      supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'introduction'),
+      supabase
+        .from('agent_ingestion_runs')
+        .select('source, status, records_received, records_rejected, opportunities_upserted, created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
     setStats({
       draftCount: draftCount ?? 0,
       approvedCount: approvedCount ?? 0,
       rejectedCount: rejectedCount ?? 0,
+      publishedCount: publishedCount ?? 0,
+      expiredCount: expiredCount ?? 0,
       feedbackCount: feedbackCount ?? 0,
+      eventOpportunityCount: eventOpportunityCount ?? 0,
+      groupOpportunityCount: groupOpportunityCount ?? 0,
+      introOpportunityCount: introOpportunityCount ?? 0,
     });
+    setLatestRun(latestRunRes.data ?? null);
 
     if (error) {
       Alert.alert('Could not load proposals', error.message);
@@ -180,8 +232,44 @@ export default function AgentReviewScreen() {
                 <Text style={styles.statLabel}>Rejected</Text>
               </View>
               <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.publishedCount}</Text>
+                <Text style={styles.statLabel}>Published</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.expiredCount}</Text>
+                <Text style={styles.statLabel}>Expired</Text>
+              </View>
+              <View style={styles.statCard}>
                 <Text style={styles.statValue}>{stats.feedbackCount}</Text>
                 <Text style={styles.statLabel}>Feedback</Text>
+              </View>
+            </View>
+
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.eventOpportunityCount}</Text>
+                <Text style={styles.statLabel}>Event Opps</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.groupOpportunityCount}</Text>
+                <Text style={styles.statLabel}>Group Opps</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.introOpportunityCount}</Text>
+                <Text style={styles.statLabel}>Intro Opps</Text>
+              </View>
+              <View style={styles.runCard}>
+                <Text style={styles.runCardLabel}>Latest Ingestion</Text>
+                {latestRun ? (
+                  <>
+                    <Text style={styles.runCardValue}>{latestRun.source}</Text>
+                    <Text style={styles.runCardMeta}>
+                      {latestRun.status} · {latestRun.opportunities_upserted} opps · {latestRun.records_rejected} rejected
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={styles.runCardMeta}>No runs yet</Text>
+                )}
               </View>
             </View>
             <Text style={styles.sectionTitle}>{title}</Text>
@@ -203,6 +291,9 @@ export default function AgentReviewScreen() {
                           <Text style={styles.statusPillText}>{proposal.status}</Text>
                         </View>
                         <View style={styles.metaPill}>
+                          <Text style={styles.metaPillText}>{proposal.proposal_kind}</Text>
+                        </View>
+                        <View style={styles.metaPill}>
                           <Text style={styles.metaPillText}>{proposal.target_surface}</Text>
                         </View>
                         <View style={styles.metaPill}>
@@ -221,7 +312,32 @@ export default function AgentReviewScreen() {
                       <Text style={styles.cardMetaText}>
                         {new Date(proposal.created_at).toLocaleDateString()}
                       </Text>
+                      {proposal.expires_at ? (
+                        <>
+                          <Text style={styles.cardMetaDot}>•</Text>
+                          <Text style={styles.cardMetaText}>
+                            Expires {new Date(proposal.expires_at).toLocaleDateString()}
+                          </Text>
+                        </>
+                      ) : null}
                     </View>
+
+                    {proposal.rationale?.feedback_summary ? (
+                      <View style={styles.feedbackSummaryRow}>
+                        <Text style={styles.feedbackSummaryText}>
+                          {proposal.rationale.feedback_summary.views ?? 0} views
+                        </Text>
+                        <Text style={styles.feedbackSummaryText}>
+                          {proposal.rationale.feedback_summary.clicks ?? 0} clicks
+                        </Text>
+                        <Text style={styles.feedbackSummaryText}>
+                          {proposal.rationale.feedback_summary.dismisses ?? 0} dismisses
+                        </Text>
+                        <Text style={styles.feedbackSummaryText}>
+                          {proposal.rationale.feedback_summary.ignores ?? 0} ignores
+                        </Text>
+                      </View>
+                    ) : null}
 
                     {reasons.length > 0 ? (
                       <View style={styles.reasonWrap}>
@@ -352,7 +468,42 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
   },
+  runCard: {
+    width: '47%',
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    gap: 6,
+  },
+  runCardLabel: {
+    fontSize: 12,
+    color: Colors.muted,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  runCardValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  runCardMeta: {
+    fontSize: 12,
+    color: Colors.brownMid,
+    lineHeight: 18,
+  },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: Colors.muted },
+  feedbackSummaryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  feedbackSummaryText: {
+    fontSize: 12,
+    color: Colors.brownMid,
+    fontWeight: '600',
+  },
   emptyCard: {
     backgroundColor: Colors.warmWhite,
     borderRadius: Radius.lg,
