@@ -241,6 +241,28 @@ export default function EventsScreen() {
     setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
   }, [actingSuggestionId, sessionUserId]);
 
+  const ignoreSuggestionType = useCallback(async (suggestion: AgentEventSuggestion) => {
+    if (!sessionUserId || actingSuggestionId) return;
+    setActingSuggestionId(suggestion.proposalId);
+    const categoryLabel = suggestion.reasons.find((reason) => reason.label.toLowerCase().includes('interest'))?.label ?? null;
+    const { error: feedbackError } = await logAgentFeedbackEvent({
+      proposalId: suggestion.proposalId,
+      userId: sessionUserId,
+      eventType: 'ignored',
+      metadata: {
+        source: 'events_screen',
+        reason: 'less_like_this',
+        category_hint: categoryLabel,
+      },
+    });
+    setActingSuggestionId(null);
+    if (feedbackError) {
+      Alert.alert('Could not update preference', feedbackError.message);
+      return;
+    }
+    setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
+  }, [actingSuggestionId, sessionUserId]);
+
   const renderHeader = () => (
     <>
       {agentSuggestions.length > 0 && (
@@ -282,20 +304,28 @@ export default function EventsScreen() {
                     <View style={styles.suggestionBadge}>
                       <Text style={styles.suggestionBadgeText}>Suggested</Text>
                     </View>
-                    <TouchableOpacity
-                      style={styles.dismissBtn}
-                      activeOpacity={0.8}
-                      disabled={actingSuggestionId === suggestion.proposalId}
-                      onPress={() => void dismissSuggestion(suggestion)}
-                    >
-                      {actingSuggestionId === suggestion.proposalId ? (
-                        <Animated.View>
-                          <Text style={styles.dismissBtnText}>...</Text>
-                        </Animated.View>
-                      ) : (
-                        <Text style={styles.dismissBtnText}>Not for me</Text>
-                      )}
-                    </TouchableOpacity>
+                    <View style={styles.suggestionActionRow}>
+                      <TouchableOpacity
+                        style={styles.dismissBtn}
+                        activeOpacity={0.8}
+                        disabled={actingSuggestionId === suggestion.proposalId}
+                        onPress={() => void dismissSuggestion(suggestion)}
+                      >
+                        <Text style={styles.dismissBtnText}>
+                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Hide'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.dismissBtn}
+                        activeOpacity={0.8}
+                        disabled={actingSuggestionId === suggestion.proposalId}
+                        onPress={() => void ignoreSuggestionType(suggestion)}
+                      >
+                        <Text style={styles.dismissBtnText}>
+                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Less like this'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                   <Text style={styles.suggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
                 </View>
@@ -615,6 +645,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexShrink: 1,
+  },
+  suggestionActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     flexShrink: 1,
   },
   suggestionBadge: {

@@ -40,6 +40,8 @@ export default function RootLayout() {
         <Stack.Screen name="terms" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="help-feedback" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="agent-review" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="agent-group-proposal/[id]" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="agent-intro/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="verify-identity" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="dating-mode" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="dating-discover" options={{ animation: 'slide_from_right' }} />

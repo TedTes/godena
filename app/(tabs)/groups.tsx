@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { useScreenEnter } from '../../hooks/useScreenEnter';
+import { fetchAgentGroupSuggestions, type AgentGroupSuggestion } from '../../lib/services/agentPipeline';
 import {
   createGroup as createGroupRecord,
   fetchGroupMembershipCount,
@@ -105,6 +106,7 @@ export default function GroupsScreen() {
   const [unreadByGroup, setUnreadByGroup] = useState<Record<string, number>>({});
   const [lastMessages, setLastMessages] = useState<Record<string, { content: string; sentAt: string; isOwn: boolean }>>({});
   const [userCity, setUserCity] = useState('');
+  const [groupSuggestions, setGroupSuggestions] = useState<AgentGroupSuggestion[]>([]);
 
   // Refs for stable access inside useFocusEffect (avoids stale closure issues)
   const userIdRef = useRef<string | null>(null);
@@ -264,6 +266,18 @@ export default function GroupsScreen() {
       const city = (profileRes?.data as { city?: string | null } | null)?.city ?? '';
       setUserCity(city);
       setNewGroupCity(city);
+
+      const { data: suggestionRows, error: suggestionError } = await fetchAgentGroupSuggestions({
+        city,
+        userId: uid,
+        limit: 6,
+      });
+      if (suggestionError) {
+        console.warn('fetchAgentGroupSuggestions failed', suggestionError.message);
+        setGroupSuggestions([]);
+      } else {
+        setGroupSuggestions(suggestionRows ?? []);
+      }
 
       if (groupsError) { setLoadError(groupsError.message); setLoading(false); return; }
 
@@ -670,6 +684,44 @@ export default function GroupsScreen() {
                 </TouchableOpacity>
               );
             }}
+            ListHeaderComponent={
+              tab === 'discover' && groupSuggestions.length > 0 ? (
+                <View style={styles.proposalSection}>
+                  <View style={styles.proposalHeader}>
+                    <Text style={styles.proposalSectionTitle}>Suggested Groups</Text>
+                    <Text style={styles.proposalHint}>Agent-detected momentum</Text>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.proposalRail}
+                  >
+                    {groupSuggestions.map((suggestion) => (
+                      <TouchableOpacity
+                        key={suggestion.proposalId}
+                        style={styles.proposalCard}
+                        activeOpacity={0.88}
+                        onPress={() => router.push(`/agent-group-proposal/${suggestion.proposalId}`)}
+                      >
+                        <View style={styles.proposalTopRow}>
+                          <View style={styles.proposalBadge}>
+                            <Text style={styles.proposalBadgeText}>Suggested</Text>
+                          </View>
+                          <Text style={styles.proposalScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
+                        </View>
+                        <Text style={styles.proposalTitle} numberOfLines={2}>{suggestion.title}</Text>
+                        {suggestion.body ? (
+                          <Text style={styles.proposalBody} numberOfLines={2}>{suggestion.body}</Text>
+                        ) : null}
+                        <Text style={styles.proposalMeta} numberOfLines={1}>
+                          {suggestion.city || 'No city'} · {suggestion.derivedEventCount} related events
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              ) : null
+            }
           />
           </Animated.View>
           </Animated.View>
@@ -968,6 +1020,75 @@ const styles = StyleSheet.create({
   // ── Loading / Skeleton ──
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   skeletonList: { paddingHorizontal: Spacing.lg, gap: 10, paddingTop: 4 },
+  proposalSection: { paddingBottom: 16, gap: 10 },
+  proposalHeader: {
+    paddingHorizontal: 2,
+    paddingTop: 4,
+    gap: 4,
+  },
+  proposalSectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  proposalHint: {
+    fontSize: 12,
+    color: Colors.brownMid,
+  },
+  proposalRail: {
+    paddingTop: 2,
+    paddingRight: 8,
+  },
+  proposalCard: {
+    width: 240,
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 13,
+    gap: 7,
+    marginRight: 10,
+  },
+  proposalTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  proposalBadge: {
+    backgroundColor: Colors.brown,
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  proposalBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.cream,
+    textTransform: 'uppercase',
+  },
+  proposalScore: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.olive,
+  },
+  proposalTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.ink,
+    lineHeight: 20,
+  },
+  proposalBody: {
+    fontSize: 12,
+    color: Colors.muted,
+    lineHeight: 18,
+  },
+  proposalMeta: {
+    fontSize: 11,
+    color: Colors.brownMid,
+  },
 
   // ── Empty ──
   emptyWrap: { alignItems: 'center', paddingTop: 52, paddingHorizontal: 32, gap: 8 },

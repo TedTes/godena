@@ -79,6 +79,26 @@ export type AgentEventSuggestion = {
   }>;
 };
 
+export type AgentGroupSuggestion = {
+  proposalId: string;
+  title: string;
+  body: string | null;
+  city: string | null;
+  confidenceScore: number;
+  category: string | null;
+  derivedEventCount: number;
+};
+
+export type AgentIntroSuggestion = {
+  proposalId: string;
+  title: string;
+  body: string | null;
+  city: string | null;
+  confidenceScore: number;
+  groupName: string | null;
+  candidateUserIds: string[];
+};
+
 export async function fetchAgentEventSuggestions(params?: {
   city?: string | null;
   userId?: string | null;
@@ -191,6 +211,124 @@ export async function fetchSuggestionReasons(proposalId: string, userId?: string
   return query;
 }
 
+export async function fetchAgentIntroSuggestions(params: {
+  userId: string;
+  limit?: number;
+}): Promise<{ data: AgentIntroSuggestion[] | null; error: Error | null }> {
+  const { data: proposals, error: proposalError } = await fetchVisibleAgentProposals({
+    surface: 'connections',
+    limit: params.limit ?? 10,
+  });
+
+  if (proposalError) {
+    return { data: null, error: new Error(proposalError.message) };
+  }
+
+  const rows = ((proposals ?? []) as Array<{
+    id: string;
+    opportunity_id: string | null;
+    title: string;
+    body: string | null;
+    city: string | null;
+    confidence_score: number;
+    audience_user_ids: string[] | null;
+  }>).filter((row) => (row.audience_user_ids ?? []).includes(params.userId));
+
+  const opportunityIds = rows.map((row) => row.opportunity_id).filter((value): value is string => Boolean(value));
+  const { data: opportunities, error: opportunityError } = opportunityIds.length
+    ? await supabase
+        .from('agent_opportunities')
+        .select('id, metadata')
+        .in('id', opportunityIds)
+    : { data: [], error: null };
+
+  if (opportunityError) {
+    return { data: null, error: new Error(opportunityError.message) };
+  }
+
+  const metadataById = new Map(
+    (((opportunities ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>)
+      .map((row) => [row.id, row.metadata ?? {}]))
+  );
+
+  return {
+    data: rows.map((row) => {
+      const metadata = row.opportunity_id ? (metadataById.get(row.opportunity_id) ?? {}) : {};
+      const candidateUserIds = Array.isArray(metadata.candidate_user_ids)
+        ? metadata.candidate_user_ids.filter((value): value is string => typeof value === 'string')
+        : [];
+      return {
+        proposalId: row.id,
+        title: row.title,
+        body: row.body,
+        city: row.city,
+        confidenceScore: row.confidence_score,
+        groupName: typeof metadata.anchor_group_name === 'string' ? metadata.anchor_group_name : null,
+        candidateUserIds,
+      };
+    }),
+    error: null,
+  };
+}
+
+export async function fetchAgentGroupSuggestions(params?: {
+  city?: string | null;
+  userId?: string | null;
+  limit?: number;
+}): Promise<{ data: AgentGroupSuggestion[] | null; error: Error | null }> {
+  const { data: proposals, error: proposalError } = await fetchVisibleAgentProposals({
+    surface: 'groups',
+    city: params?.city ?? null,
+    limit: params?.limit ?? 8,
+  });
+
+  if (proposalError) {
+    return { data: null, error: new Error(proposalError.message) };
+  }
+
+  const rows = (proposals ?? []) as Array<{
+    id: string;
+    opportunity_id: string | null;
+    title: string;
+    body: string | null;
+    city: string | null;
+    confidence_score: number;
+  }>;
+
+  const opportunityIds = rows.map((row) => row.opportunity_id).filter((value): value is string => Boolean(value));
+  const { data: opportunities, error: opportunityError } = opportunityIds.length
+    ? await supabase
+        .from('agent_opportunities')
+        .select('id, feature_snapshot')
+        .in('id', opportunityIds)
+    : { data: [], error: null };
+
+  if (opportunityError) {
+    return { data: null, error: new Error(opportunityError.message) };
+  }
+
+  const opportunityById = new Map(
+    (((opportunities ?? []) as Array<{ id: string; feature_snapshot: Record<string, unknown> | null }>)
+      .map((row) => [row.id, row.feature_snapshot ?? {}]))
+  );
+
+  return {
+    data: rows.map((row) => {
+      const featureSnapshot = row.opportunity_id ? opportunityById.get(row.opportunity_id) ?? {} : {};
+      return {
+        proposalId: row.id,
+        title: row.title,
+        body: row.body,
+        city: row.city,
+        confidenceScore: row.confidence_score,
+        category: typeof featureSnapshot.category === 'string' ? featureSnapshot.category : null,
+        derivedEventCount: typeof featureSnapshot.event_count === 'number' ? featureSnapshot.event_count : 0,
+      };
+    }),
+    error: null,
+  };
+}
+
 export async function updateAgentProposalStatus(params: {
   proposalId: string;
   status: 'approved' | 'rejected' | 'published';
@@ -217,6 +355,12 @@ export async function updateAgentProposalStatus(params: {
     .single();
 }
 
+export async function createAgentIntroConnection(proposalId: string) {
+  return supabase.rpc('create_agent_intro_connection', {
+    p_proposal_id: proposalId,
+  });
+}
+
 export async function logAgentFeedbackEvent(params: {
   proposalId: string;
   userId?: string | null;
@@ -230,16 +374,11 @@ export async function logAgentFeedbackEvent(params: {
     | 'ignored';
   metadata?: Record<string, unknown>;
 }) {
-  return supabase
-    .from('agent_feedback_events')
-    .insert({
-      proposal_id: params.proposalId,
-      user_id: params.userId ?? null,
-      event_type: params.eventType,
-      metadata: params.metadata ?? {},
-    })
-    .select('id, proposal_id, user_id, event_type, metadata, occurred_at, created_at')
-    .single();
+  return supabase.rpc('log_agent_feedback_event', {
+    p_proposal_id: params.proposalId,
+    p_event_type: params.eventType,
+    p_metadata: params.metadata ?? {},
+  });
 }
 
 export type AgentOpportunityRow = AgentOpportunity;

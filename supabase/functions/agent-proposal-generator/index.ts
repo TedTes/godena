@@ -119,7 +119,11 @@ Deno.serve(async (req) => {
         approval_policy: policy.approval_policy,
         target_surface: policy.target_surface,
         city: opportunity.city ?? null,
-        audience_user_ids: audienceUserIds,
+        audience_user_ids:
+          opportunity.kind === "introduction" &&
+          Array.isArray(opportunity.metadata?.candidate_user_ids)
+            ? opportunity.metadata.candidate_user_ids
+            : audienceUserIds,
         title: opportunity.title,
         body: opportunity.summary ?? null,
         rationale: {

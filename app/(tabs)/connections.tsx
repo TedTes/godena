@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
+import { fetchAgentIntroSuggestions, type AgentIntroSuggestion } from '../../lib/services/agentPipeline';
 
 type ConnectionRow = {
   id: string;
@@ -77,6 +78,8 @@ type ActiveConnection = {
   lastAt: string;
 };
 
+type PendingIntroProposal = AgentIntroSuggestion;
+
 function groupEmoji(category?: string) {
   switch (category) {
     case 'outdoors': return '🥾';
@@ -97,6 +100,7 @@ export default function ConnectionsScreen() {
   const [datingModeEnabled, setDatingModeEnabled] = useState(false);
   const [datingCandidateCount, setDatingCandidateCount] = useState(0);
   const [datingMatchCount, setDatingMatchCount] = useState(0);
+  const [introSuggestions, setIntroSuggestions] = useState<PendingIntroProposal[]>([]);
 
   const screenFade = useRef(new Animated.Value(0)).current;
 
@@ -111,8 +115,20 @@ export default function ConnectionsScreen() {
         if (!uid) {
           setPendingReveal(null);
           setActiveConnections([]);
+          setIntroSuggestions([]);
           setLoading(false);
           return;
+        }
+
+        const { data: introRows, error: introError } = await fetchAgentIntroSuggestions({
+          userId: uid,
+          limit: 4,
+        });
+        if (introError) {
+          console.warn('fetchAgentIntroSuggestions failed', introError.message);
+          setIntroSuggestions([]);
+        } else {
+          setIntroSuggestions(introRows ?? []);
         }
 
         const [connectionsRes, datingMatchesRes] = await Promise.all([
@@ -293,7 +309,7 @@ export default function ConnectionsScreen() {
     }
   }, [loading]);
 
-  const hasAnyData = pendingReveal !== null || activeConnections.length > 0;
+  const hasAnyData = pendingReveal !== null || activeConnections.length > 0 || introSuggestions.length > 0;
 
   // Count badge on dating pill: candidates or matches
   const datingBadgeCount = datingCandidateCount > 0 ? datingCandidateCount : datingMatchCount;
@@ -413,6 +429,36 @@ export default function ConnectionsScreen() {
                       </View>
                     </View>
                   </TouchableOpacity>
+                </View>
+              )}
+
+              {introSuggestions.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionLabel}>Suggested Intros</Text>
+                  <View style={styles.connectionList}>
+                    {introSuggestions.map((suggestion) => (
+                      <TouchableOpacity
+                        key={suggestion.proposalId}
+                        style={styles.introSuggestionCard}
+                        onPress={() => router.push(`/agent-intro/${suggestion.proposalId}`)}
+                        activeOpacity={0.86}
+                      >
+                        <View style={styles.introSuggestionTop}>
+                          <View style={styles.introSuggestionBadge}>
+                            <Text style={styles.introSuggestionBadgeText}>Warm intro</Text>
+                          </View>
+                          <Text style={styles.introSuggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
+                        </View>
+                        <Text style={styles.introSuggestionTitle} numberOfLines={2}>{suggestion.title}</Text>
+                        {suggestion.body ? (
+                          <Text style={styles.introSuggestionBody} numberOfLines={2}>{suggestion.body}</Text>
+                        ) : null}
+                        <Text style={styles.introSuggestionMeta} numberOfLines={1}>
+                          {(suggestion.groupName || 'Shared activity')} {suggestion.city ? `· ${suggestion.city}` : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               )}
 
@@ -612,6 +658,52 @@ const styles = StyleSheet.create({
   newBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '700' },
 
   connectionList: { gap: 8 },
+  introSuggestionCard: {
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    gap: 8,
+  },
+  introSuggestionTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  introSuggestionBadge: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.brown,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  introSuggestionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.cream,
+    textTransform: 'uppercase',
+  },
+  introSuggestionScore: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.olive,
+  },
+  introSuggestionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: Colors.ink,
+    lineHeight: 21,
+  },
+  introSuggestionBody: {
+    fontSize: 13,
+    color: Colors.muted,
+    lineHeight: 19,
+  },
+  introSuggestionMeta: {
+    fontSize: 12,
+    color: Colors.brownMid,
+  },
 
   activeEmptyWrap: {
     paddingVertical: 36,
