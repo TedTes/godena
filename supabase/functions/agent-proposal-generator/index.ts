@@ -16,6 +16,21 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function fallbackProposalExpiry(opportunity: {
+  kind: string;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  expires_at?: string | null;
+}) {
+  if (opportunity.expires_at) return opportunity.expires_at;
+  if (opportunity.ends_at) return opportunity.ends_at;
+  if (opportunity.starts_at) return opportunity.starts_at;
+
+  const now = Date.now();
+  const ttlDays = opportunity.kind === "group" ? 21 : opportunity.kind === "introduction" ? 7 : 14;
+  return new Date(now + ttlDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -47,6 +62,7 @@ Deno.serve(async (req) => {
         ends_at,
         timezone,
         venue_name,
+        expires_at,
         feature_snapshot,
         metadata,
         primary_external_record_id
@@ -141,7 +157,7 @@ Deno.serve(async (req) => {
         model_version: "rules-v1",
         confidence_score: adjustedScore,
         approval_required: policy.approval_required,
-        expires_at: opportunity.ends_at ?? opportunity.starts_at ?? null,
+        expires_at: fallbackProposalExpiry(opportunity),
       };
 
       const { data: proposalRow, error: proposalError } = await client

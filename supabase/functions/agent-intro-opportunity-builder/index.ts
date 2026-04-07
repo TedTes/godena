@@ -11,6 +11,10 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function isoDaysFromNow(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -89,6 +93,7 @@ Deno.serve(async (req) => {
             anchor_group_id: row.group_id,
             anchor_group_name: group.name,
           },
+          expires_at: isoDaysFromNow(7),
         }, { onConflict: "canonical_key" });
       if (upsertError) throw upsertError;
       upserted += 1;

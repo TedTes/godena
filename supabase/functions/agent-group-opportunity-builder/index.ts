@@ -11,6 +11,10 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function isoDaysFromNow(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function labelizeCategory(category: string | null) {
   if (!category) return "Community";
   switch (category) {
@@ -96,6 +100,7 @@ Deno.serve(async (req) => {
             derived_from_event_ids: cluster.events.map((event) => event.id),
             seed_titles: cluster.events.slice(0, 5).map((event) => event.title),
           },
+          expires_at: isoDaysFromNow(21),
         }, { onConflict: "canonical_key" });
 
       if (upsertError) throw upsertError;

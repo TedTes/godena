@@ -42,6 +42,7 @@ Deno.serve(async (req) => {
     const buildGroups = body.build_groups !== false;
     const buildIntros = body.build_intros !== false;
     const generateProposals = body.generate_proposals !== false;
+    const runMaintenance = body.run_maintenance !== false;
 
     const results: Record<string, unknown> = {};
 
@@ -56,6 +57,9 @@ Deno.serve(async (req) => {
     }
     if (generateProposals) {
       results.proposals = await invoke("agent-proposal-generator", body.proposal_payload ?? {});
+    }
+    if (runMaintenance) {
+      results.maintenance = await invoke("agent-maintenance", body.maintenance_payload ?? {});
     }
 
     return jsonResponse({ ok: true, results });

@@ -48,18 +48,11 @@ export async function fetchVisibleAgentProposals(params?: {
   city?: string | null;
   limit?: number;
 }) {
-  let query = supabase
-    .from('agent_proposals')
-    .select(AGENT_PROPOSAL_SELECT)
-    .in('status', ['approved', 'published'])
-    .order('confidence_score', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(params?.limit ?? 25);
-
-  if (params?.surface) query = query.eq('target_surface', params.surface);
-  if (params?.city?.trim()) query = query.ilike('city', `%${params.city.trim()}%`);
-
-  return query;
+  return supabase.rpc('fetch_visible_agent_proposals', {
+    p_surface: params?.surface ?? null,
+    p_city: params?.city?.trim() ? params.city.trim() : null,
+    p_limit: params?.limit ?? 25,
+  });
 }
 
 export type AgentEventSuggestion = {
@@ -122,27 +115,7 @@ export async function fetchAgentEventSuggestions(params?: {
     city: string | null;
     confidence_score: number;
   }>;
-  let rows = initialRows;
-
-  if (params?.userId && initialRows.length > 0) {
-    const proposalIds = initialRows.map((row) => row.id);
-    const { data: feedbackRows, error: feedbackError } = await supabase
-      .from('agent_feedback_events')
-      .select('proposal_id, event_type, user_id')
-      .eq('user_id', params.userId)
-      .in('proposal_id', proposalIds)
-      .in('event_type', ['dismissed', 'ignored']);
-
-    if (feedbackError) {
-      return { data: null, error: new Error(feedbackError.message) };
-    }
-
-    const hiddenProposalIds = new Set(
-      (((feedbackRows ?? []) as Array<{ proposal_id: string; event_type: string }>))
-        .map((row) => row.proposal_id)
-    );
-    rows = initialRows.filter((row) => !hiddenProposalIds.has(row.id));
-  }
+  const rows = initialRows;
 
   const opportunityIds = rows.map((row) => row.opportunity_id).filter((value): value is string => Boolean(value));
 
@@ -224,15 +197,14 @@ export async function fetchAgentIntroSuggestions(params: {
     return { data: null, error: new Error(proposalError.message) };
   }
 
-  const rows = ((proposals ?? []) as Array<{
+  const rows = (proposals ?? []) as Array<{
     id: string;
     opportunity_id: string | null;
     title: string;
     body: string | null;
     city: string | null;
     confidence_score: number;
-    audience_user_ids: string[] | null;
-  }>).filter((row) => (row.audience_user_ids ?? []).includes(params.userId));
+  }>;
 
   const opportunityIds = rows.map((row) => row.opportunity_id).filter((value): value is string => Boolean(value));
   const { data: opportunities, error: opportunityError } = opportunityIds.length
