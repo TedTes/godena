@@ -50,6 +50,14 @@ type ReasonRow = {
   reason_detail: string | null;
 };
 
+type OrchestratorAction =
+  | 'full'
+  | 'scout'
+  | 'groups'
+  | 'intros'
+  | 'proposals'
+  | 'maintenance';
+
 const FILTERS: FilterStatus[] = ['draft', 'approved', 'rejected'];
 
 export default function AgentReviewScreen() {
@@ -79,6 +87,8 @@ export default function AgentReviewScreen() {
     opportunities_upserted: number;
     created_at: string;
   }>(null);
+  const [runningAction, setRunningAction] = useState<OrchestratorAction | null>(null);
+  const [operatorResult, setOperatorResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -172,6 +182,57 @@ export default function AgentReviewScreen() {
       Alert.alert(`Could not ${status}`, error.message);
       return;
     }
+    await load();
+  };
+
+  const runOperatorAction = async (action: OrchestratorAction) => {
+    if (runningAction) return;
+    setRunningAction(action);
+    setOperatorResult(null);
+
+    const payload =
+      action === 'full'
+        ? {}
+        : action === 'scout'
+          ? { build_groups: false, build_intros: false, generate_proposals: false, run_maintenance: false }
+          : action === 'groups'
+            ? { run_scout: false, build_intros: false, generate_proposals: false, run_maintenance: false }
+            : action === 'intros'
+              ? { run_scout: false, build_groups: false, generate_proposals: false, run_maintenance: false }
+              : action === 'proposals'
+                ? { run_scout: false, build_groups: false, build_intros: false, run_maintenance: false }
+                : { run_scout: false, build_groups: false, build_intros: false, generate_proposals: false };
+
+    const { data, error } = await supabase.functions.invoke('agent-orchestrator', {
+      body: payload,
+    });
+
+    setRunningAction(null);
+
+    if (error) {
+      setOperatorResult(`Run failed: ${error.message}`);
+      Alert.alert('Could not run pipeline', error.message);
+      return;
+    }
+
+    const results = (data as { ok?: boolean; results?: Record<string, unknown> } | null)?.results ?? {};
+    const summary = Object.entries(results)
+      .map(([key, value]) => {
+        const normalized = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+        const count =
+          normalized.opportunities_upserted ??
+          normalized.group_opportunities_upserted ??
+          normalized.intro_opportunities_upserted ??
+          normalized.created ??
+          normalized.proposals_expired ??
+          normalized.received ??
+          normalized.scanned ??
+          normalized.ok;
+        return `${key}: ${String(count)}`;
+      })
+      .join(' · ');
+
+    setOperatorResult(summary || 'Pipeline run completed.');
     await load();
   };
 
@@ -272,6 +333,44 @@ export default function AgentReviewScreen() {
                 )}
               </View>
             </View>
+
+            <View style={styles.operatorCard}>
+              <View style={styles.operatorHeader}>
+                <Text style={styles.operatorTitle}>Operator Controls</Text>
+                <Text style={styles.operatorSub}>Internal manual trigger for the agent pipeline</Text>
+              </View>
+              <View style={styles.operatorButtonGrid}>
+                {([
+                  ['full', 'Run all'],
+                  ['scout', 'Scout'],
+                  ['groups', 'Groups'],
+                  ['intros', 'Intros'],
+                  ['proposals', 'Proposals'],
+                  ['maintenance', 'Maintenance'],
+                ] as Array<[OrchestratorAction, string]>).map(([action, label]) => {
+                  const active = runningAction === action;
+                  return (
+                    <TouchableOpacity
+                      key={action}
+                      style={[styles.operatorBtn, active && styles.operatorBtnActive]}
+                      activeOpacity={0.86}
+                      disabled={runningAction !== null}
+                      onPress={() => void runOperatorAction(action)}
+                    >
+                      {active ? (
+                        <ActivityIndicator size="small" color={Colors.white} />
+                      ) : (
+                        <Text style={[styles.operatorBtnText, active && styles.operatorBtnTextActive]}>{label}</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {operatorResult ? (
+                <Text style={styles.operatorResult}>{operatorResult}</Text>
+              ) : null}
+            </View>
+
             <Text style={styles.sectionTitle}>{title}</Text>
 
             {proposals.length === 0 ? (
@@ -489,6 +588,56 @@ const styles = StyleSheet.create({
     color: Colors.ink,
   },
   runCardMeta: {
+    fontSize: 12,
+    color: Colors.brownMid,
+    lineHeight: 18,
+  },
+  operatorCard: {
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    gap: 12,
+  },
+  operatorHeader: {
+    gap: 4,
+  },
+  operatorTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  operatorSub: {
+    fontSize: 12,
+    color: Colors.muted,
+  },
+  operatorButtonGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  operatorBtn: {
+    minWidth: 102,
+    height: 40,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  operatorBtnActive: {
+    opacity: 0.9,
+  },
+  operatorBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.white,
+  },
+  operatorBtnTextActive: {
+    color: Colors.white,
+  },
+  operatorResult: {
     fontSize: 12,
     color: Colors.brownMid,
     lineHeight: 18,
