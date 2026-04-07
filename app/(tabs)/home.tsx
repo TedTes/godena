@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
+  Linking,
   View,
   Text,
   StyleSheet,
@@ -17,6 +18,11 @@ import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import { fetchNotificationInboxItems } from '../../lib/services/notificationInbox';
+import {
+  fetchAgentEventSuggestions,
+  logAgentFeedbackEvent,
+  type AgentEventSuggestion,
+} from '../../lib/services/agentPipeline';
 
 type HomeGroup = {
   id: string;
@@ -57,6 +63,8 @@ type ActivityPost = {
   groupName: string;
   groupEmoji: string;
 };
+
+type HomeAgentSuggestion = AgentEventSuggestion;
 
 function getGroupVisuals(category: string, iconEmoji?: string | null): { emoji: string; coverColor: string } {
   let base: { emoji: string; coverColor: string };
@@ -121,6 +129,7 @@ export default function HomeScreen() {
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const [notificationCount, setNotificationCount] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivityPost[]>([]);
+  const [agentSuggestions, setAgentSuggestions] = useState<HomeAgentSuggestion[]>([]);
   const enterStyle = useScreenEnter();
   const C = useThemeColors();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -140,13 +149,26 @@ export default function HomeScreen() {
       const [{ data: profile }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('full_name')
+          .select('full_name, city')
           .eq('user_id', userId)
           .maybeSingle(),
       ]);
 
       if (profile?.full_name) {
         setFirstName(profile.full_name.split(' ')[0] ?? profile.full_name);
+      }
+
+      const userCity = (profile as { city?: string | null } | null)?.city ?? null;
+      const { data: suggestionRows, error: suggestionError } = await fetchAgentEventSuggestions({
+        city: userCity,
+        userId,
+        limit: 2,
+      });
+      if (suggestionError) {
+        console.warn('fetchAgentEventSuggestions(home) failed', suggestionError.message);
+        setAgentSuggestions([]);
+      } else {
+        setAgentSuggestions(suggestionRows ?? []);
       }
 
       const startOfMonth = new Date();
@@ -467,6 +489,58 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {agentSuggestions.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Suggested Next</Text>
+                <TouchableOpacity onPress={() => router.push('/(tabs)/events')}>
+                  <Text style={styles.seeAll}>See all</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.agentSuggestionList}>
+                {agentSuggestions.map((suggestion) => (
+                  <TouchableOpacity
+                    key={suggestion.proposalId}
+                    style={styles.agentSuggestionCard}
+                    activeOpacity={0.88}
+                    onPress={async () => {
+                      void logAgentFeedbackEvent({
+                        proposalId: suggestion.proposalId,
+                        userId: userId ?? null,
+                        eventType: 'clicked',
+                        metadata: { source: 'home_screen' },
+                      });
+                      if (suggestion.externalEventId) {
+                        router.push(`/event/external/${suggestion.externalEventId}`);
+                        return;
+                      }
+                      if (suggestion.sourceUrl) {
+                        await Linking.openURL(suggestion.sourceUrl);
+                      }
+                    }}
+                  >
+                    <View style={styles.agentSuggestionTop}>
+                      <View style={styles.agentSuggestionBadge}>
+                        <Text style={styles.agentSuggestionBadgeText}>Agent pick</Text>
+                      </View>
+                      <Text style={styles.agentSuggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
+                    </View>
+                    <Text style={styles.agentSuggestionTitle} numberOfLines={2}>{suggestion.title}</Text>
+                    <Text style={styles.agentSuggestionMeta} numberOfLines={1}>
+                      {suggestion.startsAt ? `${formatEventDate(suggestion.startsAt)} · ${formatEventTime(suggestion.startsAt)}` : 'Flexible timing'}
+                      {suggestion.venueName ? ` · ${suggestion.venueName}` : suggestion.city ? ` · ${suggestion.city}` : ''}
+                    </Text>
+                    {suggestion.reasons.length > 0 ? (
+                      <Text style={styles.agentSuggestionReason} numberOfLines={1}>
+                        {suggestion.reasons.slice(0, 2).map((reason) => reason.label).join(' • ')}
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -738,6 +812,56 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
 
   section: { marginBottom: 32 },
+  agentSuggestionList: {
+    gap: 10,
+    paddingHorizontal: Spacing.lg,
+  },
+  agentSuggestionCard: {
+    backgroundColor: C.paper,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 14,
+    gap: 8,
+  },
+  agentSuggestionTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  agentSuggestionBadge: {
+    backgroundColor: C.brown,
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  agentSuggestionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: C.cream,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  agentSuggestionScore: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.olive,
+  },
+  agentSuggestionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: C.ink,
+    lineHeight: 21,
+  },
+  agentSuggestionMeta: {
+    fontSize: 12,
+    color: C.brownMid,
+  },
+  agentSuggestionReason: {
+    fontSize: 12,
+    color: C.muted,
+  },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
