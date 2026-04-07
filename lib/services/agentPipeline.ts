@@ -94,7 +94,7 @@ export async function fetchAgentEventSuggestions(params?: {
     return { data: null, error: new Error(proposalError.message) };
   }
 
-  const rows = (proposals ?? []) as Array<{
+  const initialRows = (proposals ?? []) as Array<{
     id: string;
     opportunity_id: string | null;
     title: string;
@@ -102,6 +102,28 @@ export async function fetchAgentEventSuggestions(params?: {
     city: string | null;
     confidence_score: number;
   }>;
+  let rows = initialRows;
+
+  if (params?.userId && initialRows.length > 0) {
+    const proposalIds = initialRows.map((row) => row.id);
+    const { data: feedbackRows, error: feedbackError } = await supabase
+      .from('agent_feedback_events')
+      .select('proposal_id, event_type, user_id')
+      .eq('user_id', params.userId)
+      .in('proposal_id', proposalIds)
+      .in('event_type', ['dismissed', 'ignored']);
+
+    if (feedbackError) {
+      return { data: null, error: new Error(feedbackError.message) };
+    }
+
+    const hiddenProposalIds = new Set(
+      (((feedbackRows ?? []) as Array<{ proposal_id: string; event_type: string }>))
+        .map((row) => row.proposal_id)
+    );
+    rows = initialRows.filter((row) => !hiddenProposalIds.has(row.id));
+  }
+
   const opportunityIds = rows.map((row) => row.opportunity_id).filter((value): value is string => Boolean(value));
 
   const { data: opportunities, error: opportunityError } = opportunityIds.length

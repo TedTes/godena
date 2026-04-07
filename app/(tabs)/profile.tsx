@@ -55,6 +55,7 @@ const settingsRows = [
   { icon: 'git-compare-outline', label: 'Connections' },
   { icon: 'notifications-outline', label: 'Notifications' },
   { icon: 'shield-outline', label: 'Privacy & Safety' },
+  { icon: 'sparkles-outline', label: 'Agent Review' },
   { icon: 'help-circle-outline', label: 'Help & Feedback' },
   { icon: 'trash-outline', label: 'Delete Account', danger: true },
   { icon: 'log-out-outline', label: 'Sign Out', danger: true },
@@ -646,6 +647,10 @@ export default function ProfileScreen() {
     }
     if (label === 'Privacy & Safety') {
       router.push('/privacy-safety');
+      return;
+    }
+    if (label === 'Agent Review') {
+      router.push('/agent-review');
       return;
     }
     if (label === 'Help & Feedback') {

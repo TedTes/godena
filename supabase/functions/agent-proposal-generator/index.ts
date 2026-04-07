@@ -74,7 +74,42 @@ Deno.serve(async (req) => {
         trustScore = Number(trustRow?.overall_score ?? 0);
       }
       const policy = approvalPolicyForOpportunity(opportunity.kind, trustScore);
+      const { data: existingProposal } = await client
+        .from("agent_proposals")
+        .select("id")
+        .eq("opportunity_id", opportunity.id)
+        .eq("target_surface", policy.target_surface)
+        .maybeSingle();
+
+      let views = 0;
+      let clicks = 0;
+      let dismisses = 0;
+      let ignores = 0;
+      if (existingProposal?.id) {
+        const { data: feedbackRows } = await client
+          .from("agent_feedback_events")
+          .select("event_type")
+          .eq("proposal_id", existingProposal.id);
+
+        for (const row of feedbackRows ?? []) {
+          if (row.event_type === "viewed") views += 1;
+          if (row.event_type === "clicked") clicks += 1;
+          if (row.event_type === "dismissed") dismisses += 1;
+          if (row.event_type === "ignored") ignores += 1;
+        }
+      }
+
       const rankingFeatures = buildRankingFeatures(opportunity, trustScore);
+      const engagementBoost = Math.min(12, clicks * 4);
+      const dismissalPenalty = Math.min(18, dismisses * 6 + ignores * 4);
+      const overservedPenalty = views >= 8 && clicks === 0 ? 8 : 0;
+      const adjustedScore = Math.max(
+        0,
+        Math.min(
+          100,
+          Number(rankingFeatures.score_total ?? 0) + engagementBoost - dismissalPenalty - overservedPenalty,
+        ),
+      );
       const reasons = buildSuggestionReasons(opportunity, trustScore);
 
       const proposal = {
@@ -91,10 +126,16 @@ Deno.serve(async (req) => {
           generated_by: "agent-proposal-generator",
           trust_score: trustScore,
           policy,
+          feedback_summary: {
+            views,
+            clicks,
+            dismisses,
+            ignores,
+          },
         },
         ranking_features: rankingFeatures,
         model_version: "rules-v1",
-        confidence_score: rankingFeatures.score_total,
+        confidence_score: adjustedScore,
         approval_required: policy.approval_required,
         expires_at: opportunity.ends_at ?? opportunity.starts_at ?? null,
       };

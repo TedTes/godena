@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Alert,
   Linking,
   View,
   Text,
@@ -103,6 +104,8 @@ export default function EventsScreen() {
   const [events, setEvents]   = useState<EventCard[]>([]);
   const [agentSuggestions, setAgentSuggestions] = useState<AgentEventSuggestion[]>([]);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [actingSuggestionId, setActingSuggestionId] = useState<string | null>(null);
+  const viewedProposalIdsRef = useRef<Set<string>>(new Set());
   const enterStyle = useScreenEnter();
 
   const load = useCallback(async () => {
@@ -131,6 +134,9 @@ export default function EventsScreen() {
     } else {
       setAgentSuggestions(suggestionRows ?? []);
       for (const suggestion of suggestionRows ?? []) {
+        if (viewedProposalIdsRef.current.has(suggestion.proposalId)) {
+          continue;
+        }
         const { error: feedbackError } = await logAgentFeedbackEvent({
           proposalId: suggestion.proposalId,
           userId: uid,
@@ -139,7 +145,9 @@ export default function EventsScreen() {
         });
         if (feedbackError) {
           console.warn('logAgentFeedbackEvent(viewed) failed', feedbackError.message);
+          continue;
         }
+        viewedProposalIdsRef.current.add(suggestion.proposalId);
       }
     }
 
@@ -216,6 +224,23 @@ export default function EventsScreen() {
     return events.filter((e) => e.myStatus === 'going' || e.myStatus === 'interested');
   }, [events, filter]);
 
+  const dismissSuggestion = useCallback(async (suggestion: AgentEventSuggestion) => {
+    if (!sessionUserId || actingSuggestionId) return;
+    setActingSuggestionId(suggestion.proposalId);
+    const { error: feedbackError } = await logAgentFeedbackEvent({
+      proposalId: suggestion.proposalId,
+      userId: sessionUserId,
+      eventType: 'dismissed',
+      metadata: { source: 'events_screen', reason: 'not_for_me' },
+    });
+    setActingSuggestionId(null);
+    if (feedbackError) {
+      Alert.alert('Could not hide suggestion', feedbackError.message);
+      return;
+    }
+    setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
+  }, [actingSuggestionId, sessionUserId]);
+
   const renderHeader = () => (
     <>
       {agentSuggestions.length > 0 && (
@@ -253,8 +278,24 @@ export default function EventsScreen() {
                 }}
               >
                 <View style={styles.suggestionTopRow}>
-                  <View style={styles.suggestionBadge}>
-                    <Text style={styles.suggestionBadgeText}>Suggested</Text>
+                  <View style={styles.suggestionTopLeft}>
+                    <View style={styles.suggestionBadge}>
+                      <Text style={styles.suggestionBadgeText}>Suggested</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.dismissBtn}
+                      activeOpacity={0.8}
+                      disabled={actingSuggestionId === suggestion.proposalId}
+                      onPress={() => void dismissSuggestion(suggestion)}
+                    >
+                      {actingSuggestionId === suggestion.proposalId ? (
+                        <Animated.View>
+                          <Text style={styles.dismissBtnText}>...</Text>
+                        </Animated.View>
+                      ) : (
+                        <Text style={styles.dismissBtnText}>Not for me</Text>
+                      )}
+                    </TouchableOpacity>
                   </View>
                   <Text style={styles.suggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
                 </View>
@@ -570,6 +611,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  suggestionTopLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+  },
   suggestionBadge: {
     borderRadius: Radius.full,
     backgroundColor: Colors.brown,
@@ -587,6 +634,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: Colors.olive,
+  },
+  dismissBtn: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.warmWhite,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  dismissBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.brownMid,
   },
   suggestionTitle: {
     fontSize: 17,
