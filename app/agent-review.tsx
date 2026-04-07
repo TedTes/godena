@@ -49,6 +49,12 @@ export default function AgentReviewScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [proposals, setProposals] = useState<ProposalRow[]>([]);
   const [reasonsByProposal, setReasonsByProposal] = useState<Record<string, ReasonRow[]>>({});
+  const [stats, setStats] = useState({
+    draftCount: 0,
+    approvedCount: 0,
+    rejectedCount: 0,
+    feedbackCount: 0,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,6 +65,19 @@ export default function AgentReviewScreen() {
     const { data, error } = await fetchAgentProposals({
       status: filter,
       limit: 50,
+    });
+
+    const [{ count: draftCount }, { count: approvedCount }, { count: rejectedCount }, { count: feedbackCount }] = await Promise.all([
+      supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
+      supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
+      supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
+      supabase.from('agent_feedback_events').select('id', { count: 'exact', head: true }),
+    ]);
+    setStats({
+      draftCount: draftCount ?? 0,
+      approvedCount: approvedCount ?? 0,
+      rejectedCount: rejectedCount ?? 0,
+      feedbackCount: feedbackCount ?? 0,
     });
 
     if (error) {
@@ -147,6 +166,24 @@ export default function AgentReviewScreen() {
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.draftCount}</Text>
+                <Text style={styles.statLabel}>Drafts</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.approvedCount}</Text>
+                <Text style={styles.statLabel}>Approved</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.rejectedCount}</Text>
+                <Text style={styles.statLabel}>Rejected</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.feedbackCount}</Text>
+                <Text style={styles.statLabel}>Feedback</Text>
+              </View>
+            </View>
             <Text style={styles.sectionTitle}>{title}</Text>
 
             {proposals.length === 0 ? (
@@ -290,6 +327,31 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: { color: Colors.cream },
   content: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.xl, gap: 12 },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  statCard: {
+    width: '47%',
+    backgroundColor: Colors.warmWhite,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    gap: 4,
+  },
+  statValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: Colors.ink,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: Colors.muted,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: Colors.muted },
   emptyCard: {
     backgroundColor: Colors.warmWhite,

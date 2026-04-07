@@ -121,6 +121,7 @@ function getGreetingSub() {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [myGroups, setMyGroups] = useState<HomeGroup[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<HomeEvent[]>([]);
   const [firstName, setFirstName] = useState('there');
@@ -138,10 +139,12 @@ export default function HomeScreen() {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
       if (!userId) {
+        setSessionUserId(null);
         setLoadingProfile(false);
         setNotificationCount(0);
         return;
       }
+      setSessionUserId(userId);
 
       const inboxItems = await fetchNotificationInboxItems(userId);
       setNotificationCount(inboxItems.length);
@@ -489,6 +492,68 @@ export default function HomeScreen() {
             </View>
           )}
 
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Upcoming Events</Text>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/events')}>
+                <Text style={styles.seeAll}>See all</Text>
+              </TouchableOpacity>
+            </View>
+            {upcomingEvents.length > 0 ? (
+              upcomingEvents.slice(0, 2).map((ev) => (
+                <TouchableOpacity
+                  key={ev.id}
+                  style={styles.eventCard}
+                  activeOpacity={0.85}
+                  onPress={() => router.push(`/event/${ev.id}`)}
+                >
+                  <View style={styles.eventIconWrap}>
+                    <Text style={styles.eventIcon}>{ev.emoji}</Text>
+                  </View>
+                  <View style={styles.eventInfo}>
+                    <Text style={styles.eventTitle}>{ev.title}</Text>
+                    <Text style={styles.eventMeta}>
+                      {ev.date} · {ev.time}
+                    </Text>
+                    <Text style={styles.eventLocation} numberOfLines={1}>
+                      {ev.location}
+                    </Text>
+                  </View>
+                  <View style={styles.eventRight}>
+                    <View style={[styles.rsvpPill, ev.isRsvped && styles.rsvpPillActive]}>
+                      <Text style={[styles.rsvpText, ev.isRsvped && styles.rsvpTextActive]}>
+                        {ev.isRsvped ? 'Going' : 'RSVP'}
+                      </Text>
+                    </View>
+                    <Text style={styles.attendeeCount}>{ev.attendeeCount} going</Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            ) : (
+              <View style={styles.eventsEmpty}>
+                <View style={styles.eventsEmptyIcon}>
+                  <Ionicons name="calendar-outline" size={28} color={C.terracotta} />
+                </View>
+                <Text style={styles.eventsEmptyTitle}>Nothing planned yet</Text>
+                <Text style={styles.eventsEmptySub}>
+                  {myGroups.length === 0
+                    ? 'Join a group to unlock events from your community.'
+                    : 'Events from your groups will show here once organizers add them.'}
+                </Text>
+                {myGroups.length === 0 && (
+                  <TouchableOpacity
+                    style={styles.eventsEmptyBtn}
+                    onPress={() => router.push('/(tabs)/groups?tab=discover')}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.eventsEmptyBtnText}>Browse groups</Text>
+                    <Ionicons name="arrow-forward" size={12} color={C.terracotta} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+
           {agentSuggestions.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
@@ -497,7 +562,7 @@ export default function HomeScreen() {
                   <Text style={styles.seeAll}>See all</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.agentSuggestionList}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.agentSuggestionRail}>
                 {agentSuggestions.map((suggestion) => (
                   <TouchableOpacity
                     key={suggestion.proposalId}
@@ -506,7 +571,7 @@ export default function HomeScreen() {
                     onPress={async () => {
                       void logAgentFeedbackEvent({
                         proposalId: suggestion.proposalId,
-                        userId: userId ?? null,
+                        userId: sessionUserId,
                         eventType: 'clicked',
                         metadata: { source: 'home_screen' },
                       });
@@ -526,7 +591,7 @@ export default function HomeScreen() {
                       <Text style={styles.agentSuggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
                     </View>
                     <Text style={styles.agentSuggestionTitle} numberOfLines={2}>{suggestion.title}</Text>
-                    <Text style={styles.agentSuggestionMeta} numberOfLines={1}>
+                    <Text style={styles.agentSuggestionMeta} numberOfLines={2}>
                       {suggestion.startsAt ? `${formatEventDate(suggestion.startsAt)} · ${formatEventTime(suggestion.startsAt)}` : 'Flexible timing'}
                       {suggestion.venueName ? ` · ${suggestion.venueName}` : suggestion.city ? ` · ${suggestion.city}` : ''}
                     </Text>
@@ -537,10 +602,9 @@ export default function HomeScreen() {
                     ) : null}
                   </TouchableOpacity>
                 ))}
-              </View>
+              </ScrollView>
             </View>
           )}
-
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -600,68 +664,6 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               )}
             </ScrollView>
-          </View>
-
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Upcoming Events</Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/events')}>
-                <Text style={styles.seeAll}>See all</Text>
-              </TouchableOpacity>
-            </View>
-            {upcomingEvents.length > 0 ? (
-              upcomingEvents.slice(0, 3).map((ev) => (
-                <TouchableOpacity
-                  key={ev.id}
-                  style={styles.eventCard}
-                  activeOpacity={0.85}
-                  onPress={() => router.push(`/event/${ev.id}`)}
-                >
-                  <View style={styles.eventIconWrap}>
-                    <Text style={styles.eventIcon}>{ev.emoji}</Text>
-                  </View>
-                  <View style={styles.eventInfo}>
-                    <Text style={styles.eventTitle}>{ev.title}</Text>
-                    <Text style={styles.eventMeta}>
-                      {ev.date} · {ev.time}
-                    </Text>
-                    <Text style={styles.eventLocation} numberOfLines={1}>
-                      {ev.location}
-                    </Text>
-                  </View>
-                  <View style={styles.eventRight}>
-                    <View style={[styles.rsvpPill, ev.isRsvped && styles.rsvpPillActive]}>
-                      <Text style={[styles.rsvpText, ev.isRsvped && styles.rsvpTextActive]}>
-                        {ev.isRsvped ? 'Going' : 'RSVP'}
-                      </Text>
-                    </View>
-                    <Text style={styles.attendeeCount}>{ev.attendeeCount} going</Text>
-                  </View>
-                </TouchableOpacity>
-              ))
-            ) : (
-              <View style={styles.eventsEmpty}>
-                <View style={styles.eventsEmptyIcon}>
-                  <Ionicons name="calendar-outline" size={28} color={C.terracotta} />
-                </View>
-                <Text style={styles.eventsEmptyTitle}>Nothing planned yet</Text>
-                <Text style={styles.eventsEmptySub}>
-                  {myGroups.length === 0
-                    ? 'Join a group to unlock events from your community.'
-                    : 'Events from your groups will show here once organizers add them.'}
-                </Text>
-                {myGroups.length === 0 && (
-                  <TouchableOpacity
-                    style={styles.eventsEmptyBtn}
-                    onPress={() => router.push('/(tabs)/groups?tab=discover')}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.eventsEmptyBtnText}>Browse groups</Text>
-                    <Ionicons name="arrow-forward" size={12} color={C.terracotta} />
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
           </View>
 
           {recentActivity.length > 0 && (
@@ -812,17 +814,19 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
 
   section: { marginBottom: 32 },
-  agentSuggestionList: {
-    gap: 10,
-    paddingHorizontal: Spacing.lg,
+  agentSuggestionRail: {
+    paddingLeft: Spacing.lg,
+    paddingRight: Spacing.sm,
   },
   agentSuggestionCard: {
+    width: 258,
     backgroundColor: C.paper,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 14,
-    gap: 8,
+    padding: 12,
+    gap: 7,
+    marginRight: 10,
   },
   agentSuggestionTop: {
     flexDirection: 'row',
@@ -849,17 +853,18 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     color: C.olive,
   },
   agentSuggestionTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: C.ink,
-    lineHeight: 21,
+    lineHeight: 20,
   },
   agentSuggestionMeta: {
     fontSize: 12,
     color: C.brownMid,
+    lineHeight: 17,
   },
   agentSuggestionReason: {
-    fontSize: 12,
+    fontSize: 11,
     color: C.muted,
   },
   sectionHeader: {
