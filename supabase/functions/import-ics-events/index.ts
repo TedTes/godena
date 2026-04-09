@@ -1,5 +1,4 @@
 // @ts-nocheck
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -160,16 +159,6 @@ function normalizeIcsEvent(ev: Record<string, string>, feed: any) {
   };
 }
 
-async function upsertInChunks(client: ReturnType<typeof createClient>, rows: any[], chunkSize = 500) {
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize);
-    const { error } = await client
-      .from("external_events")
-      .upsert(chunk, { onConflict: "source,source_id" });
-    if (error) throw error;
-  }
-}
-
 const DEFAULT_FEEDS = [
   {
     id: "guelph-city",
@@ -198,8 +187,6 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const feeds = Array.isArray(body.feeds) && body.feeds.length > 0 ? body.feeds : DEFAULT_FEEDS;
     const limit = Number(body.limit ?? DEFAULT_LIMIT);
-
-    const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
     const allRows: any[] = [];
     for (const feed of feeds) {
@@ -230,20 +217,33 @@ Deno.serve(async (req) => {
       if (allRows.length >= limit) break;
     }
 
-    if (allRows.length > 0) {
-      await upsertInChunks(client, allRows);
+    const scoutRes = await fetch(`${SUPABASE_URL}/functions/v1/agent-event-scout`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        ...(internalSecret ? { "x-internal-secret": internalSecret } : {}),
+      },
+      body: JSON.stringify({
+        source: "ics",
+        records: allRows,
+        run_key: `import-ics-events:${Date.now()}`,
+      }),
+    });
+
+    const scoutJson = await scoutRes.json().catch(() => ({}));
+    if (!scoutRes.ok || scoutJson?.ok === false) {
+      throw new Error(`agent-event-scout failed: ${scoutJson?.error ?? scoutRes.status}`);
     }
 
-    // Archive past events (end_at before now)
-    const nowIso = new Date().toISOString();
-    const { error: archiveError } = await client
-      .from("external_events")
-      .update({ is_archived: true, archived_at: nowIso })
-      .lt("end_at", nowIso)
-      .eq("is_archived", false);
-    if (archiveError) throw archiveError;
-
-    return jsonResponse({ ok: true, imported: allRows.length, feedCount: feeds.length });
+    return jsonResponse({
+      ok: true,
+      imported: allRows.length,
+      feedCount: feeds.length,
+      normalized: scoutJson.normalized ?? allRows.length,
+      opportunities_upserted: scoutJson.opportunities_upserted ?? 0,
+      run_key: scoutJson.run_key ?? null,
+    });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err?.message ?? err) }, 500);
   }

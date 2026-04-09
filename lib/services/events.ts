@@ -14,12 +14,10 @@ export type EventRow = {
 export type ExternalEventRow = {
   id: string;
   source: string;
-  source_id: string;
   source_url: string | null;
   title: string;
   description: string | null;
   category: string | null;
-  image_url: string | null;
   start_at: string;
   end_at: string | null;
   timezone: string | null;
@@ -65,7 +63,7 @@ export type EventRsvpRow = {
 };
 
 export type ExternalEventRsvpRow = {
-  event_id: string;
+  opportunity_id: string;
   user_id: string;
   status: 'going' | 'interested' | 'not_going';
 };
@@ -106,11 +104,12 @@ export async function fetchExternalEventsForCity(city: string | null) {
   const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   const buildBase = () =>
     supabase
-      .from('external_events')
-      .select('id, source, source_id, source_url, title, description, category, image_url, start_at, end_at, timezone, venue_name, city, country, lat, lng, is_free, price_min, organizer_name, organizer_source_id')
-      .eq('is_archived', false)
-      .gte('start_at', cutoffIso)
-      .order('start_at', { ascending: true })
+      .from('agent_opportunities')
+      .select('id, title, summary, city, country, starts_at, ends_at, timezone, venue_name, lat, lng, feature_snapshot, metadata')
+      .eq('kind', 'event')
+      .gte('starts_at', cutoffIso)
+      .or(`expires_at.is.null,expires_at.gte.${cutoffIso}`)
+      .order('starts_at', { ascending: true })
       .limit(200);
 
   const trimmed = city?.trim();
@@ -125,9 +124,44 @@ export async function fetchExternalEventsForCity(city: string | null) {
     return { data: null, error };
   }
   if (data && data.length > 0) {
-    return { data, error: null };
+    return {
+      data: (data as Array<{
+        id: string;
+        title: string;
+        summary: string | null;
+        city: string | null;
+        country: string | null;
+        starts_at: string;
+        ends_at: string | null;
+        timezone: string | null;
+        venue_name: string | null;
+        lat: number | null;
+        lng: number | null;
+        feature_snapshot: Record<string, unknown> | null;
+        metadata: Record<string, unknown> | null;
+      }>).map(mapOpportunityToExternalEventRow),
+      error: null,
+    };
   }
-  return buildBase();
+  const fallback = await buildBase();
+  return {
+    data: ((fallback.data ?? []) as Array<{
+      id: string;
+      title: string;
+      summary: string | null;
+      city: string | null;
+      country: string | null;
+      starts_at: string;
+      ends_at: string | null;
+      timezone: string | null;
+      venue_name: string | null;
+      lat: number | null;
+      lng: number | null;
+      feature_snapshot: Record<string, unknown> | null;
+      metadata: Record<string, unknown> | null;
+    }>).map(mapOpportunityToExternalEventRow),
+    error: fallback.error,
+  };
 }
 
 export async function fetchGroupsByIds(groupIds: string[]) {
@@ -149,9 +183,9 @@ export async function fetchEventRsvps(eventIds: string[]) {
 export async function fetchExternalEventRsvps(eventIds: string[]) {
   if (eventIds.length === 0) return { data: [] as ExternalEventRsvpRow[], error: null };
   return supabase
-    .from('external_event_rsvps')
-    .select('event_id, user_id, status')
-    .in('event_id', eventIds);
+    .from('agent_event_rsvps')
+    .select('opportunity_id, user_id, status')
+    .in('opportunity_id', eventIds);
 }
 
 export async function upsertEventRsvp(
@@ -172,16 +206,16 @@ export async function upsertExternalEventRsvp(
   status: 'going' | 'interested' | 'not_going'
 ) {
   const result = await supabase
-    .from('external_event_rsvps')
-    .upsert({ event_id: eventId, user_id: userId, status }, { onConflict: 'event_id,user_id' })
-    .select('event_id, user_id, status')
+    .from('agent_event_rsvps')
+    .upsert({ opportunity_id: eventId, user_id: userId, status }, { onConflict: 'opportunity_id,user_id' })
+    .select('opportunity_id, user_id, status')
     .single();
 
   if (!result.error && status !== 'not_going') {
-    const { error: rpcError } = await supabase.rpc('log_external_event_rsvp', { p_event_id: eventId });
+    const { error: rpcError } = await supabase.rpc('log_agent_event_rsvp', { p_opportunity_id: eventId });
     if (rpcError) {
       // Surface RPC errors in dev to avoid silent failures
-      console.warn('log_external_event_rsvp failed', rpcError);
+      console.warn('log_agent_event_rsvp failed', rpcError);
     }
   }
 
@@ -190,9 +224,9 @@ export async function upsertExternalEventRsvp(
 
 export async function deleteExternalEventRsvp(eventId: string, userId: string) {
   return supabase
-    .from('external_event_rsvps')
+    .from('agent_event_rsvps')
     .delete()
-    .eq('event_id', eventId)
+    .eq('opportunity_id', eventId)
     .eq('user_id', userId);
 }
 
@@ -205,11 +239,18 @@ export async function fetchEventById(eventId: string) {
 }
 
 export async function fetchExternalEventById(eventId: string) {
-  return supabase
-    .from('external_events')
-    .select('id, source, source_id, source_url, title, description, category, image_url, start_at, end_at, timezone, venue_name, city, country, lat, lng, is_free, price_min, organizer_name, organizer_source_id')
+  const { data, error } = await supabase
+    .from('agent_opportunities')
+    .select('id, title, summary, city, country, starts_at, ends_at, timezone, venue_name, lat, lng, feature_snapshot, metadata')
+    .eq('kind', 'event')
     .eq('id', eventId)
     .maybeSingle();
+
+  if (error) return { data: null, error };
+  return {
+    data: data ? mapOpportunityToExternalEventRow(data) : null,
+    error: null,
+  };
 }
 
 export async function updateEventByOwner(params: {
@@ -283,9 +324,48 @@ export async function fetchProfilesBasic(userIds: string[]) {
 }
 
 export async function createExternalEventChat(eventId: string): Promise<{ groupId: string | null; error: string | null }> {
-  const { data, error } = await supabase.rpc('create_external_event_chat', { p_event_id: eventId });
+  const { data, error } = await supabase.rpc('create_agent_event_chat', { p_opportunity_id: eventId });
   if (error) return { groupId: null, error: error.message };
   return { groupId: data as string, error: null };
+}
+
+function mapOpportunityToExternalEventRow(row: {
+  id: string;
+  title: string;
+  summary: string | null;
+  city: string | null;
+  country: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  timezone: string | null;
+  venue_name: string | null;
+  lat: number | null;
+  lng: number | null;
+  feature_snapshot: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
+}): ExternalEventRow {
+  const featureSnapshot = row.feature_snapshot ?? {};
+  const metadata = row.metadata ?? {};
+  return {
+    id: row.id,
+    source: typeof featureSnapshot.source === 'string' ? featureSnapshot.source : 'external',
+    source_url: typeof metadata.source_url === 'string' ? metadata.source_url : null,
+    title: row.title,
+    description: row.summary,
+    category: typeof featureSnapshot.category === 'string' ? featureSnapshot.category : null,
+    start_at: row.starts_at,
+    end_at: row.ends_at,
+    timezone: row.timezone,
+    venue_name: row.venue_name,
+    city: row.city,
+    country: row.country,
+    lat: row.lat,
+    lng: row.lng,
+    is_free: typeof featureSnapshot.is_free === 'boolean' ? featureSnapshot.is_free : null,
+    price_min: typeof featureSnapshot.price_min === 'number' ? featureSnapshot.price_min : null,
+    organizer_name: typeof metadata.organizer_name === 'string' ? metadata.organizer_name : null,
+    organizer_source_id: typeof metadata.organizer_source_id === 'string' ? metadata.organizer_source_id : null,
+  };
 }
 
 export async function fetchUnifiedEventsForUser(userId: string, city: string | null) {
@@ -327,7 +407,7 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
     rsvps.filter((r) => r.user_id === userId).map((r) => [r.event_id, r.status])
   );
   const myExternalRsvpByEvent = new Map(
-    externalRsvps.filter((r) => r.user_id === userId).map((r) => [r.event_id, r.status])
+    externalRsvps.filter((r) => r.user_id === userId).map((r) => [r.opportunity_id, r.status])
   );
 
   const goingCountByEvent: Record<string, number> = {};
@@ -344,10 +424,10 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
   const externalGoingUserIdsByEvent: Record<string, string[]> = {};
   for (const r of externalRsvps) {
     if (r.status === 'going') {
-      externalGoingCountByEvent[r.event_id] = (externalGoingCountByEvent[r.event_id] ?? 0) + 1;
-      if (!externalGoingUserIdsByEvent[r.event_id]) externalGoingUserIdsByEvent[r.event_id] = [];
-      if (externalGoingUserIdsByEvent[r.event_id].length < 2) {
-        externalGoingUserIdsByEvent[r.event_id].push(r.user_id);
+      externalGoingCountByEvent[r.opportunity_id] = (externalGoingCountByEvent[r.opportunity_id] ?? 0) + 1;
+      if (!externalGoingUserIdsByEvent[r.opportunity_id]) externalGoingUserIdsByEvent[r.opportunity_id] = [];
+      if (externalGoingUserIdsByEvent[r.opportunity_id].length < 2) {
+        externalGoingUserIdsByEvent[r.opportunity_id].push(r.user_id);
       }
     }
   }
@@ -389,7 +469,7 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
       const g = groupById.get(e.group_id);
       return {
         id: e.id,
-        source: 'group',
+        source: 'group' as const,
         title: e.title,
         starts_at: e.starts_at,
         location_name: e.location_name,
@@ -407,7 +487,7 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
     }),
     ...externalRows.map((e) => ({
       id: e.id,
-      source: 'external',
+      source: 'external' as const,
       title: e.title,
       starts_at: e.start_at,
       location_name: e.venue_name || e.city || null,

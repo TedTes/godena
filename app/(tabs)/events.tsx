@@ -290,8 +290,8 @@ export default function EventsScreen() {
                   if (feedbackError) {
                     console.warn('logAgentFeedbackEvent(clicked) failed', feedbackError.message);
                   }
-                  if (suggestion.externalEventId) {
-                    router.push(`/event/external/${suggestion.externalEventId}`);
+                  if (suggestion.opportunityId) {
+                    router.push(`/event/external/${suggestion.opportunityId}`);
                     return;
                   }
                   if (suggestion.sourceUrl) {

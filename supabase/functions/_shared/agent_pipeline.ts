@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-export const SUPPORTED_SOURCES = ["eventbrite", "meetup", "ics", "reddit", "weather", "manual"];
+export const SUPPORTED_SOURCES = ["eventbrite", "meetup", "ticketmaster", "ics", "reddit", "weather", "manual"];
 
 function cleanText(value: unknown) {
   if (typeof value !== "string") return null;
@@ -132,7 +132,7 @@ export function computeTrustScore(source: string, normalized: Record<string, unk
   let score = 0;
   const evidence: Record<string, unknown> = {};
 
-  if (source === "eventbrite" || source === "meetup") {
+  if (source === "eventbrite" || source === "meetup" || source === "ticketmaster") {
     score += 45;
     evidence.source_tier = "high";
   } else if (source === "ics" || source === "manual") {
@@ -210,6 +210,8 @@ export function buildOpportunityFromNormalized(
       category: normalized.category ?? null,
       tags: normalized.tags ?? [],
       source: normalized.source,
+      source_record_id: normalized.source_record_id ?? null,
+      image_url: normalized.image_url ?? null,
       price_min: normalized.price_min ?? null,
       is_free: normalized.is_free ?? null,
     },

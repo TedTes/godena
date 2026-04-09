@@ -575,8 +575,8 @@ export default function HomeScreen() {
                         eventType: 'clicked',
                         metadata: { source: 'home_screen' },
                       });
-                      if (suggestion.externalEventId) {
-                        router.push(`/event/external/${suggestion.externalEventId}`);
+                      if (suggestion.opportunityId) {
+                        router.push(`/event/external/${suggestion.opportunityId}`);
                         return;
                       }
                       if (suggestion.sourceUrl) {

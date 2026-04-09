@@ -62,8 +62,6 @@ Deno.serve(async (req) => {
     const trustRows = [];
     const rejected = [];
     const opportunityRows = [];
-    const sourceLinks = [];
-
     for (const raw of records) {
       try {
         const normalized = normalizeSourceRecord(source, raw, defaults);
@@ -111,45 +109,9 @@ Deno.serve(async (req) => {
         if (trustError || !insertedTrust) throw trustError ?? new Error("trust_upsert_failed");
         trustRows.push(insertedTrust);
 
-        let externalEventId: string | null = null;
-        if (normalized.kind === "event") {
-          const { data: externalEventRow, error: externalEventError } = await client
-            .from("external_events")
-            .upsert({
-              source,
-              source_id: normalized.source_record_id,
-              source_url: normalized.source_url,
-              title: normalized.title,
-              description: normalized.summary,
-              category: normalized.category,
-              image_url: normalized.image_url,
-              start_at: normalized.starts_at,
-              end_at: normalized.ends_at,
-              timezone: normalized.timezone,
-              venue_name: normalized.venue_name,
-              city: normalized.city,
-              country: normalized.country,
-              lat: normalized.lat,
-              lng: normalized.lng,
-              is_free: normalized.is_free,
-              price_min: normalized.price_min,
-              organizer_name: normalized.organizer_name,
-              organizer_source_id: normalized.organizer_source_id,
-              is_native: false,
-              is_archived: false,
-            }, { onConflict: "source,source_id" })
-            .select("id")
-            .single();
-          if (externalEventError || !externalEventRow) {
-            throw externalEventError ?? new Error("external_event_upsert_failed");
-          }
-          externalEventId = externalEventRow.id;
-        }
-
         const opportunity = buildOpportunityFromNormalized(
           normalized,
           insertedExternal.id,
-          externalEventId ? { external_event_id: externalEventId } : {},
         );
         const { data: insertedOpportunity, error: opportunityError } = await client
           .from("agent_opportunities")
@@ -158,19 +120,6 @@ Deno.serve(async (req) => {
           .single();
         if (opportunityError || !insertedOpportunity) throw opportunityError ?? new Error("opportunity_upsert_failed");
         opportunityRows.push(insertedOpportunity);
-
-        const sourceLink = {
-          opportunity_id: insertedOpportunity.id,
-          external_record_id: insertedExternal.id,
-          is_primary: true,
-        };
-        const { data: insertedLink, error: linkError } = await client
-          .from("agent_opportunity_sources")
-          .upsert(sourceLink, { onConflict: "opportunity_id,external_record_id" })
-          .select("opportunity_id")
-          .single();
-        if (linkError || !insertedLink) throw linkError ?? new Error("source_link_upsert_failed");
-        sourceLinks.push(insertedLink);
 
       } catch (error) {
         const reason =

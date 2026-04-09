@@ -57,13 +57,13 @@ export async function fetchVisibleAgentProposals(params?: {
 
 export type AgentEventSuggestion = {
   proposalId: string;
+  opportunityId: string | null;
   title: string;
   body: string | null;
   city: string | null;
   confidenceScore: number;
   startsAt: string | null;
   venueName: string | null;
-  externalEventId: string | null;
   sourceUrl: string | null;
   reasons: Array<{
     id: string;
@@ -157,13 +157,13 @@ export async function fetchAgentEventSuggestions(params?: {
       const metadata = (opportunity?.metadata ?? {}) as Record<string, unknown>;
       return {
         proposalId: row.id,
+        opportunityId: row.opportunity_id,
         title: row.title,
         body: row.body,
         city: row.city,
         confidenceScore: row.confidence_score,
         startsAt: opportunity?.starts_at ?? null,
         venueName: opportunity?.venue_name ?? null,
-        externalEventId: typeof metadata.external_event_id === 'string' ? metadata.external_event_id : null,
         sourceUrl: typeof metadata.source_url === 'string' ? metadata.source_url : null,
         reasons: reasonsByProposal.get(row.id) ?? [],
       };
