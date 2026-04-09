@@ -4,35 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const SUPPORTED_SOURCE_TYPES = new Set([
-  "eventbrite",
-  "meetup",
-  "ics",
-  "rss",
-  "webpage",
-  "reddit",
-  "weather",
-  "manual",
-]);
-
-const SUPPORTED_LOCATOR_TYPES = new Set([
-  "api",
-  "ics",
-  "rss",
-  "webpage",
-  "manual",
-]);
-
-const COMPATIBILITY: Record<string, string[]> = {
-  eventbrite: ["api", "webpage"],
-  meetup: ["api", "webpage"],
-  ics: ["ics", "webpage"],
-  rss: ["rss", "webpage"],
-  webpage: ["webpage"],
-  reddit: ["api", "webpage"],
-  weather: ["api", "manual"],
-  manual: ["manual"],
-};
+const TRUST_TIERS = new Set(["high", "medium", "bootstrap_only", "passive"]);
+const DEFAULT_LOCATOR_TYPES = new Set(["api", "ics", "rss", "webpage", "manual"]);
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -99,6 +72,10 @@ function ensureString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function isIdentifierLike(value: string) {
+  return /^[a-z][a-z0-9_:-]{1,63}$/i.test(value);
+}
+
 function parseUrl(locator: string) {
   try {
     return new URL(locator);
@@ -122,10 +99,36 @@ function inferSourceType(locatorType: string, hostname: string) {
   return locatorType === "webpage" ? "webpage" : null;
 }
 
-function validateCompatibility(sourceType: string, locatorType: string) {
-  const allowed = COMPATIBILITY[sourceType] ?? [];
-  if (!allowed.includes(locatorType)) {
-    throw new Error(`Incompatible source_type and locator_type: ${sourceType}/${locatorType}`);
+function inferLocatorTypeFromUrl(url: URL) {
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.toLowerCase();
+  if (path.endsWith(".ics") || url.searchParams.has("ical")) return "ics";
+  if (path.endsWith(".rss") || path.endsWith(".xml") || host.includes("rss")) return "rss";
+  if (host.includes("api.") || path.includes("/api/")) return "api";
+  return "webpage";
+}
+
+function validateCompatibility(locatorType: string, locator: string, config: Record<string, unknown>) {
+  if (locatorType === "manual") return;
+  const url = parseUrl(locator);
+  if ((locatorType === "api" || locatorType === "rss" || locatorType === "ics") && !/^https?:$/i.test(url.protocol)) {
+    throw new Error(`Unsupported URL protocol for locator_type ${locatorType}`);
+  }
+  if (locatorType === "api") {
+    const auth = typeof config.auth === "object" && config.auth ? config.auth as Record<string, unknown> : {};
+    const hasAuthReference =
+      typeof auth.secret_name === "string" ||
+      typeof auth.api_key_env === "string" ||
+      typeof auth.key_secret_name === "string" ||
+      typeof auth.secret_secret_name === "string" ||
+      typeof auth.token_secret_name === "string" ||
+      typeof auth.header_name === "string" ||
+      typeof config.api_key === "string";
+    const allowUnauthed = config.allow_unauthenticated === true;
+    if (!hasAuthReference && !allowUnauthed) {
+      // Keep this permissive but explicit: API sources should either name auth or opt out.
+      throw new Error("API locator requires auth reference or allow_unauthenticated=true");
+    }
   }
 }
 
@@ -140,27 +143,32 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const locator = ensureString(body.locator);
-    const locatorType = ensureString(body.locator_type).toLowerCase();
 
     if (!locator) {
       return jsonResponse({ ok: false, error: "Missing locator" }, 400);
     }
 
-    if (!SUPPORTED_LOCATOR_TYPES.has(locatorType)) {
-      return jsonResponse({ ok: false, error: `Unsupported locator_type: ${locatorType}` }, 400);
+    const parsedInputLocator = body.locator_type === "manual" ? null : parseUrl(locator);
+    const locatorType =
+      ensureString(body.locator_type).toLowerCase() ||
+      (parsedInputLocator ? inferLocatorTypeFromUrl(parsedInputLocator) : "manual");
+
+    if (!isIdentifierLike(locatorType)) {
+      return jsonResponse({ ok: false, error: `Invalid locator_type: ${locatorType}` }, 400);
     }
 
-    const parsedLocator = locatorType === "manual" ? null : parseUrl(locator);
+    const parsedLocator = locatorType === "manual" ? null : (parsedInputLocator ?? parseUrl(locator));
     const inferredSourceType = parsedLocator
       ? inferSourceType(locatorType, parsedLocator.hostname)
-      : "manual";
-    const sourceType = ensureString(body.source_type).toLowerCase() || inferredSourceType;
+      : (DEFAULT_LOCATOR_TYPES.has(locatorType) ? locatorType : "manual");
+    const sourceType = ensureString(body.source_type).toLowerCase() || inferredSourceType || locatorType;
 
-    if (!sourceType || !SUPPORTED_SOURCE_TYPES.has(sourceType)) {
-      return jsonResponse({ ok: false, error: `Unsupported source_type: ${sourceType}` }, 400);
+    if (!sourceType || !isIdentifierLike(sourceType)) {
+      return jsonResponse({ ok: false, error: `Invalid source_type: ${sourceType}` }, 400);
     }
 
-    validateCompatibility(sourceType, locatorType);
+    const config = typeof body.config === "object" && body.config ? body.config : {};
+    validateCompatibility(locatorType, locator, config);
 
     const trustTier = ensureString(body.trust_tier).toLowerCase() || (
       sourceType === "eventbrite" || sourceType === "meetup"
@@ -172,28 +180,15 @@ Deno.serve(async (req) => {
             : "medium"
     );
 
-    if (!["high", "medium", "bootstrap_only", "passive"].includes(trustTier)) {
+    if (!TRUST_TIERS.has(trustTier)) {
       return jsonResponse({ ok: false, error: `Unsupported trust_tier: ${trustTier}` }, 400);
     }
-
-    const pollIntervalMinutes = Math.max(
-      5,
-      Math.min(Number(body.poll_interval_minutes ?? 360), 10080),
-    );
 
     const name =
       ensureString(body.name) ||
       (parsedLocator ? inferNameFromLocator(parsedLocator) : `manual-${sourceType}`);
 
-    const city = ensureString(body.city) || null;
-    const country = ensureString(body.country) || null;
-    const category = ensureString(body.category) || null;
     const enabled = body.enabled !== false;
-    const config = typeof body.config === "object" && body.config ? body.config : {};
-    const nextRunAt =
-      typeof body.next_run_at === "string" && body.next_run_at.trim().length > 0
-        ? new Date(body.next_run_at).toISOString()
-        : new Date().toISOString();
 
     const row = {
       name,
@@ -201,12 +196,7 @@ Deno.serve(async (req) => {
       source_type: sourceType,
       locator_type: locatorType,
       locator,
-      city,
-      country,
-      category,
       trust_tier: trustTier,
-      poll_interval_minutes: pollIntervalMinutes,
-      next_run_at: nextRunAt,
       config,
       created_by: access.user?.id ?? null,
     };
@@ -221,13 +211,7 @@ Deno.serve(async (req) => {
         source_type,
         locator_type,
         locator,
-        city,
-        country,
-        category,
         trust_tier,
-        poll_interval_minutes,
-        next_run_at,
-        last_status,
         created_by,
         created_at,
         updated_at
