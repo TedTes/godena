@@ -262,7 +262,11 @@ export function approvalPolicyForOpportunity(kind: string, trustScore: number) {
   };
 }
 
-export function buildSuggestionReasons(opportunity: Record<string, unknown>, trustScore: number) {
+export function buildSuggestionReasons(
+  opportunity: Record<string, unknown>,
+  trustScore: number,
+  context: Record<string, unknown> = {},
+) {
   const reasons = [];
   const city = cleanText(opportunity.city);
   const featureSnapshot = typeof opportunity.feature_snapshot === "object" && opportunity.feature_snapshot
@@ -270,8 +274,22 @@ export function buildSuggestionReasons(opportunity: Record<string, unknown>, tru
     : {};
   const category = cleanText(featureSnapshot.category);
   const isFree = featureSnapshot.is_free === true;
+  const audienceSize = typeof context.audience_size === "number" ? context.audience_size : 0;
+  const affinityUsers = typeof context.affinity_user_count === "number" ? context.affinity_user_count : 0;
+  const socialGoing = typeof context.social_going_count === "number" ? context.social_going_count : 0;
+  const socialInterested = typeof context.social_interested_count === "number" ? context.social_interested_count : 0;
+  const startsAt = cleanText(opportunity.starts_at);
+  const daysUntil = startsAt ? Math.round((new Date(startsAt).getTime() - Date.now()) / 86400000) : null;
 
-  if (city) {
+  if (affinityUsers > 0 && category) {
+    reasons.push({
+      reason_code: "community_affinity",
+      reason_label: "Matches your community activity",
+      reason_detail: `Aligned with ${affinityUsers} member${affinityUsers === 1 ? "" : "s"} active in ${category.replace(/_/g, " ")}.`,
+      sort_order: 1,
+      evidence: { affinity_users: affinityUsers, category },
+    });
+  } else if (city) {
     reasons.push({
       reason_code: "same_city",
       reason_label: "Same city",
@@ -281,7 +299,16 @@ export function buildSuggestionReasons(opportunity: Record<string, unknown>, tru
     });
   }
 
-  if (category) {
+  if (socialGoing > 0 || socialInterested > 0) {
+    const attendeeCount = socialGoing + socialInterested;
+    reasons.push({
+      reason_code: "social_proof",
+      reason_label: socialGoing > 0 ? "People are already going" : "Already drawing interest",
+      reason_detail: `${attendeeCount} member${attendeeCount === 1 ? "" : "s"} already marked going or interested.`,
+      sort_order: 2,
+      evidence: { social_going: socialGoing, social_interested: socialInterested },
+    });
+  } else if (category) {
     reasons.push({
       reason_code: "category_fit",
       reason_label: "Interest fit",
@@ -291,28 +318,44 @@ export function buildSuggestionReasons(opportunity: Record<string, unknown>, tru
     });
   }
 
+  if (daysUntil !== null && daysUntil >= 0 && daysUntil <= 7) {
+    reasons.push({
+      reason_code: "soon",
+      reason_label: "Happening soon",
+      reason_detail: daysUntil === 0 ? "Scheduled for today." : `Starts within ${daysUntil} day${daysUntil === 1 ? "" : "s"}.`,
+      sort_order: 3,
+      evidence: { days_until: daysUntil },
+    });
+  }
+
   if (isFree) {
     reasons.push({
       reason_code: "low_friction",
       reason_label: "Low-friction plan",
       reason_detail: "Free to attend.",
-      sort_order: 3,
+      sort_order: 4,
       evidence: { is_free: true },
     });
   }
 
-  reasons.push({
-    reason_code: "trust_score",
-    reason_label: "Trust-screened source",
-    reason_detail: `Source quality score ${Math.round(trustScore)}/100.`,
-    sort_order: 4,
-    evidence: { trust_score: trustScore },
-  });
+  if (trustScore >= 65 || audienceSize === 0) {
+    reasons.push({
+      reason_code: "trust_score",
+      reason_label: "Trust-screened source",
+      reason_detail: `Source quality score ${Math.round(trustScore)}/100.`,
+      sort_order: 5,
+      evidence: { trust_score: trustScore },
+    });
+  }
 
   return reasons;
 }
 
-export function buildRankingFeatures(opportunity: Record<string, unknown>, trustScore: number) {
+export function buildRankingFeatures(
+  opportunity: Record<string, unknown>,
+  trustScore: number,
+  context: Record<string, unknown> = {},
+) {
   const startsAt = cleanText(opportunity.starts_at);
   const startMs = startsAt ? new Date(startsAt).getTime() : null;
   const daysUntil = startMs ? (startMs - Date.now()) / 86400000 : null;
@@ -329,14 +372,32 @@ export function buildRankingFeatures(opportunity: Record<string, unknown>, trust
   const featureSnapshot = typeof opportunity.feature_snapshot === "object" && opportunity.feature_snapshot
     ? opportunity.feature_snapshot as Record<string, unknown>
     : {};
+  const audienceSize = typeof context.audience_size === "number" ? context.audience_size : 0;
+  const affinityUsers = typeof context.affinity_user_count === "number" ? context.affinity_user_count : 0;
+  const socialGoing = typeof context.social_going_count === "number" ? context.social_going_count : 0;
+  const socialInterested = typeof context.social_interested_count === "number" ? context.social_interested_count : 0;
+  const audienceScore = affinityUsers > 0
+    ? Math.min(100, 30 + affinityUsers * 5)
+    : audienceSize > 0
+      ? Math.min(70, 20 + audienceSize * 2)
+      : 0;
+  const socialScore = Math.min(100, socialGoing * 18 + socialInterested * 10);
+  const personalizationScore = Math.round(audienceScore * 0.6 + socialScore * 0.4);
 
   return {
     trust_score: trustScore,
     recency_score: recencyScore,
+    audience_score: audienceScore,
+    social_score: socialScore,
+    personalization_score: personalizationScore,
     city_present: Boolean(opportunity.city),
     venue_present: Boolean(opportunity.venue_name),
+    audience_size: audienceSize,
+    affinity_user_count: affinityUsers,
+    social_going_count: socialGoing,
+    social_interested_count: socialInterested,
     category: featureSnapshot.category ?? null,
     source: featureSnapshot.source ?? null,
-    score_total: Math.round(trustScore * 0.55 + recencyScore * 0.45),
+    score_total: Math.round(trustScore * 0.35 + recencyScore * 0.25 + audienceScore * 0.2 + socialScore * 0.2),
   };
 }

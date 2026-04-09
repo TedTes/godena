@@ -31,6 +31,14 @@ function fallbackProposalExpiry(opportunity: {
   return new Date(now + ttlDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function normalizeCategory(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+}
+
+function normalizeCity(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -76,6 +84,63 @@ Deno.serve(async (req) => {
     const { data: opportunities, error } = await query;
     if (error) throw error;
 
+    const categories = Array.from(
+      new Set(
+        (opportunities ?? [])
+          .map((opportunity) =>
+            typeof opportunity.feature_snapshot?.category === "string" && opportunity.feature_snapshot.category.trim().length > 0
+              ? opportunity.feature_snapshot.category.trim()
+              : null
+          )
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    const cities = Array.from(
+      new Set(
+        (opportunities ?? [])
+          .map((opportunity) =>
+            typeof opportunity.city === "string" && opportunity.city.trim().length > 0
+              ? opportunity.city.trim()
+              : null
+          )
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+
+    const { data: candidateGroups } = categories.length > 0 && cities.length > 0
+      ? await client
+          .from("groups")
+          .select("id, category, city")
+          .in("category", categories)
+          .in("city", cities)
+      : { data: [] };
+
+    const relevantGroupIds = Array.from(new Set((candidateGroups ?? []).map((group) => group.id)));
+    const { data: relevantMemberships } = relevantGroupIds.length > 0
+      ? await client
+          .from("group_memberships")
+          .select("group_id, user_id")
+          .in("group_id", relevantGroupIds)
+      : { data: [] };
+
+    const groupRows = (candidateGroups ?? []) as Array<{ id: string; category: string | null; city: string | null }>;
+    const membershipRows = (relevantMemberships ?? []) as Array<{ group_id: string; user_id: string }>;
+    const groupById = new Map(groupRows.map((group) => [group.id, group]));
+    const audienceByCityCategory = new Map<string, Set<string>>();
+
+    for (const membership of membershipRows) {
+      const group = groupById.get(membership.group_id);
+      if (!group) continue;
+      const groupCategory = normalizeCategory(group.category);
+      const groupCity = normalizeCity(group.city);
+      if (!groupCategory || !groupCity) continue;
+      const key = `${groupCity}:${groupCategory}`;
+      if (!audienceByCityCategory.has(key)) {
+        audienceByCityCategory.set(key, new Set());
+      }
+      audienceByCityCategory.get(key)?.add(membership.user_id);
+    }
+
     let created = 0;
     let updated = 0;
 
@@ -115,7 +180,51 @@ Deno.serve(async (req) => {
         }
       }
 
-      const rankingFeatures = buildRankingFeatures(opportunity, trustScore);
+      const opportunityCategory = normalizeCategory(opportunity.feature_snapshot?.category);
+      const opportunityCity = normalizeCity(opportunity.city);
+      const affinityAudience =
+        opportunity.kind === "event" && opportunityCategory && opportunityCity
+          ? Array.from(audienceByCityCategory.get(`${opportunityCity}:${opportunityCategory}`) ?? [])
+          : [];
+
+      const { data: socialRows } = opportunity.kind === "event"
+        ? await client
+            .from("agent_event_rsvps")
+            .select("user_id, status")
+            .eq("opportunity_id", opportunity.id)
+            .in("status", ["going", "interested"])
+        : { data: [] };
+
+      let socialGoing = 0;
+      let socialInterested = 0;
+      for (const row of socialRows ?? []) {
+        if (row.status === "going") socialGoing += 1;
+        if (row.status === "interested") socialInterested += 1;
+      }
+
+      const computedAudienceUserIds = Array.from(
+        new Set(
+          opportunity.kind === "event"
+            ? [
+                ...affinityAudience,
+                ...((socialRows ?? []).map((row) => row.user_id).filter(Boolean)),
+                ...audienceUserIds,
+              ]
+            : opportunity.kind === "introduction" &&
+              Array.isArray(opportunity.metadata?.candidate_user_ids)
+                ? opportunity.metadata.candidate_user_ids
+                : audienceUserIds
+        )
+      );
+
+      const rankingContext = {
+        audience_size: computedAudienceUserIds.length,
+        affinity_user_count: affinityAudience.length,
+        social_going_count: socialGoing,
+        social_interested_count: socialInterested,
+      };
+
+      const rankingFeatures = buildRankingFeatures(opportunity, trustScore, rankingContext);
       const engagementBoost = Math.min(12, clicks * 4);
       const dismissalPenalty = Math.min(18, dismisses * 6 + ignores * 4);
       const overservedPenalty = views >= 8 && clicks === 0 ? 8 : 0;
@@ -126,26 +235,44 @@ Deno.serve(async (req) => {
           Number(rankingFeatures.score_total ?? 0) + engagementBoost - dismissalPenalty - overservedPenalty,
         ),
       );
-      const reasons = buildSuggestionReasons(opportunity, trustScore);
+      const reasons = buildSuggestionReasons(opportunity, trustScore, rankingContext);
+
+      const personalizationScore = Number(rankingFeatures.personalization_score ?? 0);
+      const hasMeaningfulAudience = computedAudienceUserIds.length >= 3;
+      const hasSocialProof = socialGoing + socialInterested >= 2;
+      const eventAutoSuggestEligible =
+        opportunity.kind !== "event" ||
+        (
+          adjustedScore >= 68 &&
+          personalizationScore >= 18 &&
+          (hasMeaningfulAudience || hasSocialProof)
+        );
+
+      const finalPolicy =
+        opportunity.kind === "event" && !eventAutoSuggestEligible
+          ? {
+              ...policy,
+              approval_policy: "organizer_confirm",
+              approval_required: true,
+              initial_status: "draft",
+            }
+          : policy;
 
       const proposal = {
         opportunity_id: opportunity.id,
         proposal_kind: opportunity.kind,
-        status: policy.initial_status,
-        approval_policy: policy.approval_policy,
-        target_surface: policy.target_surface,
+        status: finalPolicy.initial_status,
+        approval_policy: finalPolicy.approval_policy,
+        target_surface: finalPolicy.target_surface,
         city: opportunity.city ?? null,
-        audience_user_ids:
-          opportunity.kind === "introduction" &&
-          Array.isArray(opportunity.metadata?.candidate_user_ids)
-            ? opportunity.metadata.candidate_user_ids
-            : audienceUserIds,
+        audience_user_ids: computedAudienceUserIds,
         title: opportunity.title,
         body: opportunity.summary ?? null,
         rationale: {
           generated_by: "agent-proposal-generator",
           trust_score: trustScore,
-          policy,
+          policy: finalPolicy,
+          personalization: rankingContext,
           feedback_summary: {
             views,
             clicks,
@@ -156,7 +283,7 @@ Deno.serve(async (req) => {
         ranking_features: rankingFeatures,
         model_version: "rules-v1",
         confidence_score: adjustedScore,
-        approval_required: policy.approval_required,
+        approval_required: finalPolicy.approval_required,
         expires_at: fallbackProposalExpiry(opportunity),
       };
 
@@ -183,7 +310,7 @@ Deno.serve(async (req) => {
         await client.from("agent_suggestion_reasons").insert(
           reasons.map((reason) => ({
             proposal_id: proposalRow.id,
-            user_id: audienceUserIds.length === 1 ? audienceUserIds[0] : null,
+            user_id: computedAudienceUserIds.length === 1 ? computedAudienceUserIds[0] : null,
             ...reason,
           }))
         );
