@@ -164,6 +164,181 @@ export async function fetchExternalEventsForCity(city: string | null) {
   };
 }
 
+async function fetchConnectedUserIds(userId: string) {
+  const { data, error } = await supabase
+    .from('connections')
+    .select('user_a_id, user_b_id, status')
+    .eq('status', 'accepted')
+    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
+
+  if (error) return { data: null, error };
+
+  const ids = Array.from(
+    new Set(
+      ((data ?? []) as Array<{ user_a_id: string; user_b_id: string }>)
+        .map((row) => (row.user_a_id === userId ? row.user_b_id : row.user_a_id))
+        .filter((value) => value && value !== userId)
+    )
+  );
+  return { data: ids, error: null };
+}
+
+async function fetchProposalDrivenExternalEvents(params: {
+  city: string | null;
+  limit?: number;
+}) {
+  const { data: proposals, error: proposalError } = await supabase.rpc('fetch_visible_agent_proposals', {
+    p_surface: 'events',
+    p_city: params.city?.trim() ? params.city.trim() : null,
+    p_limit: params.limit ?? 24,
+  });
+
+  if (proposalError) {
+    return { data: null, error: proposalError };
+  }
+
+  const proposalRows = (proposals ?? []) as Array<{
+    opportunity_id: string | null;
+    confidence_score: number;
+  }>;
+  const opportunityIds = Array.from(
+    new Set(
+      proposalRows
+        .map((row) => row.opportunity_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  if (opportunityIds.length === 0) {
+    return {
+      data: [] as ExternalEventRow[],
+      proposalOpportunityIds: [] as string[],
+      error: null,
+    };
+  }
+
+  const { data: opportunities, error: opportunityError } = await supabase
+    .from('agent_opportunities')
+    .select('id, title, summary, city, country, starts_at, ends_at, timezone, venue_name, lat, lng, feature_snapshot, metadata')
+    .eq('kind', 'event')
+    .in('id', opportunityIds);
+
+  if (opportunityError) {
+    return { data: null, proposalOpportunityIds: [] as string[], error: opportunityError };
+  }
+
+  const opportunityById = new Map(
+    ((opportunities ?? []) as Array<{
+      id: string;
+      title: string;
+      summary: string | null;
+      city: string | null;
+      country: string | null;
+      starts_at: string;
+      ends_at: string | null;
+      timezone: string | null;
+      venue_name: string | null;
+      lat: number | null;
+      lng: number | null;
+      feature_snapshot: Record<string, unknown> | null;
+      metadata: Record<string, unknown> | null;
+    }>).map((row) => [row.id, row])
+  );
+
+  const rows = proposalRows
+    .map((proposal) => {
+      const opportunity = proposal.opportunity_id ? opportunityById.get(proposal.opportunity_id) : null;
+      return opportunity
+        ? {
+            opportunity,
+            confidence_score: proposal.confidence_score,
+          }
+        : null;
+    })
+    .filter((value): value is { opportunity: NonNullable<ReturnType<Map<string, any>['get']>>; confidence_score: number } => Boolean(value))
+    .sort((a, b) => {
+      if (b.confidence_score !== a.confidence_score) return b.confidence_score - a.confidence_score;
+      return new Date(a.opportunity.starts_at).getTime() - new Date(b.opportunity.starts_at).getTime();
+    });
+
+  return {
+    data: rows.map(({ opportunity }) => mapOpportunityToExternalEventRow(opportunity)),
+    proposalOpportunityIds: opportunityIds,
+    error: null,
+  };
+}
+
+async function fetchSocialProofExternalEvents(params: {
+  userId: string;
+  city: string | null;
+  excludeOpportunityIds?: string[];
+  limit?: number;
+}) {
+  const { data: connectedUserIds, error: connectionsError } = await fetchConnectedUserIds(params.userId);
+  if (connectionsError) return { data: null, error: connectionsError };
+  if (!connectedUserIds || connectedUserIds.length === 0) {
+    return { data: [] as ExternalEventRow[], error: null };
+  }
+
+  const { data: rsvpRows, error: rsvpError } = await supabase
+    .from('agent_event_rsvps')
+    .select('opportunity_id, user_id, status')
+    .in('user_id', connectedUserIds)
+    .in('status', ['going', 'interested']);
+
+  if (rsvpError) return { data: null, error: rsvpError };
+
+  const excluded = new Set(params.excludeOpportunityIds ?? []);
+  const socialCounts = new Map<string, number>();
+  for (const row of (rsvpRows ?? []) as Array<{ opportunity_id: string }>) {
+    if (!row.opportunity_id || excluded.has(row.opportunity_id)) continue;
+    socialCounts.set(row.opportunity_id, (socialCounts.get(row.opportunity_id) ?? 0) + 1);
+  }
+
+  const opportunityIds = Array.from(socialCounts.keys()).slice(0, params.limit ?? 12);
+  if (opportunityIds.length === 0) {
+    return { data: [] as ExternalEventRow[], error: null };
+  }
+
+  const cutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  let query = supabase
+    .from('agent_opportunities')
+    .select('id, title, summary, city, country, starts_at, ends_at, timezone, venue_name, lat, lng, feature_snapshot, metadata')
+    .eq('kind', 'event')
+    .in('id', opportunityIds)
+    .gte('starts_at', cutoffIso)
+    .or(`expires_at.is.null,expires_at.gte.${cutoffIso}`);
+
+  if (params.city?.trim()) {
+    query = query.ilike('city', `%${params.city.trim()}%`);
+  }
+
+  const { data: opportunities, error: opportunityError } = await query;
+  if (opportunityError) return { data: null, error: opportunityError };
+
+  const rows = ((opportunities ?? []) as Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    city: string | null;
+    country: string | null;
+    starts_at: string;
+    ends_at: string | null;
+    timezone: string | null;
+    venue_name: string | null;
+    lat: number | null;
+    lng: number | null;
+    feature_snapshot: Record<string, unknown> | null;
+    metadata: Record<string, unknown> | null;
+  }>).sort((a, b) => {
+    const scoreDiff = (socialCounts.get(b.id) ?? 0) - (socialCounts.get(a.id) ?? 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+  });
+
+  return { data: rows.map(mapOpportunityToExternalEventRow), error: null };
+}
+
 export async function fetchGroupsByIds(groupIds: string[]) {
   if (groupIds.length === 0) return { data: [] as GroupRow[], error: null };
   return supabase
@@ -376,19 +551,30 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
     new Set(((membershipRows ?? []) as Array<{ group_id: string }>).map((m) => m.group_id))
   );
 
-  const [eventsRes, groupsRes, externalRes] = await Promise.all([
+  const [eventsRes, groupsRes, proposalExternalRes] = await Promise.all([
     groupIds.length > 0 ? fetchEventsForGroups(groupIds) : Promise.resolve({ data: [] as EventRow[], error: null }),
     groupIds.length > 0 ? fetchGroupsByIds(groupIds) : Promise.resolve({ data: [] as GroupRow[], error: null }),
-    fetchExternalEventsForCity(city),
+    fetchProposalDrivenExternalEvents({ city, limit: 24 }),
   ]);
 
   if (eventsRes.error) return { data: null, error: eventsRes.error };
   if (groupsRes.error) return { data: null, error: groupsRes.error };
-  if (externalRes.error) return { data: null, error: externalRes.error };
+  if (proposalExternalRes.error) return { data: null, error: proposalExternalRes.error };
+
+  const socialExternalRes = await fetchSocialProofExternalEvents({
+    userId,
+    city,
+    excludeOpportunityIds: proposalExternalRes.proposalOpportunityIds,
+    limit: 12,
+  });
+  if (socialExternalRes.error) return { data: null, error: socialExternalRes.error };
 
   const eventRows = (eventsRes.data ?? []) as EventRow[];
   const groupRows = (groupsRes.data ?? []) as GroupRow[];
-  const externalRows = (externalRes.data ?? []) as ExternalEventRow[];
+  const externalRows = [
+    ...((proposalExternalRes.data ?? []) as ExternalEventRow[]),
+    ...((socialExternalRes.data ?? []) as ExternalEventRow[]),
+  ];
 
   const eventIds = eventRows.map((e) => e.id);
   const externalIds = externalRows.map((e) => e.id);

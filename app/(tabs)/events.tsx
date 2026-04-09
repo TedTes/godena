@@ -169,7 +169,15 @@ export default function EventsScreen() {
       for (const { id, url } of resolved) userAvatarMap[id] = url;
     }
 
-    const mapped: EventCard[] = unified.map((e) => {
+    const suggestedOpportunityIds = new Set(
+      (suggestionRows ?? [])
+        .map((row) => row.opportunityId)
+        .filter((value): value is string => Boolean(value))
+    );
+
+    const mapped: EventCard[] = unified
+      .filter((e) => !(e.source === 'external' && suggestedOpportunityIds.has(e.id)))
+      .map((e) => {
       const isExternal = e.source === 'external';
       const cat = normalizeExternalCategory(e.category);
       const rawLocation = e.is_virtual ? 'Virtual' : (e.location_name || 'TBA');
