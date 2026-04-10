@@ -94,19 +94,33 @@ Deno.serve(async (req) => {
     const runScout = body.run_scout !== false;
     const buildGroups = body.build_groups !== false;
     const buildIntros = body.build_intros !== false;
+    const buildInterests = body.build_interests !== false;
     const generateProposals = body.generate_proposals !== false;
     const runMaintenance = body.run_maintenance !== false;
 
     const results: Record<string, unknown> = {};
 
     if (runScout) {
-      results.scout = await invoke("agent-event-scout", body.scout_payload ?? {});
+      const hasManualScoutPayload =
+        typeof body.scout_payload === "object" &&
+        body.scout_payload !== null &&
+        Array.isArray((body.scout_payload as Record<string, unknown>).records) &&
+        ((body.scout_payload as Record<string, unknown>).records as unknown[]).length > 0;
+
+      if (hasManualScoutPayload) {
+        results.scout = await invoke("agent-event-scout", body.scout_payload ?? {});
+      } else {
+        results.source_sync = await invoke("agent-source-sync", body.sync_payload ?? {});
+      }
     }
     if (buildGroups) {
       results.group_builder = await invoke("agent-group-opportunity-builder", body.group_payload ?? {});
     }
     if (buildIntros) {
       results.intro_builder = await invoke("agent-intro-opportunity-builder", body.intro_payload ?? {});
+    }
+    if (buildInterests) {
+      results.interest_builder = await invoke("agent-user-interest-builder", body.interest_payload ?? {});
     }
     if (generateProposals) {
       results.proposals = await invoke("agent-proposal-generator", body.proposal_payload ?? {});

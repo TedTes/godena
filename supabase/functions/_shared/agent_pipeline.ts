@@ -278,10 +278,19 @@ export function buildSuggestionReasons(
   const affinityUsers = typeof context.affinity_user_count === "number" ? context.affinity_user_count : 0;
   const socialGoing = typeof context.social_going_count === "number" ? context.social_going_count : 0;
   const socialInterested = typeof context.social_interested_count === "number" ? context.social_interested_count : 0;
+  const interestMatchScore = typeof context.interest_match_score === "number" ? context.interest_match_score : 0;
   const startsAt = cleanText(opportunity.starts_at);
   const daysUntil = startsAt ? Math.round((new Date(startsAt).getTime() - Date.now()) / 86400000) : null;
 
-  if (affinityUsers > 0 && category) {
+  if (interestMatchScore >= 20 && category) {
+    reasons.push({
+      reason_code: "interest_match",
+      reason_label: "Matches your interests",
+      reason_detail: `Strong fit with your ${category.replace(/_/g, " ")} preferences and past activity.`,
+      sort_order: 1,
+      evidence: { category, interest_match_score: interestMatchScore },
+    });
+  } else if (affinityUsers > 0 && category) {
     reasons.push({
       reason_code: "community_affinity",
       reason_label: "Matches your community activity",
@@ -376,6 +385,7 @@ export function buildRankingFeatures(
   const affinityUsers = typeof context.affinity_user_count === "number" ? context.affinity_user_count : 0;
   const socialGoing = typeof context.social_going_count === "number" ? context.social_going_count : 0;
   const socialInterested = typeof context.social_interested_count === "number" ? context.social_interested_count : 0;
+  const interestMatchScore = typeof context.interest_match_score === "number" ? context.interest_match_score : 0;
   const audienceScore = affinityUsers > 0
     ? Math.min(100, 30 + affinityUsers * 5)
     : audienceSize > 0
@@ -387,9 +397,10 @@ export function buildRankingFeatures(
   return {
     trust_score: trustScore,
     recency_score: recencyScore,
+    interest_match_score: interestMatchScore,
     audience_score: audienceScore,
     social_score: socialScore,
-    personalization_score: personalizationScore,
+    personalization_score: Math.round(personalizationScore * 0.65 + interestMatchScore * 0.35),
     city_present: Boolean(opportunity.city),
     venue_present: Boolean(opportunity.venue_name),
     audience_size: audienceSize,

@@ -107,38 +107,36 @@ Deno.serve(async (req) => {
       )
     );
 
-    const { data: candidateGroups } = categories.length > 0 && cities.length > 0
-      ? await client
-          .from("groups")
-          .select("id, category, city")
-          .in("category", categories)
-          .in("city", cities)
-      : { data: [] };
+    const cityContexts = cities.map((value) => `city:${normalizeCity(value)}`).filter((value): value is string => Boolean(value));
+    const { data: allInterestRows } =
+      categories.length > 0
+        ? await client
+            .from("agent_user_interest_profiles")
+            .select("user_id, interest_type, interest_key, score")
+            .in("interest_type", ["category", "context"])
+        : { data: [] };
 
-    const relevantGroupIds = Array.from(new Set((candidateGroups ?? []).map((group) => group.id)));
-    const { data: relevantMemberships } = relevantGroupIds.length > 0
-      ? await client
-          .from("group_memberships")
-          .select("group_id, user_id")
-          .in("group_id", relevantGroupIds)
-      : { data: [] };
-
-    const groupRows = (candidateGroups ?? []) as Array<{ id: string; category: string | null; city: string | null }>;
-    const membershipRows = (relevantMemberships ?? []) as Array<{ group_id: string; user_id: string }>;
-    const groupById = new Map(groupRows.map((group) => [group.id, group]));
-    const audienceByCityCategory = new Map<string, Set<string>>();
-
-    for (const membership of membershipRows) {
-      const group = groupById.get(membership.group_id);
-      if (!group) continue;
-      const groupCategory = normalizeCategory(group.category);
-      const groupCity = normalizeCity(group.city);
-      if (!groupCategory || !groupCity) continue;
-      const key = `${groupCity}:${groupCategory}`;
-      if (!audienceByCityCategory.has(key)) {
-        audienceByCityCategory.set(key, new Set());
+    const interestRows = ((allInterestRows ?? []) as Array<{
+      user_id: string;
+      interest_type: string;
+      interest_key: string;
+      score: number;
+    }>).filter((row) => {
+      if (row.interest_type === "category") {
+        return categories.map((value) => value.toLowerCase()).includes(row.interest_key);
       }
-      audienceByCityCategory.get(key)?.add(membership.user_id);
+      if (row.interest_type === "context") {
+        return cityContexts.includes(row.interest_key);
+      }
+      return false;
+    });
+
+    const categoryInterestByUser = new Map<string, Map<string, number>>();
+    const contextInterestByUser = new Map<string, Map<string, number>>();
+    for (const row of interestRows) {
+      const target = row.interest_type === "category" ? categoryInterestByUser : contextInterestByUser;
+      if (!target.has(row.interest_key)) target.set(row.interest_key, new Map());
+      target.get(row.interest_key)?.set(row.user_id, Number(row.score ?? 0));
     }
 
     let created = 0;
@@ -182,10 +180,25 @@ Deno.serve(async (req) => {
 
       const opportunityCategory = normalizeCategory(opportunity.feature_snapshot?.category);
       const opportunityCity = normalizeCity(opportunity.city);
-      const affinityAudience =
-        opportunity.kind === "event" && opportunityCategory && opportunityCity
-          ? Array.from(audienceByCityCategory.get(`${opportunityCity}:${opportunityCategory}`) ?? [])
+
+      const scoredAudience =
+        opportunity.kind === "event" && opportunityCategory
+          ? Array.from(categoryInterestByUser.get(opportunityCategory)?.entries() ?? [])
+              .map(([userId, categoryScore]) => {
+                const cityScore = opportunityCity
+                  ? Number(contextInterestByUser.get(`city:${opportunityCity}`)?.get(userId) ?? 0)
+                  : 0;
+                return { userId, score: categoryScore + cityScore };
+              })
+              .filter((row) => row.score > 0)
+              .sort((a, b) => b.score - a.score)
           : [];
+
+      const affinityAudience = scoredAudience.map((row) => row.userId);
+      const interestMatchScore =
+        scoredAudience.length > 0
+          ? Math.max(0, Math.min(100, Math.round((scoredAudience[0].score + Math.min(scoredAudience.length, 5) * 4))))
+          : 0;
 
       const { data: socialRows } = opportunity.kind === "event"
         ? await client
@@ -222,6 +235,7 @@ Deno.serve(async (req) => {
         affinity_user_count: affinityAudience.length,
         social_going_count: socialGoing,
         social_interested_count: socialInterested,
+        interest_match_score: interestMatchScore,
       };
 
       const rankingFeatures = buildRankingFeatures(opportunity, trustScore, rankingContext);
@@ -238,14 +252,19 @@ Deno.serve(async (req) => {
       const reasons = buildSuggestionReasons(opportunity, trustScore, rankingContext);
 
       const personalizationScore = Number(rankingFeatures.personalization_score ?? 0);
+      const interestScore = Number(rankingFeatures.interest_match_score ?? 0);
       const hasMeaningfulAudience = computedAudienceUserIds.length >= 3;
       const hasSocialProof = socialGoing + socialInterested >= 2;
       const eventAutoSuggestEligible =
         opportunity.kind !== "event" ||
         (
-          adjustedScore >= 68 &&
-          personalizationScore >= 18 &&
-          (hasMeaningfulAudience || hasSocialProof)
+          adjustedScore >= 62 &&
+          (
+            interestScore >= 24 ||
+            personalizationScore >= 22 ||
+            hasMeaningfulAudience ||
+            hasSocialProof
+          )
         );
 
       const finalPolicy =

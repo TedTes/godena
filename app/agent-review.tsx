@@ -52,9 +52,10 @@ type ReasonRow = {
 
 type OrchestratorAction =
   | 'full'
-  | 'scout'
+  | 'sync'
   | 'groups'
   | 'intros'
+  | 'interests'
   | 'proposals'
   | 'maintenance';
 
@@ -78,6 +79,7 @@ export default function AgentReviewScreen() {
     eventOpportunityCount: 0,
     groupOpportunityCount: 0,
     introOpportunityCount: 0,
+    interestProfileCount: 0,
   });
   const [latestRun, setLatestRun] = useState<null | {
     source: string;
@@ -111,6 +113,7 @@ export default function AgentReviewScreen() {
       { count: eventOpportunityCount },
       { count: groupOpportunityCount },
       { count: introOpportunityCount },
+      { count: interestProfileCount },
       latestRunRes,
     ] = await Promise.all([
       supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
@@ -122,6 +125,7 @@ export default function AgentReviewScreen() {
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'event'),
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'group'),
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'introduction'),
+      supabase.from('agent_user_interest_profiles').select('user_id', { count: 'exact', head: true }),
       supabase
         .from('agent_ingestion_runs')
         .select('source, status, records_received, records_rejected, opportunities_upserted, created_at')
@@ -139,6 +143,7 @@ export default function AgentReviewScreen() {
       eventOpportunityCount: eventOpportunityCount ?? 0,
       groupOpportunityCount: groupOpportunityCount ?? 0,
       introOpportunityCount: introOpportunityCount ?? 0,
+      interestProfileCount: interestProfileCount ?? 0,
     });
     setLatestRun(latestRunRes.data ?? null);
 
@@ -193,15 +198,17 @@ export default function AgentReviewScreen() {
     const payload =
       action === 'full'
         ? {}
-        : action === 'scout'
-          ? { build_groups: false, build_intros: false, generate_proposals: false, run_maintenance: false }
+        : action === 'sync'
+          ? { build_groups: false, build_intros: false, build_interests: false, generate_proposals: false, run_maintenance: false }
           : action === 'groups'
-            ? { run_scout: false, build_intros: false, generate_proposals: false, run_maintenance: false }
+            ? { run_scout: false, build_intros: false, build_interests: false, generate_proposals: false, run_maintenance: false }
             : action === 'intros'
-              ? { run_scout: false, build_groups: false, generate_proposals: false, run_maintenance: false }
+              ? { run_scout: false, build_groups: false, build_interests: false, generate_proposals: false, run_maintenance: false }
+              : action === 'interests'
+                ? { run_scout: false, build_groups: false, build_intros: false, generate_proposals: false, run_maintenance: false }
               : action === 'proposals'
-                ? { run_scout: false, build_groups: false, build_intros: false, run_maintenance: false }
-                : { run_scout: false, build_groups: false, build_intros: false, generate_proposals: false };
+                ? { run_scout: false, build_groups: false, build_intros: false, build_interests: false, run_maintenance: false }
+                : { run_scout: false, build_groups: false, build_intros: false, build_interests: false, generate_proposals: false };
 
     const { data, error } = await supabase.functions.invoke('agent-orchestrator', {
       body: payload,
@@ -223,6 +230,7 @@ export default function AgentReviewScreen() {
           normalized.opportunities_upserted ??
           normalized.group_opportunities_upserted ??
           normalized.intro_opportunities_upserted ??
+          normalized.interest_rows_upserted ??
           normalized.created ??
           normalized.proposals_expired ??
           normalized.received ??
@@ -319,6 +327,10 @@ export default function AgentReviewScreen() {
                 <Text style={styles.statValue}>{stats.introOpportunityCount}</Text>
                 <Text style={styles.statLabel}>Intro Opps</Text>
               </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.interestProfileCount}</Text>
+                <Text style={styles.statLabel}>Interest Rows</Text>
+              </View>
               <View style={styles.runCard}>
                 <Text style={styles.runCardLabel}>Latest Ingestion</Text>
                 {latestRun ? (
@@ -342,9 +354,10 @@ export default function AgentReviewScreen() {
               <View style={styles.operatorButtonGrid}>
                 {([
                   ['full', 'Run all'],
-                  ['scout', 'Scout'],
+                  ['sync', 'Sync'],
                   ['groups', 'Groups'],
                   ['intros', 'Intros'],
+                  ['interests', 'Interests'],
                   ['proposals', 'Proposals'],
                   ['maintenance', 'Maintenance'],
                 ] as Array<[OrchestratorAction, string]>).map(([action, label]) => {
