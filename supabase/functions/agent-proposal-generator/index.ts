@@ -139,44 +139,99 @@ Deno.serve(async (req) => {
       target.get(row.interest_key)?.set(row.user_id, Number(row.score ?? 0));
     }
 
+    const opportunityRows = opportunities ?? [];
+    const opportunityIdList = opportunityRows.map((opportunity) => opportunity.id);
+    const externalRecordIds = opportunityRows
+      .map((opportunity) => opportunity.primary_external_record_id)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    const eventOpportunityIds = opportunityRows
+      .filter((opportunity) => opportunity.kind === "event")
+      .map((opportunity) => opportunity.id);
+
+    const { data: trustRows } = externalRecordIds.length > 0
+      ? await client
+          .from("agent_trust_scores")
+          .select("external_record_id, overall_score")
+          .in("external_record_id", externalRecordIds)
+      : { data: [] };
+
+    const trustByExternalRecordId = new Map(
+      ((trustRows ?? []) as Array<{ external_record_id: string; overall_score: number }>)
+        .map((row) => [row.external_record_id, Number(row.overall_score ?? 0)]),
+    );
+
+    const policyByOpportunityId = new Map(
+      opportunityRows.map((opportunity) => [
+        opportunity.id,
+        approvalPolicyForOpportunity(
+          opportunity.kind,
+          opportunity.primary_external_record_id
+            ? Number(trustByExternalRecordId.get(opportunity.primary_external_record_id) ?? 0)
+            : 0,
+        ),
+      ]),
+    );
+
+    const { data: existingProposalRows } = opportunityIdList.length > 0
+      ? await client
+          .from("agent_proposals")
+          .select("id, opportunity_id, target_surface")
+          .in("opportunity_id", opportunityIdList)
+      : { data: [] };
+
+    const existingProposalByKey = new Map(
+      ((existingProposalRows ?? []) as Array<{ id: string; opportunity_id: string; target_surface: string }>)
+        .map((proposal) => [`${proposal.opportunity_id}:${proposal.target_surface}`, proposal]),
+    );
+    const existingProposalIds = ((existingProposalRows ?? []) as Array<{ id: string }>).map((proposal) => proposal.id);
+
+    const { data: feedbackRows } = existingProposalIds.length > 0
+      ? await client
+          .from("agent_feedback_events")
+          .select("proposal_id, event_type")
+          .in("proposal_id", existingProposalIds)
+      : { data: [] };
+
+    const feedbackByProposalId = new Map<string, { views: number; clicks: number; dismisses: number; ignores: number }>();
+    for (const row of (feedbackRows ?? []) as Array<{ proposal_id: string; event_type: string }>) {
+      const summary = feedbackByProposalId.get(row.proposal_id) ?? { views: 0, clicks: 0, dismisses: 0, ignores: 0 };
+      if (row.event_type === "viewed") summary.views += 1;
+      if (row.event_type === "clicked") summary.clicks += 1;
+      if (row.event_type === "dismissed") summary.dismisses += 1;
+      if (row.event_type === "ignored") summary.ignores += 1;
+      feedbackByProposalId.set(row.proposal_id, summary);
+    }
+
+    const { data: socialRsvpRows } = eventOpportunityIds.length > 0
+      ? await client
+          .from("agent_event_rsvps")
+          .select("opportunity_id, user_id, status")
+          .in("opportunity_id", eventOpportunityIds)
+          .in("status", ["going", "interested"])
+      : { data: [] };
+
+    const socialByOpportunityId = new Map<string, Array<{ user_id: string; status: string }>>();
+    for (const row of (socialRsvpRows ?? []) as Array<{ opportunity_id: string; user_id: string; status: string }>) {
+      const rows = socialByOpportunityId.get(row.opportunity_id) ?? [];
+      rows.push(row);
+      socialByOpportunityId.set(row.opportunity_id, rows);
+    }
+
     let created = 0;
     let updated = 0;
+    const proposalsToUpsert = [];
+    const reasonsByProposalKey = new Map<string, Array<Record<string, unknown>>>();
+    const audienceByProposalKey = new Map<string, string[]>();
 
-    for (const opportunity of opportunities ?? []) {
-      let trustScore = 0;
-      if (opportunity.primary_external_record_id) {
-        const { data: trustRow } = await client
-          .from("agent_trust_scores")
-          .select("overall_score")
-          .eq("external_record_id", opportunity.primary_external_record_id)
-          .maybeSingle();
-        trustScore = Number(trustRow?.overall_score ?? 0);
-      }
-      const policy = approvalPolicyForOpportunity(opportunity.kind, trustScore);
-      const { data: existingProposal } = await client
-        .from("agent_proposals")
-        .select("id")
-        .eq("opportunity_id", opportunity.id)
-        .eq("target_surface", policy.target_surface)
-        .maybeSingle();
-
-      let views = 0;
-      let clicks = 0;
-      let dismisses = 0;
-      let ignores = 0;
-      if (existingProposal?.id) {
-        const { data: feedbackRows } = await client
-          .from("agent_feedback_events")
-          .select("event_type")
-          .eq("proposal_id", existingProposal.id);
-
-        for (const row of feedbackRows ?? []) {
-          if (row.event_type === "viewed") views += 1;
-          if (row.event_type === "clicked") clicks += 1;
-          if (row.event_type === "dismissed") dismisses += 1;
-          if (row.event_type === "ignored") ignores += 1;
-        }
-      }
+    for (const opportunity of opportunityRows) {
+      const trustScore = opportunity.primary_external_record_id
+        ? Number(trustByExternalRecordId.get(opportunity.primary_external_record_id) ?? 0)
+        : 0;
+      const policy = policyByOpportunityId.get(opportunity.id) ?? approvalPolicyForOpportunity(opportunity.kind, trustScore);
+      const existingProposal = existingProposalByKey.get(`${opportunity.id}:${policy.target_surface}`);
+      const feedbackSummary = existingProposal?.id
+        ? feedbackByProposalId.get(existingProposal.id) ?? { views: 0, clicks: 0, dismisses: 0, ignores: 0 }
+        : { views: 0, clicks: 0, dismisses: 0, ignores: 0 };
 
       const opportunityCategory = normalizeCategory(opportunity.feature_snapshot?.category);
       const opportunityCity = normalizeCity(opportunity.city);
@@ -200,16 +255,9 @@ Deno.serve(async (req) => {
           ? Math.max(0, Math.min(100, Math.round((scoredAudience[0].score + Math.min(scoredAudience.length, 5) * 4))))
           : 0;
 
-      const { data: socialRows } = opportunity.kind === "event"
-        ? await client
-            .from("agent_event_rsvps")
-            .select("user_id, status")
-            .eq("opportunity_id", opportunity.id)
-            .in("status", ["going", "interested"])
-        : { data: [] };
-
       let socialGoing = 0;
       let socialInterested = 0;
+      const socialRows = socialByOpportunityId.get(opportunity.id) ?? [];
       for (const row of socialRows ?? []) {
         if (row.status === "going") socialGoing += 1;
         if (row.status === "interested") socialInterested += 1;
@@ -220,7 +268,7 @@ Deno.serve(async (req) => {
           opportunity.kind === "event"
             ? [
                 ...affinityAudience,
-                ...((socialRows ?? []).map((row) => row.user_id).filter(Boolean)),
+                ...(socialRows.map((row) => row.user_id).filter(Boolean)),
                 ...audienceUserIds,
               ]
             : opportunity.kind === "introduction" &&
@@ -239,9 +287,9 @@ Deno.serve(async (req) => {
       };
 
       const rankingFeatures = buildRankingFeatures(opportunity, trustScore, rankingContext);
-      const engagementBoost = Math.min(12, clicks * 4);
-      const dismissalPenalty = Math.min(18, dismisses * 6 + ignores * 4);
-      const overservedPenalty = views >= 8 && clicks === 0 ? 8 : 0;
+      const engagementBoost = Math.min(12, feedbackSummary.clicks * 4);
+      const dismissalPenalty = Math.min(18, feedbackSummary.dismisses * 6 + feedbackSummary.ignores * 4);
+      const overservedPenalty = feedbackSummary.views >= 8 && feedbackSummary.clicks === 0 ? 8 : 0;
       const adjustedScore = Math.max(
         0,
         Math.min(
@@ -253,17 +301,22 @@ Deno.serve(async (req) => {
 
       const personalizationScore = Number(rankingFeatures.personalization_score ?? 0);
       const interestScore = Number(rankingFeatures.interest_match_score ?? 0);
+      const highTrustBootstrap = trustScore >= 85;
       const hasMeaningfulAudience = computedAudienceUserIds.length >= 3;
+      const hasStarterAudience = computedAudienceUserIds.length >= 1;
       const hasSocialProof = socialGoing + socialInterested >= 2;
+      const hasStrongInterest = interestScore >= 30;
+      const hasUsableInterest = interestScore >= 20;
       const eventAutoSuggestEligible =
         opportunity.kind !== "event" ||
         (
-          adjustedScore >= 62 &&
+          adjustedScore >= 60 &&
           (
-            interestScore >= 24 ||
-            personalizationScore >= 22 ||
+            hasStrongInterest ||
+            personalizationScore >= 24 ||
             hasMeaningfulAudience ||
-            hasSocialProof
+            hasSocialProof ||
+            (highTrustBootstrap && hasStarterAudience && hasUsableInterest)
           )
         );
 
@@ -292,48 +345,89 @@ Deno.serve(async (req) => {
           trust_score: trustScore,
           policy: finalPolicy,
           personalization: rankingContext,
-          feedback_summary: {
-            views,
-            clicks,
-            dismisses,
-            ignores,
-          },
+          feedback_summary: feedbackSummary,
         },
         ranking_features: rankingFeatures,
-        model_version: "rules-v1",
+        model_version: "rules-v2",
         confidence_score: adjustedScore,
         approval_required: finalPolicy.approval_required,
         expires_at: fallbackProposalExpiry(opportunity),
       };
 
-      const { data: proposalRow, error: proposalError } = await client
-        .from("agent_proposals")
-        .upsert(proposal, { onConflict: "opportunity_id,target_surface" })
-        .select("id")
-        .single();
-      if (proposalError || !proposalRow) throw proposalError ?? new Error("proposal_upsert_failed");
-
-      const { data: existingReasons } = await client
-        .from("agent_suggestion_reasons")
-        .select("id")
-        .eq("proposal_id", proposalRow.id);
-
-      if ((existingReasons?.length ?? 0) > 0) {
-        await client.from("agent_suggestion_reasons").delete().eq("proposal_id", proposalRow.id);
-        updated += 1;
-      } else {
-        created += 1;
-      }
+      proposalsToUpsert.push(proposal);
+      const proposalKey = `${opportunity.id}:${finalPolicy.target_surface}`;
+      audienceByProposalKey.set(proposalKey, computedAudienceUserIds);
+      if (existingProposalByKey.has(proposalKey)) updated += 1;
+      else created += 1;
 
       if (reasons.length > 0) {
-        await client.from("agent_suggestion_reasons").insert(
+        reasonsByProposalKey.set(
+          proposalKey,
           reasons.map((reason) => ({
-            proposal_id: proposalRow.id,
             user_id: computedAudienceUserIds.length === 1 ? computedAudienceUserIds[0] : null,
             ...reason,
-          }))
+          })),
         );
       }
+    }
+
+    const { data: proposalRows, error: proposalError } = proposalsToUpsert.length > 0
+      ? await client
+          .from("agent_proposals")
+          .upsert(proposalsToUpsert, { onConflict: "opportunity_id,target_surface" })
+          .select("id, opportunity_id, target_surface")
+      : { data: [], error: null };
+
+    if (proposalError) throw proposalError;
+
+    const upsertedProposalRows = (proposalRows ?? []) as Array<{ id: string; opportunity_id: string; target_surface: string }>;
+    const proposalIds = upsertedProposalRows.map((proposal) => proposal.id);
+
+    if (proposalIds.length > 0) {
+      const [deleteReasonsRes, deleteAudienceRes] = await Promise.all([
+        client
+          .from("agent_suggestion_reasons")
+          .delete()
+          .in("proposal_id", proposalIds),
+        client
+          .from("agent_proposal_audience")
+          .delete()
+          .in("proposal_id", proposalIds),
+      ]);
+      if (deleteReasonsRes.error) throw deleteReasonsRes.error;
+      if (deleteAudienceRes.error) throw deleteAudienceRes.error;
+    }
+
+    const reasonRows = [];
+    const audienceRows = [];
+    for (const proposal of upsertedProposalRows) {
+      const key = `${proposal.opportunity_id}:${proposal.target_surface}`;
+      for (const reason of reasonsByProposalKey.get(key) ?? []) {
+        reasonRows.push({
+          proposal_id: proposal.id,
+          ...reason,
+        });
+      }
+      for (const userId of audienceByProposalKey.get(key) ?? []) {
+        audienceRows.push({
+          proposal_id: proposal.id,
+          user_id: userId,
+        });
+      }
+    }
+
+    if (reasonRows.length > 0) {
+      const { error: insertReasonsError } = await client
+        .from("agent_suggestion_reasons")
+        .insert(reasonRows);
+      if (insertReasonsError) throw insertReasonsError;
+    }
+
+    if (audienceRows.length > 0) {
+      const { error: insertAudienceError } = await client
+        .from("agent_proposal_audience")
+        .insert(audienceRows);
+      if (insertAudienceError) throw insertAudienceError;
     }
 
     return jsonResponse({

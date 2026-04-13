@@ -3,6 +3,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const NICHE_CATEGORY_MAP: Record<string, string[]> = {
+  live_music: ["culture"],
+  sports: ["sports"],
+  books_ideas: ["culture"],
+  arts_culture: ["culture"],
+  food_drink: ["food_drink"],
+  outdoors: ["outdoors"],
+  wellness: ["wellness"],
+  faith_community: ["faith"],
+  volunteering: ["community"],
+  founders_careers: ["professional"],
+};
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -87,7 +99,6 @@ Deno.serve(async (req) => {
       agentOpportunitiesRes,
       feedbackRes,
       feedbackProposalsRes,
-      feedbackOpportunitiesRes,
     ] = await Promise.all([
       client.from("agent_user_selected_niches").select("user_id, niche_key").in("user_id", scopedUserIds),
       client.from("group_memberships").select("group_id, user_id").in("user_id", scopedUserIds),
@@ -98,15 +109,12 @@ Deno.serve(async (req) => {
       client.from("agent_opportunities").select("id, city, feature_snapshot").eq("kind", "event"),
       client.from("agent_feedback_events").select("proposal_id, user_id, event_type").in("user_id", scopedUserIds),
       client.from("agent_proposals").select("id, opportunity_id"),
-      client.from("agent_opportunities").select("id, city, feature_snapshot").eq("kind", "event"),
     ]);
 
-    const profileByUser = new Map(filteredProfiles.map((profile) => [profile.user_id, profile]));
     const groupById = new Map(((groupRowsRes.data ?? []) as Array<{ id: string; category: string | null; city: string | null }>).map((group) => [group.id, group]));
     const groupEventById = new Map(((groupEventsRes.data ?? []) as Array<{ id: string; group_id: string }>).map((event) => [event.id, event]));
     const opportunityById = new Map(((agentOpportunitiesRes.data ?? []) as Array<{ id: string; city: string | null; feature_snapshot: Record<string, unknown> | null }>).map((opportunity) => [opportunity.id, opportunity]));
     const proposalToOpportunityId = new Map(((feedbackProposalsRes.data ?? []) as Array<{ id: string; opportunity_id: string | null }>).map((proposal) => [proposal.id, proposal.opportunity_id]));
-    const feedbackOpportunityById = new Map(((feedbackOpportunitiesRes.data ?? []) as Array<{ id: string; city: string | null; feature_snapshot: Record<string, unknown> | null }>).map((opportunity) => [opportunity.id, opportunity]));
     const scoreBuckets = new Map<string, Map<string, { score: number; evidence: Record<string, number> }>>();
 
     for (const userId of scopedUserIds) {
@@ -130,7 +138,11 @@ Deno.serve(async (req) => {
     for (const row of (selectedNichesRes.data ?? []) as Array<{ user_id: string; niche_key: string }>) {
       const bucket = scoreBuckets.get(row.user_id);
       if (!bucket) continue;
-      addScore(bucket, "niche", normalizeKey(row.niche_key), 30, "selected_niche");
+      const nicheKey = normalizeKey(row.niche_key);
+      addScore(bucket, "niche", nicheKey, 30, "selected_niche");
+      for (const categoryKey of NICHE_CATEGORY_MAP[nicheKey ?? ""] ?? []) {
+        addScore(bucket, "category", normalizeKey(categoryKey), 18, "selected_niche_category");
+      }
     }
 
     for (const membership of (membershipsRes.data ?? []) as Array<{ group_id: string; user_id: string }>) {
@@ -164,7 +176,7 @@ Deno.serve(async (req) => {
     for (const row of (feedbackRes.data ?? []) as Array<{ proposal_id: string; user_id: string; event_type: string }>) {
       const bucket = scoreBuckets.get(row.user_id);
       const opportunityId = proposalToOpportunityId.get(row.proposal_id);
-      const opportunity = opportunityId ? feedbackOpportunityById.get(opportunityId) : null;
+      const opportunity = opportunityId ? opportunityById.get(opportunityId) : null;
       if (!bucket || !opportunity) continue;
       const category = normalizeKey(opportunity.feature_snapshot?.category);
       if (row.event_type === "clicked") addScore(bucket, "category", category, 10, "proposal_clicked");
@@ -194,23 +206,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { error: deleteError } = await client
-      .from("agent_user_interest_profiles")
-      .delete()
-      .in("user_id", scopedUserIds);
-    if (deleteError) throw deleteError;
-
-    if (upsertRows.length > 0) {
-      const { error: upsertError } = await client
-        .from("agent_user_interest_profiles")
-        .upsert(upsertRows, { onConflict: "user_id,interest_type,interest_key" });
-      if (upsertError) throw upsertError;
-    }
+    const { data: replacedCount, error: replaceError } = await client.rpc(
+      "replace_agent_user_interest_profiles",
+      {
+        p_user_ids: scopedUserIds,
+        p_rows: upsertRows,
+      },
+    );
+    if (replaceError) throw replaceError;
 
     return jsonResponse({
       ok: true,
       scanned_users: scopedUserIds.length,
-      interest_rows_upserted: upsertRows.length,
+      interest_rows_upserted: Number(replacedCount ?? upsertRows.length),
       deleted_rows: scopedUserIds.length,
     });
   } catch (error) {

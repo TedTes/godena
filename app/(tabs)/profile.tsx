@@ -40,17 +40,6 @@ const LAYOUT_SPRING = {
   delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
 };
 
-type SignalGroup = {
-  id: string;
-  name: string;
-  coverColor: string;
-  emoji: string;
-  isMember: boolean;
-  isOpenToConnect: boolean;
-};
-
-const mockGroups: SignalGroup[] = [];
-
 const settingsRows = [
   { icon: 'git-compare-outline', label: 'Connections' },
   { icon: 'notifications-outline', label: 'Notifications' },
@@ -115,6 +104,19 @@ const LANGUAGE_OPTIONS = [
   { value: 'Tagalog', label: 'Tagalog' },
   { value: 'Swahili', label: 'Swahili' },
   { value: 'Other', label: 'Other' },
+] as const;
+
+const EVENT_NICHES = [
+  { key: 'live_music', label: 'Live music' },
+  { key: 'sports', label: 'Sports' },
+  { key: 'books_ideas', label: 'Books & ideas' },
+  { key: 'arts_culture', label: 'Arts & culture' },
+  { key: 'food_drink', label: 'Food & drink' },
+  { key: 'outdoors', label: 'Outdoors' },
+  { key: 'wellness', label: 'Wellness' },
+  { key: 'faith_community', label: 'Faith & community' },
+  { key: 'volunteering', label: 'Volunteering' },
+  { key: 'founders_careers', label: 'Founders & careers' },
 ] as const;
 
 type EditableField =
@@ -233,6 +235,9 @@ export default function ProfileScreen() {
   const [editingLanguages, setEditingLanguages] = useState<string[]>([]);
   const [editingDate, setEditingDate] = useState<Date>(new Date());
   const [showBirthDateSheet, setShowBirthDateSheet] = useState(false);
+  const [selectedNiches, setSelectedNiches] = useState<string[]>([]);
+  const [loadingNiches, setLoadingNiches] = useState(false);
+  const [savingNicheKey, setSavingNicheKey] = useState<string | null>(null);
 
   // ── Dating tab state ──────────────────────────────────────────────────────────
   const [datingLoaded,        setDatingLoaded]        = useState(false);
@@ -336,6 +341,20 @@ export default function ProfileScreen() {
     }
   };
 
+  const loadSelectedNiches = async (uid: string) => {
+    setLoadingNiches(true);
+    const { data, error } = await supabase
+      .from('agent_user_selected_niches')
+      .select('niche_key')
+      .eq('user_id', uid)
+      .order('niche_key', { ascending: true });
+
+    if (!error) {
+      setSelectedNiches(((data ?? []) as Array<{ niche_key: string }>).map((row) => row.niche_key));
+    }
+    setLoadingNiches(false);
+  };
+
   useFocusEffect(
     useCallback(() => {
       const boot = async () => {
@@ -348,7 +367,7 @@ export default function ProfileScreen() {
           return;
         }
         setUserId(uid);
-        await loadProfile(uid);
+        await Promise.all([loadProfile(uid), loadSelectedNiches(uid)]);
         setLoadingProfile(false);
       };
       void boot();
@@ -548,13 +567,14 @@ export default function ProfileScreen() {
       );
     }
 
+    const textField = String(field) as EditableField;
     const handleBlur = () => {
-      if (field === 'languages') {
+      if (textField === 'languages') {
         const parsed = editingValue.split(',').map((v) => v.trim()).filter(Boolean);
         void updateProfilePatch({ languages: parsed }).then(closeEditRow);
-      } else if (field === 'ethnicity') {
+      } else if (textField === 'ethnicity') {
         void updateProfilePatch({ ethnicity: editingValue.trim() || null }).then(closeEditRow);
-      } else if (field === 'religion') {
+      } else if (textField === 'religion') {
         void updateProfilePatch({ religion: editingValue.trim() || null }).then(closeEditRow);
       }
     };
@@ -564,7 +584,7 @@ export default function ProfileScreen() {
         value={editingValue}
         onChangeText={setEditingValue}
         onBlur={handleBlur}
-        placeholder={field === 'languages' ? 'e.g. English, Amharic' : 'Enter value'}
+        placeholder={textField === 'languages' ? 'e.g. English, Amharic' : 'Enter value'}
         style={styles.inlineInput}
         autoFocus
         autoCapitalize="sentences"
@@ -667,6 +687,38 @@ export default function ProfileScreen() {
     if (status === 'canceled') return 'Canceled';
     return 'Unverified';
   })();
+
+  const toggleNicheSelection = async (nicheKey: string) => {
+    if (!userId || savingNicheKey) return;
+    setSavingNicheKey(nicheKey);
+    const nextSelected = selectedNiches.includes(nicheKey);
+
+    if (nextSelected) {
+      setSelectedNiches((prev) => prev.filter((value) => value !== nicheKey));
+      const { error } = await supabase
+        .from('agent_user_selected_niches')
+        .delete()
+        .eq('user_id', userId)
+        .eq('niche_key', nicheKey);
+
+      if (error) {
+        setSelectedNiches((prev) => Array.from(new Set([...prev, nicheKey])));
+        Alert.alert('Could not update niches', error.message);
+      }
+    } else {
+      setSelectedNiches((prev) => Array.from(new Set([...prev, nicheKey])));
+      const { error } = await supabase
+        .from('agent_user_selected_niches')
+        .upsert({ user_id: userId, niche_key: nicheKey }, { onConflict: 'user_id,niche_key' });
+
+      if (error) {
+        setSelectedNiches((prev) => prev.filter((value) => value !== nicheKey));
+        Alert.alert('Could not update niches', error.message);
+      }
+    }
+
+    setSavingNicheKey(null);
+  };
 
   const updatePhoto = async () => {
     if (!userId || updatingPhoto) return;
@@ -1122,6 +1174,41 @@ export default function ProfileScreen() {
                   </RAnimated.View>
                 );
               })}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <View style={styles.bioLabelRow}>
+              <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>Event niches</Text>
+              {loadingNiches ? <ActivityIndicator size="small" color={C.terracotta} /> : null}
+            </View>
+            <View style={styles.card}>
+              <Text style={styles.cardSubtle}>
+                Pick a few things you actually want the agent to bias toward.
+              </Text>
+              <View style={styles.inlineOptionsWrap}>
+                {EVENT_NICHES.map((niche) => {
+                  const selected = selectedNiches.includes(niche.key);
+                  const saving = savingNicheKey === niche.key;
+                  return (
+                    <TouchableOpacity
+                      key={niche.key}
+                      style={[styles.inlineOptionChip, selected && styles.inlineOptionChipActive]}
+                      onPress={() => void toggleNicheSelection(niche.key)}
+                      activeOpacity={0.8}
+                      disabled={Boolean(savingNicheKey)}
+                    >
+                      {saving ? (
+                        <ActivityIndicator size="small" color={selected ? C.white : C.terracotta} />
+                      ) : (
+                        <Text style={[styles.inlineOptionText, selected && styles.inlineOptionTextActive]}>
+                          {niche.label}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           </View>
 
@@ -1757,6 +1844,12 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
     padding: Spacing.md,
+  },
+  cardSubtle: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: C.muted,
+    marginBottom: 12,
   },
   cardNoPad: { padding: 0, overflow: 'hidden' },
 
