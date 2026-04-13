@@ -222,6 +222,14 @@ Deno.serve(async (req) => {
       throw error ?? new Error("source_upsert_failed");
     }
 
+    const { error: syncStateError } = await client
+      .from("agent_source_sync_state")
+      .upsert({ source_id: data.id }, { onConflict: "source_id" });
+
+    if (syncStateError) {
+      throw syncStateError;
+    }
+
     return jsonResponse({
       ok: true,
       source: data,

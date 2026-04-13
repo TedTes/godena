@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '../constants/theme';
 import {
   fetchAgentProposals,
-  fetchSuggestionReasons,
+  fetchSuggestionReasonsForProposals,
   updateAgentProposalStatus,
 } from '../lib/services/agentPipeline';
 import { supabase } from '../lib/supabase';
@@ -80,7 +80,13 @@ export default function AgentReviewScreen() {
     groupOpportunityCount: 0,
     introOpportunityCount: 0,
     interestProfileCount: 0,
+    dueSourceCount: 0,
+    failedSourceCount: 0,
   });
+  const [pipelineSchedules, setPipelineSchedules] = useState<null | {
+    source_refresh_cron_schedule: string | null;
+    recommendation_refresh_cron_schedule: string | null;
+  }>(null);
   const [latestRun, setLatestRun] = useState<null | {
     source: string;
     status: string;
@@ -114,6 +120,9 @@ export default function AgentReviewScreen() {
       { count: groupOpportunityCount },
       { count: introOpportunityCount },
       { count: interestProfileCount },
+      dueSourcesRes,
+      failedSourcesRes,
+      pipelineSettingsRes,
       latestRunRes,
     ] = await Promise.all([
       supabase.from('agent_proposals').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
@@ -126,6 +135,13 @@ export default function AgentReviewScreen() {
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'group'),
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'introduction'),
       supabase.from('agent_user_interest_profiles').select('user_id', { count: 'exact', head: true }),
+      supabase.from('agent_source_sync_state').select('source_id', { count: 'exact', head: true }).lte('next_run_at', new Date().toISOString()),
+      supabase.from('agent_source_sync_state').select('source_id', { count: 'exact', head: true }).eq('last_status', 'failed'),
+      supabase
+        .from('agent_pipeline_settings')
+        .select('source_refresh_cron_schedule, recommendation_refresh_cron_schedule')
+        .eq('key', 'default')
+        .maybeSingle(),
       supabase
         .from('agent_ingestion_runs')
         .select('source, status, records_received, records_rejected, opportunities_upserted, created_at')
@@ -144,7 +160,10 @@ export default function AgentReviewScreen() {
       groupOpportunityCount: groupOpportunityCount ?? 0,
       introOpportunityCount: introOpportunityCount ?? 0,
       interestProfileCount: interestProfileCount ?? 0,
+      dueSourceCount: dueSourcesRes.count ?? 0,
+      failedSourceCount: failedSourcesRes.count ?? 0,
     });
+    setPipelineSchedules(pipelineSettingsRes.data ?? null);
     setLatestRun(latestRunRes.data ?? null);
 
     if (error) {
@@ -158,14 +177,11 @@ export default function AgentReviewScreen() {
     const rows = ((data ?? []) as ProposalRow[]);
     setProposals(rows);
 
-    const nextReasons: Record<string, ReasonRow[]> = {};
-    await Promise.all(
-      rows.map(async (row) => {
-        const { data: reasonRows } = await fetchSuggestionReasons(row.id, uid);
-        nextReasons[row.id] = ((reasonRows ?? []) as ReasonRow[]);
-      })
+    const { data: reasonRowsByProposal } = await fetchSuggestionReasonsForProposals(
+      rows.map((row) => row.id),
+      uid
     );
-    setReasonsByProposal(nextReasons);
+    setReasonsByProposal((reasonRowsByProposal ?? {}) as Record<string, ReasonRow[]>);
     setLoading(false);
   }, [filter]);
 
@@ -331,6 +347,14 @@ export default function AgentReviewScreen() {
                 <Text style={styles.statValue}>{stats.interestProfileCount}</Text>
                 <Text style={styles.statLabel}>Interest Rows</Text>
               </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.dueSourceCount}</Text>
+                <Text style={styles.statLabel}>Sources Due</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.failedSourceCount}</Text>
+                <Text style={styles.statLabel}>Source Failures</Text>
+              </View>
               <View style={styles.runCard}>
                 <Text style={styles.runCardLabel}>Latest Ingestion</Text>
                 {latestRun ? (
@@ -343,6 +367,19 @@ export default function AgentReviewScreen() {
                 ) : (
                   <Text style={styles.runCardMeta}>No runs yet</Text>
                 )}
+              </View>
+            </View>
+
+            <View style={styles.statsGrid}>
+              <View style={styles.runCard}>
+                <Text style={styles.runCardLabel}>Source refresh</Text>
+                <Text style={styles.runCardValue}>{pipelineSchedules?.source_refresh_cron_schedule ?? 'Not set'}</Text>
+                <Text style={styles.runCardMeta}>Fetch cadence for external sources</Text>
+              </View>
+              <View style={styles.runCard}>
+                <Text style={styles.runCardLabel}>Recommendation refresh</Text>
+                <Text style={styles.runCardValue}>{pipelineSchedules?.recommendation_refresh_cron_schedule ?? 'Not set'}</Text>
+                <Text style={styles.runCardMeta}>Interest rebuild + proposal cadence</Text>
               </View>
             </View>
 

@@ -135,21 +135,26 @@ export async function fetchAgentEventSuggestions(params?: {
       .map((row) => [row.id, row]))
   );
 
-  const reasonsByProposal = new Map<string, AgentEventSuggestion['reasons']>();
-  await Promise.all(
-    rows.map(async (row) => {
-      const { data: reasons } = await fetchSuggestionReasons(row.id, params?.userId ?? null);
-      reasonsByProposal.set(
-        row.id,
-        (((reasons ?? []) as Array<{ id: string; reason_label: string; reason_detail: string | null }>)
-          .map((reason) => ({
-            id: reason.id,
-            label: reason.reason_label,
-            detail: reason.reason_detail,
-          })))
-      );
-    })
+  const { data: reasonsByProposalRows, error: reasonsError } = await fetchSuggestionReasonsForProposals(
+    rows.map((row) => row.id),
+    params?.userId ?? null
   );
+
+  if (reasonsError) {
+    return { data: null, error: reasonsError };
+  }
+
+  const reasonsByProposal = new Map<string, AgentEventSuggestion['reasons']>();
+  for (const [proposalId, reasons] of Object.entries(reasonsByProposalRows ?? {})) {
+    reasonsByProposal.set(
+      proposalId,
+      reasons.map((reason) => ({
+        id: reason.id,
+        label: reason.reason_label,
+        detail: reason.reason_detail,
+      }))
+    );
+  }
 
   return {
     data: rows.map((row) => {
@@ -182,6 +187,56 @@ export async function fetchSuggestionReasons(proposalId: string, userId?: string
   if (userId) query = query.or(`user_id.is.null,user_id.eq.${userId}`);
 
   return query;
+}
+
+export async function fetchSuggestionReasonsForProposals(
+  proposalIds: string[],
+  userId?: string | null
+): Promise<{
+  data: Record<string, Array<{
+    id: string;
+    proposal_id: string;
+    reason_label: string;
+    reason_detail: string | null;
+  }>> | null;
+  error: Error | null;
+}> {
+  const uniqueIds = Array.from(new Set(proposalIds.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return { data: {}, error: null };
+  }
+
+  let query = supabase
+    .from('agent_suggestion_reasons')
+    .select('id, proposal_id, reason_label, reason_detail, sort_order')
+    .in('proposal_id', uniqueIds)
+    .order('sort_order', { ascending: true });
+
+  if (userId) query = query.or(`user_id.is.null,user_id.eq.${userId}`);
+
+  const { data, error } = await query;
+  if (error) {
+    return { data: null, error: new Error(error.message) };
+  }
+
+  const grouped: Record<string, Array<{
+    id: string;
+    proposal_id: string;
+    reason_label: string;
+    reason_detail: string | null;
+  }>> = {};
+
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    proposal_id: string;
+    reason_label: string;
+    reason_detail: string | null;
+  }>) {
+    grouped[row.proposal_id] = grouped[row.proposal_id] ?? [];
+    grouped[row.proposal_id].push(row);
+  }
+
+  return { data: grouped, error: null };
 }
 
 export async function fetchAgentIntroSuggestions(params: {

@@ -193,6 +193,10 @@ function mergeScope(globalScope: Record<string, unknown>, sourceConfig: Record<s
   };
 }
 
+function nextRunAtIso(pollIntervalMinutes: number) {
+  return new Date(Date.now() + pollIntervalMinutes * 60 * 1000).toISOString();
+}
+
 async function fetchIcsRecords(sourceRow: Record<string, unknown>, scope: Record<string, unknown>) {
   const res = await fetchWithBackoff(String(sourceRow.locator), {
     headers: {
@@ -348,10 +352,59 @@ Deno.serve(async (req) => {
     const sourceIds = Array.isArray(body.source_ids) ? body.source_ids.filter((v) => typeof v === "string" && v.trim()) : [];
     const sourceType = ensureString(body.source_type).toLowerCase() || null;
     const globalScope = ensureRecord(body.scope);
+    const dueOnly = body.due_only !== false;
+
+    const { data: existingSyncStates, error: syncStateError } = await client
+      .from("agent_source_sync_state")
+      .select("source_id")
+      .limit(10000);
+    if (syncStateError) throw syncStateError;
+
+    const existingStateIds = new Set((existingSyncStates ?? []).map((row) => row.source_id));
+
+    const { data: allSourceIds, error: sourceIdError } = await client
+      .from("agent_sources")
+      .select("id")
+      .eq("enabled", true);
+    if (sourceIdError) throw sourceIdError;
+
+    const missingStateRows = (allSourceIds ?? [])
+      .filter((row) => !existingStateIds.has(row.id))
+      .map((row) => ({
+        source_id: row.id,
+      }));
+
+    if (missingStateRows.length > 0) {
+      const { error: seedStateError } = await client
+        .from("agent_source_sync_state")
+        .upsert(missingStateRows, { onConflict: "source_id" });
+      if (seedStateError) throw seedStateError;
+    }
 
     let query = client
       .from("agent_sources")
-      .select("id, name, enabled, source_type, locator_type, locator, trust_tier, config")
+      .select(`
+        id,
+        name,
+        enabled,
+        source_type,
+        locator_type,
+        locator,
+        trust_tier,
+        config,
+        sync_state:agent_source_sync_state (
+          poll_interval_minutes,
+          next_run_at,
+          last_run_at,
+          last_status,
+          last_error,
+          last_success_at,
+          last_records_fetched,
+          last_records_normalized,
+          last_opportunities_upserted,
+          consecutive_failures
+        )
+      `)
       .eq("enabled", true)
       .order("created_at", { ascending: true });
 
@@ -361,13 +414,33 @@ Deno.serve(async (req) => {
     const { data: sources, error } = await query;
     if (error) throw error;
 
+    const nowIso = new Date().toISOString();
+    const scopedSources = (sources ?? []).filter((sourceRow) => {
+      if (!dueOnly || sourceIds.length > 0) return true;
+      const syncState = Array.isArray(sourceRow.sync_state) ? sourceRow.sync_state[0] : sourceRow.sync_state;
+      const nextRunAt = ensureString(syncState?.next_run_at);
+      return !nextRunAt || nextRunAt <= nowIso;
+    });
+
     const results = [];
     let processed = 0;
     let totalFetched = 0;
     let totalNormalized = 0;
     let totalOpportunities = 0;
 
-    for (const sourceRow of sources ?? []) {
+    for (const sourceRow of scopedSources) {
+      const syncState = Array.isArray(sourceRow.sync_state) ? sourceRow.sync_state[0] : sourceRow.sync_state;
+      const pollIntervalMinutes = Math.max(5, Math.min(Number(syncState?.poll_interval_minutes ?? 360), 10080));
+
+      await client
+        .from("agent_source_sync_state")
+        .update({
+          last_status: "running",
+          last_error: null,
+          last_run_at: nowIso,
+        })
+        .eq("source_id", sourceRow.id);
+
       try {
         const fetched = await fetchSourceRecords(sourceRow, globalScope);
         const runKey = `source-sync:${sourceRow.id}:${Date.now()}`;
@@ -392,13 +465,47 @@ Deno.serve(async (req) => {
         totalFetched += fetched.records.length;
         totalNormalized += Number(scoutResult.normalized ?? 0);
         totalOpportunities += Number(scoutResult.opportunities_upserted ?? 0);
+
+        const sourceStatus =
+          Number(scoutResult.rejected ?? 0) > 0
+            ? "completed_with_rejections"
+            : "completed";
+
+        await client
+          .from("agent_source_sync_state")
+          .update({
+            last_status: sourceStatus,
+            last_error: null,
+            last_success_at: new Date().toISOString(),
+            last_records_fetched: fetched.records.length,
+            last_records_normalized: Number(scoutResult.normalized ?? 0),
+            last_opportunities_upserted: Number(scoutResult.opportunities_upserted ?? 0),
+            next_run_at: nextRunAtIso(pollIntervalMinutes),
+            consecutive_failures: 0,
+          })
+          .eq("source_id", sourceRow.id);
       } catch (sourceError) {
+        const errorMessage = sourceError instanceof Error ? sourceError.message : "Unknown error";
         results.push({
           source_id: sourceRow.id,
           source_type: sourceRow.source_type,
           status: "failed",
-          error: sourceError instanceof Error ? sourceError.message : "Unknown error",
+          error: errorMessage,
         });
+
+        const currentFailures = Number(syncState?.consecutive_failures ?? 0);
+        const failureCount = currentFailures + 1;
+        const failureDelayMinutes = Math.min(pollIntervalMinutes * Math.max(1, failureCount), 24 * 60);
+
+        await client
+          .from("agent_source_sync_state")
+          .update({
+            last_status: "failed",
+            last_error: errorMessage,
+            next_run_at: nextRunAtIso(failureDelayMinutes),
+            consecutive_failures: failureCount,
+          })
+          .eq("source_id", sourceRow.id);
       }
     }
 
@@ -406,7 +513,8 @@ Deno.serve(async (req) => {
       ok: true,
       access,
       processed_sources: processed,
-      requested_sources: sources?.length ?? 0,
+      requested_sources: scopedSources.length,
+      skipped_sources: (sources?.length ?? 0) - scopedSources.length,
       fetched_records: totalFetched,
       normalized_records: totalNormalized,
       opportunities_upserted: totalOpportunities,
