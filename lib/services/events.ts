@@ -14,6 +14,7 @@ export type EventRow = {
 
 export type ExternalEventRow = {
   id: string;
+  proposal_id?: string | null;
   source: string;
   source_url: string | null;
   title: string;
@@ -49,6 +50,7 @@ export type UnifiedEventRow = {
   my_status: 'going' | 'interested' | 'not_going' | null;
   going_user_ids: string[];
   attendee_label: string | null;
+  proposal_id?: string | null;
 };
 
 export type GroupRow = {
@@ -135,7 +137,7 @@ export async function fetchExternalEventsForCity(city: string | null) {
         lng: number | null;
         feature_snapshot: Record<string, unknown> | null;
         metadata: Record<string, unknown> | null;
-      }>).map(mapOpportunityToExternalEventRow),
+      }>).map((row) => mapOpportunityToExternalEventRow(row)),
       error: null,
     };
   }
@@ -155,7 +157,7 @@ export async function fetchExternalEventsForCity(city: string | null) {
       lng: number | null;
       feature_snapshot: Record<string, unknown> | null;
       metadata: Record<string, unknown> | null;
-    }>).map(mapOpportunityToExternalEventRow),
+    }>).map((row) => mapOpportunityToExternalEventRow(row)),
     error: fallback.error,
   };
 }
@@ -194,6 +196,7 @@ async function fetchProposalDrivenExternalEvents(params: {
   }
 
   const proposalRows = (proposals ?? []) as Array<{
+    id: string;
     opportunity_id: string | null;
     confidence_score: number;
   }>;
@@ -247,18 +250,19 @@ async function fetchProposalDrivenExternalEvents(params: {
       return opportunity
         ? {
             opportunity,
+            proposal_id: proposal.id,
             confidence_score: proposal.confidence_score,
           }
         : null;
     })
-    .filter((value): value is { opportunity: NonNullable<ReturnType<Map<string, any>['get']>>; confidence_score: number } => Boolean(value))
+    .filter((value): value is { opportunity: NonNullable<ReturnType<Map<string, any>['get']>>; proposal_id: string; confidence_score: number } => Boolean(value))
     .sort((a, b) => {
       if (b.confidence_score !== a.confidence_score) return b.confidence_score - a.confidence_score;
       return new Date(a.opportunity.starts_at).getTime() - new Date(b.opportunity.starts_at).getTime();
     });
 
   return {
-    data: rows.map(({ opportunity }) => mapOpportunityToExternalEventRow(opportunity)),
+    data: rows.map(({ opportunity, proposal_id }) => mapOpportunityToExternalEventRow(opportunity, proposal_id)),
     proposalOpportunityIds: opportunityIds,
     error: null,
   };
@@ -332,7 +336,7 @@ async function fetchSocialProofExternalEvents(params: {
     return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
   });
 
-  return { data: rows.map(mapOpportunityToExternalEventRow), error: null };
+  return { data: rows.map((row) => mapOpportunityToExternalEventRow(row)), error: null };
 }
 
 export async function fetchGroupsByIds(groupIds: string[]) {
@@ -409,17 +413,14 @@ export async function fetchEventById(eventId: string) {
     .maybeSingle();
 }
 
-export async function fetchExternalEventById(eventId: string) {
-  const { data, error } = await supabase
-    .from('agent_opportunities')
-    .select('id, title, summary, city, country, starts_at, ends_at, timezone, venue_name, lat, lng, feature_snapshot, metadata')
-    .eq('kind', 'event')
-    .eq('id', eventId)
-    .maybeSingle();
-
+export async function fetchExternalEventById(eventId: string, _userId?: string | null) {
+  const { data, error } = await supabase.rpc('fetch_visible_external_event_by_id', {
+    p_opportunity_id: eventId,
+  });
   if (error) return { data: null, error };
+  const row = Array.isArray(data) ? data[0] : null;
   return {
-    data: data ? mapOpportunityToExternalEventRow(data) : null,
+    data: row ? mapOpportunityToExternalEventRow(row) : null,
     error: null,
   };
 }
@@ -500,6 +501,12 @@ export async function createExternalEventChat(eventId: string): Promise<{ groupI
   return { groupId: data as string, error: null };
 }
 
+export async function createEventCompanionRequest(eventId: string): Promise<{ ok: boolean; error: string | null }> {
+  const { error } = await supabase.rpc('create_agent_event_companion_request', { p_opportunity_id: eventId });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, error: null };
+}
+
 function mapOpportunityToExternalEventRow(row: {
   id: string;
   title: string;
@@ -514,11 +521,12 @@ function mapOpportunityToExternalEventRow(row: {
   lng: number | null;
   feature_snapshot: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
-}): ExternalEventRow {
+}, proposalId: string | null = null): ExternalEventRow {
   const featureSnapshot = row.feature_snapshot ?? {};
   const metadata = row.metadata ?? {};
   return {
     id: row.id,
+    proposal_id: proposalId,
     source: typeof featureSnapshot.source === 'string' ? featureSnapshot.source : 'external',
     source_url: typeof metadata.source_url === 'string' ? metadata.source_url : null,
     title: row.title,
@@ -683,6 +691,7 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
       my_status: (myExternalRsvpByEvent.get(e.id) ?? null) as UnifiedEventRow['my_status'],
       going_user_ids: [],
       attendee_label: buildAttendeeLabel(e.id),
+      proposal_id: e.proposal_id ?? null,
     })),
   ];
 

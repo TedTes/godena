@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
+  Alert,
   Linking,
   ScrollView,
   StyleSheet,
@@ -16,6 +17,7 @@ import { Colors, Spacing, Radius } from '../../../constants/theme';
 import RAnimated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import {
   createExternalEventChat,
+  createEventCompanionRequest,
   deleteExternalEventRsvp,
   fetchExternalEventById,
   fetchExternalEventRsvps,
@@ -128,6 +130,7 @@ export default function ExternalEventDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [creatingChat, setCreatingChat] = useState(false);
+  const [requestingCompanion, setRequestingCompanion] = useState(false);
   const [eventRow, setEventRow] = useState<ExternalEventRow | null>(null);
   const [attendeeLabel, setAttendeeLabel] = useState<string | null>(null);
   const [goingCount, setGoingCount] = useState(0);
@@ -181,7 +184,8 @@ export default function ExternalEventDetailScreen() {
     const load = async () => {
       if (!id) return;
       setLoading(true);
-      const [{ data }, uid] = await Promise.all([fetchExternalEventById(id), getSessionUserId()]);
+      const uid = await getSessionUserId();
+      const { data } = await fetchExternalEventById(id, uid);
       setEventRow((data ?? null) as ExternalEventRow | null);
       setUserId(uid);
       if (uid) await loadRsvpState(uid);
@@ -222,6 +226,24 @@ export default function ExternalEventDetailScreen() {
       setCreatingChat(false);
       if (error || !groupId) return;
       router.push(`/group/chat/${groupId}`);
+    })();
+  };
+
+  const handleFindCompanion = () => {
+    void (async () => {
+      if (!id || requestingCompanion) return;
+      setRequestingCompanion(true);
+      const { ok, error } = await createEventCompanionRequest(id);
+      setRequestingCompanion(false);
+      if (!ok) {
+        Alert.alert('Could not save request', error ?? 'Please try again.');
+        return;
+      }
+      if (myStatus !== 'going') {
+        setMyStatus('interested');
+      }
+      Alert.alert('Request saved', "We'll look for someone compatible who also wants company for this event.");
+      if (userId) await loadRsvpState(userId);
     })();
   };
 
@@ -371,6 +393,30 @@ export default function ExternalEventDetailScreen() {
                 onPress={() => handleSetStatus(opt.status)}
               />
             ))}
+          </RAnimated.View>
+
+          <RAnimated.View entering={FadeInDown.delay(260).duration(300)}>
+            <TouchableOpacity
+              style={styles.companionCta}
+              onPress={handleFindCompanion}
+              disabled={requestingCompanion}
+              activeOpacity={0.85}
+            >
+              <View style={styles.chatCtaLeft}>
+                <View style={styles.companionCtaIconBox}>
+                  <Ionicons name="people-circle-outline" size={19} color={Colors.terracotta} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.companionCtaTitle}>Find someone to go with</Text>
+                  <Text style={styles.chatCtaSub}>Ask the agent to look for a compatible match around this event</Text>
+                </View>
+              </View>
+              {requestingCompanion ? (
+                <ActivityIndicator size="small" color={Colors.terracotta} />
+              ) : (
+                <Ionicons name="chevron-forward" size={16} color={Colors.terracotta} />
+              )}
+            </TouchableOpacity>
           </RAnimated.View>
 
           {/* ── Group chat CTA ── */}
@@ -629,6 +675,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: Spacing.md,
   },
+  companionCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(196,98,45,0.08)',
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(196,98,45,0.22)',
+    padding: Spacing.md,
+  },
   chatCtaLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -644,10 +700,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
+  companionCtaIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: 'rgba(196,98,45,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   chatCtaTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: Colors.ink,
+    marginBottom: 2,
+  },
+  companionCtaTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.terracotta,
     marginBottom: 2,
   },
   chatCtaSub: {

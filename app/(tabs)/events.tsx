@@ -17,10 +17,12 @@ import { Colors, Spacing, Radius } from '../../constants/theme';
 import {
   fetchGoingUserProfiles,
   fetchMembershipGroupIds,
+  createEventCompanionRequest,
   fetchUnifiedEventsForUser,
   getSessionUserId,
   removeChannel,
   subscribeToGroupEvents,
+  upsertExternalEventRsvp,
   type UnifiedEventRow,
 } from '../../lib/services/events';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
@@ -48,7 +50,10 @@ type EventCard = {
   goingAvatars: (string | null)[];
   attendeeLabel?: string | null;
   externalUrl?: string | null;
+  proposalId?: string | null;
 };
+
+type EventIntentAction = 'interested' | 'going' | 'find_company' | 'not_for_me' | 'hide_similar';
 
 function categoryEmoji(category?: string) {
   switch (category) {
@@ -106,6 +111,7 @@ export default function EventsScreen() {
   const [agentSuggestions, setAgentSuggestions] = useState<AgentEventSuggestion[]>([]);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [actingSuggestionId, setActingSuggestionId] = useState<string | null>(null);
+  const [actingEventIds, setActingEventIds] = useState<string[]>([]);
   const viewedProposalIdsRef = useRef<Set<string>>(new Set());
   const enterStyle = useScreenEnter();
 
@@ -199,6 +205,7 @@ export default function EventsScreen() {
         goingAvatars:  isExternal ? [] : e.going_user_ids.map((id) => userAvatarMap[id] ?? null),
         attendeeLabel: e.attendee_label ?? null,
         externalUrl:   e.source_url,
+        proposalId:    e.proposal_id ?? null,
       };
     });
 
@@ -272,6 +279,132 @@ export default function EventsScreen() {
     setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
   }, [actingSuggestionId, sessionUserId]);
 
+  const updateExternalCardStatus = useCallback((eventId: string, next: EventCard['myStatus']) => {
+    setEvents((prev) => prev.map((event) => {
+      if (event.id !== eventId || event.source !== 'external') return event;
+      const wasGoing = event.myStatus === 'going';
+      const willBeGoing = next === 'going';
+      return {
+        ...event,
+        myStatus: next,
+        attendeeCount: wasGoing === willBeGoing
+          ? event.attendeeCount
+          : Math.max(0, event.attendeeCount + (willBeGoing ? 1 : -1)),
+      };
+    }));
+  }, []);
+
+  const hideExternalCard = useCallback((eventId: string) => {
+    setEvents((prev) => prev.filter((event) => event.id !== eventId));
+  }, []);
+
+  const handleExternalEventIntent = useCallback(async (event: EventCard, action: EventIntentAction) => {
+    if (!sessionUserId || actingEventIds.includes(event.id) || event.source !== 'external') return;
+    setActingEventIds((prev) => Array.from(new Set([...prev, event.id])));
+
+    try {
+      if (action === 'interested' || action === 'going') {
+        const { error: rsvpError } = await upsertExternalEventRsvp(event.id, sessionUserId, action);
+        if (rsvpError) throw new Error(rsvpError.message);
+        updateExternalCardStatus(event.id, action);
+
+        if (event.proposalId) {
+          const { error: feedbackError } = await logAgentFeedbackEvent({
+            proposalId: event.proposalId,
+            userId: sessionUserId,
+            eventType: action === 'going' ? 'rsvped_event' : 'clicked',
+            metadata: { source: 'events_card', action },
+          });
+          if (feedbackError) console.warn('logAgentFeedbackEvent(intent) failed', feedbackError.message);
+        }
+        return;
+      }
+
+      if (action === 'find_company') {
+        const { ok, error } = await createEventCompanionRequest(event.id);
+        if (!ok) throw new Error(error ?? 'Please try again.');
+        updateExternalCardStatus(event.id, event.myStatus === 'going' ? 'going' : 'interested');
+        if (event.proposalId) {
+          const { error: feedbackError } = await logAgentFeedbackEvent({
+            proposalId: event.proposalId,
+            userId: sessionUserId,
+            eventType: 'clicked',
+            metadata: { source: 'events_card', action },
+          });
+          if (feedbackError) console.warn('logAgentFeedbackEvent(find company) failed', feedbackError.message);
+        }
+        Alert.alert('Request saved', "We'll look for someone compatible who also wants company for this event.");
+        return;
+      }
+
+      if (action === 'not_for_me') {
+        const { error: rsvpError } = await upsertExternalEventRsvp(event.id, sessionUserId, 'not_going');
+        if (rsvpError) throw new Error(rsvpError.message);
+        if (event.proposalId) {
+          const { error: feedbackError } = await logAgentFeedbackEvent({
+            proposalId: event.proposalId,
+            userId: sessionUserId,
+            eventType: 'dismissed',
+            metadata: { source: 'events_card', action },
+          });
+          if (feedbackError) throw new Error(feedbackError.message);
+        } else {
+          console.warn('Not for me did not log proposal feedback because proposalId is missing', event.id);
+        }
+        hideExternalCard(event.id);
+        return;
+      }
+
+      const { error: rsvpError } = await upsertExternalEventRsvp(event.id, sessionUserId, 'not_going');
+      if (rsvpError) throw new Error(rsvpError.message);
+      if (event.proposalId) {
+        const { error: feedbackError } = await logAgentFeedbackEvent({
+          proposalId: event.proposalId,
+          userId: sessionUserId,
+          eventType: 'ignored',
+          metadata: {
+            source: 'events_card',
+            action,
+            title: event.title,
+            group_name: event.groupName,
+          },
+        });
+        if (feedbackError) throw new Error(feedbackError.message);
+      } else {
+        console.warn('Hide similar did not log proposal feedback because proposalId is missing', event.id);
+      }
+      hideExternalCard(event.id);
+    } catch (err) {
+      Alert.alert('Could not update event', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setActingEventIds((prev) => prev.filter((id) => id !== event.id));
+    }
+  }, [actingEventIds, hideExternalCard, sessionUserId, updateExternalCardStatus]);
+
+  const handleSuggestionRsvp = useCallback(async (
+    suggestion: AgentEventSuggestion,
+    status: 'interested' | 'going',
+  ) => {
+    if (!sessionUserId || actingSuggestionId || !suggestion.opportunityId) return;
+    setActingSuggestionId(suggestion.proposalId);
+    try {
+      const { error: rsvpError } = await upsertExternalEventRsvp(suggestion.opportunityId, sessionUserId, status);
+      if (rsvpError) throw new Error(rsvpError.message);
+      const { error: feedbackError } = await logAgentFeedbackEvent({
+        proposalId: suggestion.proposalId,
+        userId: sessionUserId,
+        eventType: status === 'going' ? 'rsvped_event' : 'clicked',
+        metadata: { source: 'events_suggestion_card', action: status },
+      });
+      if (feedbackError) console.warn('logAgentFeedbackEvent(suggestion intent) failed', feedbackError.message);
+      setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
+    } catch (err) {
+      Alert.alert('Could not update event', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setActingSuggestionId(null);
+    }
+  }, [actingSuggestionId, sessionUserId]);
+
   const renderHeader = () => (
     <>
       {agentSuggestions.length > 0 && (
@@ -315,10 +448,39 @@ export default function EventsScreen() {
                     </View>
                     <View style={styles.suggestionActionRow}>
                       <TouchableOpacity
+                        style={[styles.dismissBtn, styles.positiveIntentBtn]}
+                        activeOpacity={0.8}
+                        disabled={actingSuggestionId === suggestion.proposalId || !suggestion.opportunityId}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          void handleSuggestionRsvp(suggestion, 'interested');
+                        }}
+                      >
+                        <Text style={[styles.dismissBtnText, styles.positiveIntentText]}>
+                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Interested'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.dismissBtn, styles.positiveIntentBtn]}
+                        activeOpacity={0.8}
+                        disabled={actingSuggestionId === suggestion.proposalId || !suggestion.opportunityId}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          void handleSuggestionRsvp(suggestion, 'going');
+                        }}
+                      >
+                        <Text style={[styles.dismissBtnText, styles.positiveIntentText]}>
+                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Going'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
                         style={styles.dismissBtn}
                         activeOpacity={0.8}
                         disabled={actingSuggestionId === suggestion.proposalId}
-                        onPress={() => void dismissSuggestion(suggestion)}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          void dismissSuggestion(suggestion);
+                        }}
                       >
                         <Text style={styles.dismissBtnText}>
                           {actingSuggestionId === suggestion.proposalId ? '...' : 'Hide'}
@@ -328,7 +490,10 @@ export default function EventsScreen() {
                         style={styles.dismissBtn}
                         activeOpacity={0.8}
                         disabled={actingSuggestionId === suggestion.proposalId}
-                        onPress={() => void ignoreSuggestionType(suggestion)}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          void ignoreSuggestionType(suggestion);
+                        }}
                       >
                         <Text style={styles.dismissBtnText}>
                           {actingSuggestionId === suggestion.proposalId ? '...' : 'Less like this'}
@@ -407,6 +572,7 @@ export default function EventsScreen() {
               <View>
                 <EventItem
                   ev={ev}
+                  acting={actingEventIds.includes(ev.id)}
                   onPress={() => {
                     if (ev.source === 'external') {
                       router.push(`/event/external/${ev.id}`);
@@ -414,6 +580,7 @@ export default function EventsScreen() {
                       router.push(`/event/${ev.id}`);
                     }
                   }}
+                  onIntent={(action) => void handleExternalEventIntent(ev, action)}
                 />
               </View>
             )}
@@ -437,7 +604,17 @@ function FadeImage({ uri, style }: { uri: string; style: object }) {
   );
 }
 
-function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
+function EventItem({
+  ev,
+  acting,
+  onPress,
+  onIntent,
+}: {
+  ev: EventCard;
+  acting: boolean;
+  onPress: () => void;
+  onIntent: (action: EventIntentAction) => void;
+}) {
   const d        = new Date(ev.startsAt);
   const month    = d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
   const day      = d.getDate();
@@ -555,6 +732,72 @@ function EventItem({ ev, onPress }: { ev: EventCard; onPress: () => void }) {
             </View>
           )}
         </View>
+
+        {isExternal ? (
+          <View style={styles.intentRow}>
+            <TouchableOpacity
+              style={[styles.intentBtn, ev.myStatus === 'interested' && styles.intentBtnSelected]}
+              activeOpacity={0.82}
+              disabled={acting}
+              onPress={(event) => {
+                event.stopPropagation();
+                onIntent('interested');
+              }}
+            >
+              <Text style={[styles.intentBtnText, ev.myStatus === 'interested' && styles.intentBtnTextSelected]}>
+                {acting ? '...' : 'Interested'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.intentBtn, styles.intentBtnPrimary, ev.myStatus === 'going' && styles.intentBtnGoing]}
+              activeOpacity={0.82}
+              disabled={acting}
+              onPress={(event) => {
+                event.stopPropagation();
+                onIntent('going');
+              }}
+            >
+              <Text style={[styles.intentBtnText, styles.intentBtnPrimaryText]}>
+                {acting ? '...' : 'Going'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.intentBtn, styles.companionBtn]}
+              activeOpacity={0.82}
+              disabled={acting}
+              onPress={(event) => {
+                event.stopPropagation();
+                onIntent('find_company');
+              }}
+            >
+              <Text style={[styles.intentBtnText, styles.companionBtnText]}>
+                {acting ? '...' : 'Find company'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.intentTextBtn}
+              activeOpacity={0.75}
+              disabled={acting}
+              onPress={(event) => {
+                event.stopPropagation();
+                onIntent('not_for_me');
+              }}
+            >
+              <Text style={styles.intentTextBtnLabel}>Not for me</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.intentTextBtn}
+              activeOpacity={0.75}
+              disabled={acting}
+              onPress={(event) => {
+                event.stopPropagation();
+                onIntent('hide_similar');
+              }}
+            >
+              <Text style={styles.intentTextBtnLabel}>Hide similar</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
     </TouchableOpacity>
   );
@@ -692,6 +935,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: Colors.brownMid,
+  },
+  positiveIntentBtn: {
+    backgroundColor: 'rgba(122,140,92,0.10)',
+    borderColor: 'rgba(122,140,92,0.25)',
+  },
+  positiveIntentText: {
+    color: Colors.olive,
   },
   suggestionTitle: {
     fontSize: 17,
@@ -841,6 +1091,60 @@ const styles = StyleSheet.create({
   statusRsvpText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
   statusExternal: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusExternalText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
+  intentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 10,
+  },
+  intentBtn: {
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.paper,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  intentBtnSelected: {
+    borderColor: Colors.gold,
+    backgroundColor: 'rgba(201,168,76,0.12)',
+  },
+  intentBtnPrimary: {
+    borderColor: 'rgba(122,140,92,0.28)',
+    backgroundColor: 'rgba(122,140,92,0.12)',
+  },
+  intentBtnGoing: {
+    borderColor: Colors.success,
+    backgroundColor: 'rgba(54,128,82,0.12)',
+  },
+  companionBtn: {
+    borderColor: 'rgba(196,98,45,0.28)',
+    backgroundColor: 'rgba(196,98,45,0.10)',
+  },
+  intentBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.brownMid,
+  },
+  intentBtnTextSelected: {
+    color: Colors.gold,
+  },
+  intentBtnPrimaryText: {
+    color: Colors.olive,
+  },
+  companionBtnText: {
+    color: Colors.terracotta,
+  },
+  intentTextBtn: {
+    paddingHorizontal: 3,
+    paddingVertical: 6,
+  },
+  intentTextBtnLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.muted,
+  },
 
   // ── Empty ──
   emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 12, paddingHorizontal: Spacing.lg },
