@@ -1,5 +1,9 @@
 // @ts-nocheck
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  normalizeKey,
+  opportunityContextKeyMap,
+} from "../_shared/agent_pipeline.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -21,13 +25,6 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     headers: { "content-type": "application/json" },
   });
-}
-
-function normalizeKey(value: unknown) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return null;
-  return trimmed.replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 function normalizeInterestCategory(value: unknown) {
@@ -131,14 +128,20 @@ Deno.serve(async (req) => {
       client.from("event_rsvps").select("event_id, user_id, status, attended_at").in("user_id", scopedUserIds),
       client.from("group_events").select("id, group_id"),
       client.from("agent_event_rsvps").select("opportunity_id, user_id, status").in("user_id", scopedUserIds),
-      client.from("agent_opportunities").select("id, city, feature_snapshot").eq("kind", "event"),
-      client.from("agent_feedback_events").select("proposal_id, user_id, event_type").in("user_id", scopedUserIds),
+      client.from("agent_opportunities").select("id, title, city, venue_name, feature_snapshot").eq("kind", "event"),
+      client.from("agent_feedback_events").select("proposal_id, user_id, event_type, metadata").in("user_id", scopedUserIds),
       client.from("agent_proposals").select("id, opportunity_id"),
     ]);
 
     const groupById = new Map(((groupRowsRes.data ?? []) as Array<{ id: string; category: string | null; city: string | null }>).map((group) => [group.id, group]));
     const groupEventById = new Map(((groupEventsRes.data ?? []) as Array<{ id: string; group_id: string }>).map((event) => [event.id, event]));
-    const opportunityById = new Map(((agentOpportunitiesRes.data ?? []) as Array<{ id: string; city: string | null; feature_snapshot: Record<string, unknown> | null }>).map((opportunity) => [opportunity.id, opportunity]));
+    const opportunityById = new Map(((agentOpportunitiesRes.data ?? []) as Array<{
+      id: string;
+      title: string | null;
+      city: string | null;
+      venue_name: string | null;
+      feature_snapshot: Record<string, unknown> | null;
+    }>).map((opportunity) => [opportunity.id, opportunity]));
     const proposalToOpportunityId = new Map(((feedbackProposalsRes.data ?? []) as Array<{ id: string; opportunity_id: string | null }>).map((proposal) => [proposal.id, proposal.opportunity_id]));
     const scoreBuckets = new Map<string, Map<string, { score: number; evidence: Record<string, number> }>>();
 
@@ -175,7 +178,8 @@ Deno.serve(async (req) => {
       const group = groupById.get(membership.group_id);
       if (!bucket || !group) continue;
       addScore(bucket, "category", normalizeKey(group.category), 16, "group_membership");
-      addScore(bucket, "context", `city:${normalizeKey(group.city)}`, 3, "group_city");
+      const groupCity = normalizeKey(group.city);
+      if (groupCity) addScore(bucket, "context", `city:${groupCity}`, 3, "group_city");
     }
 
     for (const row of (eventRsvpsRes.data ?? []) as Array<{ event_id: string; user_id: string; status: string; attended_at: string | null }>) {
@@ -194,21 +198,61 @@ Deno.serve(async (req) => {
       const opportunity = opportunityById.get(row.opportunity_id);
       if (!bucket || !opportunity) continue;
       const category = normalizeInterestCategory(opportunity.feature_snapshot?.category);
-      if (row.status === "going") addScore(bucket, "category", category, 12, "external_event_going");
-      if (row.status === "interested") addScore(bucket, "category", category, 8, "external_event_interested");
+      const contexts = opportunityContextKeyMap(opportunity);
+      if (row.status === "going") {
+        addScore(bucket, "category", category, 14, "external_event_going");
+        addScore(bucket, "context", contexts.source, 3, "external_event_going_source");
+        addScore(bucket, "context", contexts.venue, 4, "external_event_going_venue");
+        addScore(bucket, "context", contexts.title, 2, "external_event_going_title");
+      }
+      if (row.status === "interested") {
+        addScore(bucket, "category", category, 10, "external_event_interested");
+        addScore(bucket, "context", contexts.source, 2, "external_event_interested_source");
+        addScore(bucket, "context", contexts.venue, 2, "external_event_interested_venue");
+        addScore(bucket, "context", contexts.title, 1, "external_event_interested_title");
+      }
+      if (row.status === "not_going") {
+        addScore(bucket, "category", category, -12, "external_event_not_going");
+        addScore(bucket, "context", contexts.source, -3, "external_event_not_going_source");
+        addScore(bucket, "context", contexts.venue, -6, "external_event_not_going_venue");
+        addScore(bucket, "context", contexts.title, -8, "external_event_not_going_title");
+      }
     }
 
-    for (const row of (feedbackRes.data ?? []) as Array<{ proposal_id: string; user_id: string; event_type: string }>) {
+    for (const row of (feedbackRes.data ?? []) as Array<{
+      proposal_id: string;
+      user_id: string;
+      event_type: string;
+      metadata: Record<string, unknown> | null;
+    }>) {
       const bucket = scoreBuckets.get(row.user_id);
       const opportunityId = proposalToOpportunityId.get(row.proposal_id);
       const opportunity = opportunityId ? opportunityById.get(opportunityId) : null;
       if (!bucket || !opportunity) continue;
       const category = normalizeInterestCategory(opportunity.feature_snapshot?.category);
-      if (row.event_type === "clicked") addScore(bucket, "category", category, 10, "proposal_clicked");
-      if (row.event_type === "rsvped_event") addScore(bucket, "category", category, 14, "proposal_rsvped");
+      const contexts = opportunityContextKeyMap(opportunity);
+      if (row.event_type === "clicked") {
+        addScore(bucket, "category", category, 8, "proposal_clicked");
+        addScore(bucket, "context", contexts.source, 1, "proposal_clicked_source");
+      }
+      if (row.event_type === "rsvped_event") {
+        addScore(bucket, "category", category, 18, "proposal_rsvped");
+        addScore(bucket, "context", contexts.source, 3, "proposal_rsvped_source");
+        addScore(bucket, "context", contexts.venue, 4, "proposal_rsvped_venue");
+        addScore(bucket, "context", contexts.title, 2, "proposal_rsvped_title");
+      }
       if (row.event_type === "joined_group") addScore(bucket, "category", category, 14, "proposal_joined_group");
-      if (row.event_type === "dismissed") addScore(bucket, "category", category, -10, "proposal_dismissed");
-      if (row.event_type === "ignored") addScore(bucket, "category", category, -14, "proposal_ignored");
+      if (row.event_type === "dismissed") {
+        addScore(bucket, "category", category, -12, "proposal_dismissed");
+        addScore(bucket, "context", contexts.venue, -4, "proposal_dismissed_venue");
+        addScore(bucket, "context", contexts.title, -5, "proposal_dismissed_title");
+      }
+      if (row.event_type === "ignored") {
+        addScore(bucket, "category", category, -18, "proposal_ignored");
+        addScore(bucket, "context", contexts.source, -4, "proposal_ignored_source");
+        addScore(bucket, "context", contexts.venue, -10, "proposal_ignored_venue");
+        addScore(bucket, "context", contexts.title, -12, "proposal_ignored_title");
+      }
     }
 
     const upsertRows = [];

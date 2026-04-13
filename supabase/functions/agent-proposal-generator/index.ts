@@ -4,6 +4,8 @@ import {
   approvalPolicyForOpportunity,
   buildRankingFeatures,
   buildSuggestionReasons,
+  normalizeKey,
+  opportunityContextKeys,
 } from "../_shared/agent_pipeline.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -71,10 +73,6 @@ function normalizeInterestCategory(value: unknown) {
   if (normalized.includes("community") || normalized.includes("family") || normalized.includes("miscellaneous")) return "community";
 
   return normalized;
-}
-
-function normalizeCity(value: unknown) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
 }
 
 function hasUsableEventData(opportunity: Record<string, unknown>) {
@@ -156,6 +154,13 @@ function qualityPenaltyForFlags(flags: string[]) {
   return Math.min(40, penalty);
 }
 
+function addToSetMap(map: Map<string, Set<string>>, key: string, value: string) {
+  if (!key || !value || key === value) return;
+  const set = map.get(key) ?? new Set<string>();
+  set.add(value);
+  map.set(key, set);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -220,9 +225,17 @@ Deno.serve(async (req) => {
       )
     );
 
-    const cityContexts = cities.map((value) => `city:${normalizeCity(value)}`).filter((value): value is string => Boolean(value));
+    const cityContexts = cities
+      .map((value) => normalizeKey(value))
+      .filter((value): value is string => Boolean(value))
+      .map((value) => `city:${value}`);
+    const opportunityContextKeysById = new Map<string, string[]>(
+      (opportunities ?? []).map((opportunity) => [opportunity.id, opportunityContextKeys(opportunity)]),
+    );
+    const opportunityContexts = Array.from(new Set(Array.from(opportunityContextKeysById.values()).flat()));
+    const contextKeys = Array.from(new Set([...cityContexts, ...opportunityContexts]));
     const { data: allInterestRows } =
-      categories.length > 0
+      categories.length > 0 || contextKeys.length > 0
         ? await client
             .from("agent_user_interest_profiles")
             .select("user_id, interest_type, interest_key, score")
@@ -239,7 +252,7 @@ Deno.serve(async (req) => {
         return categories.includes(row.interest_key);
       }
       if (row.interest_type === "context") {
-        return cityContexts.includes(row.interest_key);
+        return contextKeys.includes(row.interest_key);
       }
       return false;
     });
@@ -345,6 +358,49 @@ Deno.serve(async (req) => {
       rows.push(row);
       socialByOpportunityId.set(row.opportunity_id, rows);
     }
+    const socialUserIds = Array.from(new Set(
+      ((socialRsvpRows ?? []) as Array<{ user_id: string }>).map((row) => row.user_id).filter(Boolean),
+    ));
+
+    const { data: connectionRows } = socialUserIds.length > 0
+      ? await client
+          .from("connections")
+          .select("user_a_id, user_b_id")
+          .eq("status", "accepted")
+          .or(`user_a_id.in.(${socialUserIds.join(",")}),user_b_id.in.(${socialUserIds.join(",")})`)
+      : { data: [] };
+
+    const connectedUsersBySocialUserId = new Map<string, Set<string>>();
+    for (const row of (connectionRows ?? []) as Array<{ user_a_id: string; user_b_id: string }>) {
+      if (socialUserIds.includes(row.user_a_id)) addToSetMap(connectedUsersBySocialUserId, row.user_a_id, row.user_b_id);
+      if (socialUserIds.includes(row.user_b_id)) addToSetMap(connectedUsersBySocialUserId, row.user_b_id, row.user_a_id);
+    }
+
+    const { data: socialMembershipRows } = socialUserIds.length > 0
+      ? await client
+          .from("group_memberships")
+          .select("group_id, user_id")
+          .in("user_id", socialUserIds)
+      : { data: [] };
+    const socialGroupIds = Array.from(new Set(
+      ((socialMembershipRows ?? []) as Array<{ group_id: string }>).map((row) => row.group_id).filter(Boolean),
+    ));
+    const { data: groupmateRows } = socialGroupIds.length > 0
+      ? await client
+          .from("group_memberships")
+          .select("group_id, user_id")
+          .in("group_id", socialGroupIds)
+      : { data: [] };
+    const membersByGroupId = new Map<string, Set<string>>();
+    for (const row of (groupmateRows ?? []) as Array<{ group_id: string; user_id: string }>) {
+      addToSetMap(membersByGroupId, row.group_id, row.user_id);
+    }
+    const groupmatesBySocialUserId = new Map<string, Set<string>>();
+    for (const row of (socialMembershipRows ?? []) as Array<{ group_id: string; user_id: string }>) {
+      for (const memberUserId of membersByGroupId.get(row.group_id) ?? []) {
+        addToSetMap(groupmatesBySocialUserId, row.user_id, memberUserId);
+      }
+    }
 
     let created = 0;
     let updated = 0;
@@ -364,16 +420,21 @@ Deno.serve(async (req) => {
         : { views: 0, clicks: 0, dismisses: 0, ignores: 0 };
 
       const opportunityCategory = normalizeInterestCategory(opportunity.feature_snapshot?.category);
-      const opportunityCity = normalizeCity(opportunity.city);
+      const opportunityCity = normalizeKey(opportunity.city);
 
       const scoredAudience =
         opportunity.kind === "event" && opportunityCategory
-          ? Array.from(categoryInterestByUser.get(opportunityCategory)?.entries() ?? [])
+            ? Array.from(categoryInterestByUser.get(opportunityCategory)?.entries() ?? [])
               .map(([userId, categoryScore]) => {
                 const cityScore = opportunityCity
                   ? Number(contextInterestByUser.get(`city:${opportunityCity}`)?.get(userId) ?? 0)
                   : 0;
-                return { userId, score: categoryScore + cityScore };
+                const patternScore = (opportunityContextKeysById.get(opportunity.id) ?? [])
+                  .reduce(
+                    (sum, key) => sum + Number(contextInterestByUser.get(key)?.get(userId) ?? 0),
+                    0,
+                  );
+                return { userId, score: categoryScore + cityScore + patternScore, categoryScore, cityScore, patternScore };
               })
               .filter((row) => row.score > 0)
               .sort((a, b) => b.score - a.score)
@@ -392,13 +453,30 @@ Deno.serve(async (req) => {
         if (row.status === "going") socialGoing += 1;
         if (row.status === "interested") socialInterested += 1;
       }
+      const connectionSocialAudience = new Set<string>();
+      const groupSocialAudience = new Set<string>();
+      for (const row of socialRows ?? []) {
+        for (const userId of connectedUsersBySocialUserId.get(row.user_id) ?? []) {
+          connectionSocialAudience.add(userId);
+        }
+        for (const userId of groupmatesBySocialUserId.get(row.user_id) ?? []) {
+          groupSocialAudience.add(userId);
+        }
+      }
+      const socialRsvpUserIds = socialRows.map((row) => row.user_id).filter(Boolean);
+      for (const userId of socialRsvpUserIds) {
+        connectionSocialAudience.delete(userId);
+        groupSocialAudience.delete(userId);
+      }
 
       const computedAudienceUserIds = Array.from(
         new Set(
           opportunity.kind === "event"
             ? [
                 ...affinityAudience,
-                ...(socialRows.map((row) => row.user_id).filter(Boolean)),
+                ...socialRsvpUserIds,
+                ...Array.from(connectionSocialAudience),
+                ...Array.from(groupSocialAudience),
                 ...audienceUserIds,
               ]
             : opportunity.kind === "introduction" &&
@@ -408,12 +486,16 @@ Deno.serve(async (req) => {
         )
       );
 
+      const contextMatchScore = scoredAudience.length > 0 ? scoredAudience[0].cityScore + scoredAudience[0].patternScore : 0;
       const rankingContext = {
         audience_size: computedAudienceUserIds.length,
         affinity_user_count: affinityAudience.length,
         social_going_count: socialGoing,
         social_interested_count: socialInterested,
+        connection_social_user_count: connectionSocialAudience.size,
+        group_social_user_count: groupSocialAudience.size,
         interest_match_score: interestMatchScore,
+        context_match_score: contextMatchScore,
       };
 
       const titleKey = normalizedTitleKey(opportunity);
@@ -513,12 +595,15 @@ Deno.serve(async (req) => {
         },
         ranking_features: {
           ...rankingFeatures,
+          context_match_score: contextMatchScore,
+          connection_social_user_count: connectionSocialAudience.size,
+          group_social_user_count: groupSocialAudience.size,
           source_quality_flags: qualityFlags,
           quality_penalty: qualityPenalty,
           title_occurrence_index: titleOccurrenceIndex,
           title_occurrence_key: titleKey,
         },
-        model_version: "rules-v6",
+        model_version: "rules-v8",
         confidence_score: adjustedScore,
         approval_required: finalPolicy.approval_required,
         expires_at: fallbackProposalExpiry(opportunity),

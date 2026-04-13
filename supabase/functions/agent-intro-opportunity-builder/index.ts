@@ -54,6 +54,17 @@ Deno.serve(async (req) => {
 
     const profileByUser = new Map((profileRows ?? []).map((row) => [row.user_id, row]));
     const groupById = new Map((groupRows ?? []).map((row) => [row.id, row]));
+    const { data: existingIntroConnections } = groupIds.length && userIds.length
+      ? await client
+          .from("connections")
+          .select("group_id, user_a_id, user_b_id")
+          .in("group_id", groupIds)
+          .in("user_a_id", userIds)
+          .in("user_b_id", userIds)
+      : { data: [] };
+    const existingIntroConnectionKeys = new Set(
+      (existingIntroConnections ?? []).map((row) => `${row.group_id}:${row.user_a_id}:${row.user_b_id}`),
+    );
 
     let upserted = 0;
     for (const row of scoreRows ?? []) {
@@ -62,15 +73,7 @@ Deno.serve(async (req) => {
       const group = groupById.get(row.group_id);
       if (!profileA || !profileB || !group) continue;
       if (cityFilter && group.city && !group.city.toLowerCase().includes(cityFilter.toLowerCase())) continue;
-
-      const { data: existingConnection } = await client
-        .from("connections")
-        .select("id")
-        .eq("group_id", row.group_id)
-        .eq("user_a_id", row.user_a_id)
-        .eq("user_b_id", row.user_b_id)
-        .maybeSingle();
-      if (existingConnection?.id) continue;
+      if (existingIntroConnectionKeys.has(`${row.group_id}:${row.user_a_id}:${row.user_b_id}`)) continue;
 
       const canonicalKey = `intro:${row.group_id}:${row.user_a_id}:${row.user_b_id}`;
       const title = `${profileA.full_name ?? 'Someone'} and ${profileB.full_name ?? 'someone'} could connect`;
@@ -99,10 +102,103 @@ Deno.serve(async (req) => {
       upserted += 1;
     }
 
+    const { data: companionRows, error: companionError } = await client
+      .from("agent_event_companion_requests")
+      .select("opportunity_id, user_id, created_at")
+      .eq("status", "active")
+      .order("created_at", { ascending: true })
+      .limit(200);
+    if (companionError) throw companionError;
+
+    const companionUserIds = Array.from(new Set((companionRows ?? []).map((row) => row.user_id).filter(Boolean)));
+    const companionOpportunityIds = Array.from(new Set((companionRows ?? []).map((row) => row.opportunity_id).filter(Boolean)));
+    const [{ data: companionProfiles }, { data: companionEvents }, { data: matchingConfigRows }] = await Promise.all([
+      companionUserIds.length
+        ? client.from("profiles").select("user_id, full_name, city").in("user_id", companionUserIds)
+        : Promise.resolve({ data: [] }),
+      companionOpportunityIds.length
+        ? client.from("agent_opportunities").select("id, title, summary, city, starts_at, expires_at").in("id", companionOpportunityIds)
+        : Promise.resolve({ data: [] }),
+      client.from("matching_config").select("external_group_id").eq("id", 1).maybeSingle(),
+    ]);
+
+    const externalGroupId = matchingConfigRows?.external_group_id ?? null;
+    const { data: existingCompanionConnections } = externalGroupId && companionUserIds.length
+      ? await client
+          .from("connections")
+          .select("user_a_id, user_b_id")
+          .eq("group_id", externalGroupId)
+          .in("user_a_id", companionUserIds)
+          .in("user_b_id", companionUserIds)
+      : { data: [] };
+    const existingCompanionConnectionPairs = new Set(
+      (existingCompanionConnections ?? []).map((row) => `${row.user_a_id}:${row.user_b_id}`),
+    );
+    const companionProfileByUser = new Map((companionProfiles ?? []).map((row) => [row.user_id, row]));
+    const companionEventById = new Map((companionEvents ?? []).map((row) => [row.id, row]));
+    const companionRowsByEvent = new Map<string, Array<{ opportunity_id: string; user_id: string; created_at: string }>>();
+    for (const row of companionRows ?? []) {
+      const rows = companionRowsByEvent.get(row.opportunity_id) ?? [];
+      rows.push(row);
+      companionRowsByEvent.set(row.opportunity_id, rows);
+    }
+
+    let companionIntroOpportunitiesUpserted = 0;
+    if (externalGroupId) {
+      for (const [opportunityId, rows] of companionRowsByEvent.entries()) {
+        const event = companionEventById.get(opportunityId);
+        if (!event) continue;
+        if (cityFilter && event.city && !event.city.toLowerCase().includes(cityFilter.toLowerCase())) continue;
+        if (event.expires_at && new Date(event.expires_at).getTime() <= Date.now()) continue;
+
+        for (let i = 0; i < rows.length; i += 1) {
+          for (let j = i + 1; j < rows.length; j += 1) {
+            const userA = rows[i].user_id < rows[j].user_id ? rows[i].user_id : rows[j].user_id;
+            const userB = rows[i].user_id < rows[j].user_id ? rows[j].user_id : rows[i].user_id;
+            const profileA = companionProfileByUser.get(userA);
+            const profileB = companionProfileByUser.get(userB);
+            if (!profileA || !profileB) continue;
+            if (existingCompanionConnectionPairs.has(`${userA}:${userB}`)) continue;
+
+            const canonicalKey = `intro:event_companion:${opportunityId}:${userA}:${userB}`;
+            const title = `${profileA.full_name ?? "Someone"} and ${profileB.full_name ?? "someone"} both want company`;
+            const summary = `You both asked for company around ${event.title}. This could be an easy, event-based warm intro.`;
+
+            const { error: upsertError } = await client
+              .from("agent_opportunities")
+              .upsert({
+                kind: "introduction",
+                title,
+                summary,
+                city: event.city ?? profileA.city ?? profileB.city ?? null,
+                canonical_key: canonicalKey,
+                feature_snapshot: {
+                  source: "event_companion_request",
+                  event_id: opportunityId,
+                  event_title: event.title,
+                },
+                metadata: {
+                  candidate_user_ids: [userA, userB],
+                  anchor_group_id: externalGroupId,
+                  anchor_group_name: "Local event companion",
+                  anchor_event_id: opportunityId,
+                  anchor_event_title: event.title,
+                },
+                expires_at: event.starts_at ?? isoDaysFromNow(7),
+              }, { onConflict: "canonical_key" });
+            if (upsertError) throw upsertError;
+            companionIntroOpportunitiesUpserted += 1;
+          }
+        }
+      }
+    }
+
     return jsonResponse({
       ok: true,
       scanned_scores: scoreRows?.length ?? 0,
       intro_opportunities_upserted: upserted,
+      companion_requests_scanned: companionRows?.length ?? 0,
+      companion_intro_opportunities_upserted: companionIntroOpportunitiesUpserted,
       min_score: minScore,
     });
   } catch (error) {

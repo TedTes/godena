@@ -50,6 +50,50 @@ function coalesce(...values: unknown[]) {
   return null;
 }
 
+export function normalizeKey(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+export function opportunityContextKeyMap(opportunity: {
+  title?: string | null;
+  venue_name?: string | null;
+  feature_snapshot?: Record<string, unknown> | null;
+}) {
+  const featureSnapshot = typeof opportunity.feature_snapshot === "object" && opportunity.feature_snapshot
+    ? opportunity.feature_snapshot
+    : {};
+  const source = normalizeKey(featureSnapshot.source);
+  const venue = normalizeKey(opportunity.venue_name);
+  const title = typeof opportunity.title === "string"
+    ? normalizeKey(
+        opportunity.title
+          .replace(/\([^)]*\)/g, " ")
+          .replace(/[^a-z0-9]+/gi, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 80),
+      )
+    : null;
+
+  return {
+    source: source ? `source:${source}` : null,
+    venue: venue ? `venue:${venue}` : null,
+    title: title ? `title:${title}` : null,
+  };
+}
+
+export function opportunityContextKeys(opportunity: {
+  title?: string | null;
+  venue_name?: string | null;
+  feature_snapshot?: Record<string, unknown> | null;
+}) {
+  const contexts = opportunityContextKeyMap(opportunity);
+  return [contexts.source, contexts.venue, contexts.title].filter((value): value is string => Boolean(value));
+}
+
 function inferKind(source: string, raw: Record<string, unknown>) {
   if (source === "weather") return "context";
   if (typeof raw.entity_kind === "string") {
@@ -278,6 +322,8 @@ export function buildSuggestionReasons(
   const affinityUsers = typeof context.affinity_user_count === "number" ? context.affinity_user_count : 0;
   const socialGoing = typeof context.social_going_count === "number" ? context.social_going_count : 0;
   const socialInterested = typeof context.social_interested_count === "number" ? context.social_interested_count : 0;
+  const connectionSocialUsers = typeof context.connection_social_user_count === "number" ? context.connection_social_user_count : 0;
+  const groupSocialUsers = typeof context.group_social_user_count === "number" ? context.group_social_user_count : 0;
   const interestMatchScore = typeof context.interest_match_score === "number" ? context.interest_match_score : 0;
   const startsAt = cleanText(opportunity.starts_at);
   const daysUntil = startsAt ? Math.round((new Date(startsAt).getTime() - Date.now()) / 86400000) : null;
@@ -316,6 +362,15 @@ export function buildSuggestionReasons(
       reason_detail: `${attendeeCount} member${attendeeCount === 1 ? "" : "s"} already marked going or interested.`,
       sort_order: 2,
       evidence: { social_going: socialGoing, social_interested: socialInterested },
+    });
+  } else if (connectionSocialUsers > 0 || groupSocialUsers > 0) {
+    const socialReach = connectionSocialUsers + groupSocialUsers;
+    reasons.push({
+      reason_code: "social_proximity",
+      reason_label: "Near your social circle",
+      reason_detail: `${socialReach} connected or group-adjacent member${socialReach === 1 ? "" : "s"} may be interested.`,
+      sort_order: 2,
+      evidence: { connection_social_users: connectionSocialUsers, group_social_users: groupSocialUsers },
     });
   } else if (category) {
     reasons.push({
@@ -385,13 +440,18 @@ export function buildRankingFeatures(
   const affinityUsers = typeof context.affinity_user_count === "number" ? context.affinity_user_count : 0;
   const socialGoing = typeof context.social_going_count === "number" ? context.social_going_count : 0;
   const socialInterested = typeof context.social_interested_count === "number" ? context.social_interested_count : 0;
+  const connectionSocialUsers = typeof context.connection_social_user_count === "number" ? context.connection_social_user_count : 0;
+  const groupSocialUsers = typeof context.group_social_user_count === "number" ? context.group_social_user_count : 0;
   const interestMatchScore = typeof context.interest_match_score === "number" ? context.interest_match_score : 0;
   const audienceScore = affinityUsers > 0
     ? Math.min(100, 30 + affinityUsers * 5)
     : audienceSize > 0
       ? Math.min(70, 20 + audienceSize * 2)
       : 0;
-  const socialScore = Math.min(100, socialGoing * 18 + socialInterested * 10);
+  const socialScore = Math.min(
+    100,
+    socialGoing * 18 + socialInterested * 10 + connectionSocialUsers * 14 + groupSocialUsers * 8,
+  );
   const personalizationScore = Math.round(audienceScore * 0.6 + socialScore * 0.4);
 
   return {
@@ -407,6 +467,8 @@ export function buildRankingFeatures(
     affinity_user_count: affinityUsers,
     social_going_count: socialGoing,
     social_interested_count: socialInterested,
+    connection_social_user_count: connectionSocialUsers,
+    group_social_user_count: groupSocialUsers,
     category: featureSnapshot.category ?? null,
     source: featureSnapshot.source ?? null,
     score_total: Math.round(trustScore * 0.35 + recencyScore * 0.25 + audienceScore * 0.2 + socialScore * 0.2),
