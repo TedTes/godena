@@ -68,7 +68,8 @@ function normalizeExternalCategory(raw?: string | null) {
   if (v.includes('food') || v.includes('drink') || v.includes('coffee')) return 'food_drink';
   if (v.includes('outdoor') || v.includes('hiking') || v.includes('run')) return 'outdoors';
   if (v.includes('faith') || v.includes('religion') || v.includes('church')) return 'faith';
-  if (v.includes('language') || v.includes('culture') || v.includes('community')) return 'culture';
+  if (v.includes('music') || v.includes('concert') || v.includes('arts') || v.includes('theatre') || v.includes('theater') || v.includes('comedy') || v.includes('dance') || v.includes('language') || v.includes('culture') || v.includes('community')) return 'culture';
+  if (v.includes('sport')) return 'sports';
   if (v.includes('professional') || v.includes('business') || v.includes('career')) return 'professional';
   return 'other';
 }
