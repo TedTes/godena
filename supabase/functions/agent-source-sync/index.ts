@@ -197,6 +197,22 @@ function nextRunAtIso(pollIntervalMinutes: number) {
   return new Date(Date.now() + pollIntervalMinutes * 60 * 1000).toISOString();
 }
 
+function ticketmasterExclusionReason(event: Record<string, unknown>) {
+  const title = String(event.name ?? "").trim().toLowerCase();
+  if (!title) return "missing_title";
+
+  if (/\bplus ups?\b/.test(title)) return "plus_up";
+  if (/\bfan access\b/.test(title)) return "fan_access";
+  if (/\bguided tours?\b|\bballpark tours?\b|\barena tours?\b|\bstadium tours?\b/.test(title)) {
+    return "venue_tour";
+  }
+  if (/\bvip\b|\bpackage\b|\bupgrade\b|\badd[- ]?on\b|\bparking\b/.test(title)) {
+    return "package_or_addon";
+  }
+
+  return null;
+}
+
 async function fetchIcsRecords(sourceRow: Record<string, unknown>, scope: Record<string, unknown>) {
   const res = await fetchWithBackoff(String(sourceRow.locator), {
     headers: {
@@ -278,7 +294,14 @@ async function fetchTicketmasterRecords(sourceRow: Record<string, unknown>, scop
   }
   const json = await res.json();
   const events = json?._embedded?.events ?? [];
-  return events.map((event: Record<string, unknown>) => {
+  const filteredCounts: Record<string, number> = {};
+  const records = events.flatMap((event: Record<string, unknown>) => {
+    const exclusionReason = ticketmasterExclusionReason(event);
+    if (exclusionReason) {
+      filteredCounts[exclusionReason] = (filteredCounts[exclusionReason] ?? 0) + 1;
+      return [];
+    }
+
     const dates = ensureRecord(event.dates);
     const start = ensureRecord(dates.start);
     const embedded = ensureRecord(event._embedded);
@@ -306,6 +329,12 @@ async function fetchTicketmasterRecords(sourceRow: Record<string, unknown>, scop
       source_type: "ticketmaster",
     };
   }).filter((row: Record<string, unknown>) => typeof row.start_at === "string");
+
+  return {
+    records,
+    filtered: Object.values(filteredCounts).reduce((sum, count) => sum + count, 0),
+    filtered_counts: filteredCounts,
+  };
 }
 
 async function fetchSourceRecords(sourceRow: Record<string, unknown>, globalScope: Record<string, unknown>) {
@@ -326,6 +355,7 @@ async function fetchSourceRecords(sourceRow: Record<string, unknown>, globalScop
   }
 
   if (sourceType === "ticketmaster") {
+    const fetched = await fetchTicketmasterRecords(sourceRow, scope);
     return {
       source: "ticketmaster",
       defaults: {
@@ -333,7 +363,9 @@ async function fetchSourceRecords(sourceRow: Record<string, unknown>, globalScop
         country: scope.country ?? null,
         timezone: scope.timezone ?? null,
       },
-      records: await fetchTicketmasterRecords(sourceRow, scope),
+      records: fetched.records,
+      filtered: fetched.filtered,
+      filtered_counts: fetched.filtered_counts,
     };
   }
 
@@ -457,6 +489,8 @@ Deno.serve(async (req) => {
           source_type: sourceRow.source_type,
           status: "completed",
           fetched: fetched.records.length,
+          filtered: fetched.filtered ?? 0,
+          filtered_counts: fetched.filtered_counts ?? {},
           normalized: scoutResult.normalized ?? 0,
           opportunities_upserted: scoutResult.opportunities_upserted ?? 0,
           run_key: scoutResult.run_key ?? runKey,

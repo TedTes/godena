@@ -94,6 +94,36 @@ function hasUsableEventData(opportunity: Record<string, unknown>) {
   );
 }
 
+function titleText(opportunity: Record<string, unknown>) {
+  return typeof opportunity.title === "string" ? opportunity.title.trim().toLowerCase() : "";
+}
+
+function sourceText(opportunity: Record<string, unknown>) {
+  const featureSnapshot = typeof opportunity.feature_snapshot === "object" && opportunity.feature_snapshot
+    ? opportunity.feature_snapshot as Record<string, unknown>
+    : {};
+  return typeof featureSnapshot.source === "string" ? featureSnapshot.source.trim().toLowerCase() : "";
+}
+
+function sourceQualityFlags(opportunity: Record<string, unknown>) {
+  const title = titleText(opportunity);
+  const source = sourceText(opportunity);
+  const flags: string[] = [];
+
+  if (source === "ticketmaster") {
+    if (/\bplus ups?\b/.test(title)) flags.push("ticketmaster_plus_up");
+    if (/\bfan access\b/.test(title)) flags.push("ticketmaster_fan_access");
+    if (/\bguided tours?\b|\bballpark tours?\b|\barena tours?\b|\bstadium tours?\b/.test(title)) {
+      flags.push("ticketmaster_venue_tour");
+    }
+    if (/\bvip\b|\bpackage\b|\bupgrade\b|\badd[- ]?on\b|\bparking\b/.test(title)) {
+      flags.push("ticketmaster_package_or_addon");
+    }
+  }
+
+  return flags;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -354,6 +384,8 @@ Deno.serve(async (req) => {
       };
 
       const rankingFeatures = buildRankingFeatures(opportunity, trustScore, rankingContext);
+      const qualityFlags = sourceQualityFlags(opportunity);
+      const qualityPenalty = qualityFlags.length > 0 ? Math.min(30, 18 + (qualityFlags.length - 1) * 4) : 0;
       const engagementBoost = Math.min(12, feedbackSummary.clicks * 4);
       const dismissalPenalty = Math.min(18, feedbackSummary.dismisses * 6 + feedbackSummary.ignores * 4);
       const overservedPenalty = feedbackSummary.views >= 8 && feedbackSummary.clicks === 0 ? 8 : 0;
@@ -361,7 +393,7 @@ Deno.serve(async (req) => {
         0,
         Math.min(
           100,
-          Number(rankingFeatures.score_total ?? 0) + engagementBoost - dismissalPenalty - overservedPenalty,
+          Number(rankingFeatures.score_total ?? 0) + engagementBoost - dismissalPenalty - overservedPenalty - qualityPenalty,
         ),
       );
       const reasons = buildSuggestionReasons(opportunity, trustScore, rankingContext);
@@ -374,6 +406,7 @@ Deno.serve(async (req) => {
       const hasAffinityMatch = affinityAudience.length >= 1;
       const hasUsableInterest = interestScore >= 15;
       const hasValidEventData = hasUsableEventData(opportunity);
+      const hasSourceQualityIssue = qualityFlags.length > 0;
       const minimumAutoApprovalScore =
         hasAffinityMatch && hasUsableInterest
           ? 38
@@ -385,6 +418,7 @@ Deno.serve(async (req) => {
         (
           trustedSource &&
           hasValidEventData &&
+          !hasSourceQualityIssue &&
           hasStarterAudience &&
           adjustedScore >= minimumAutoApprovalScore &&
           (
@@ -412,6 +446,8 @@ Deno.serve(async (req) => {
         has_affinity_match: hasAffinityMatch,
         has_usable_interest: hasUsableInterest,
         has_social_proof: hasSocialProof,
+        source_quality_flags: qualityFlags,
+        quality_penalty: qualityPenalty,
         adjusted_score: adjustedScore,
         minimum_score: minimumAutoApprovalScore,
       };
@@ -434,8 +470,12 @@ Deno.serve(async (req) => {
           feedback_summary: feedbackSummary,
           approval_decision: approvalDecision,
         },
-        ranking_features: rankingFeatures,
-        model_version: "rules-v4",
+        ranking_features: {
+          ...rankingFeatures,
+          source_quality_flags: qualityFlags,
+          quality_penalty: qualityPenalty,
+        },
+        model_version: "rules-v5",
         confidence_score: adjustedScore,
         approval_required: finalPolicy.approval_required,
         expires_at: fallbackProposalExpiry(opportunity),
