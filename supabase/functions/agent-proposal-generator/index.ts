@@ -124,6 +124,38 @@ function sourceQualityFlags(opportunity: Record<string, unknown>) {
   return flags;
 }
 
+function normalizedTitleKey(opportunity: Record<string, unknown>) {
+  const title = titleText(opportunity)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return title || null;
+}
+
+function repetitionQualityFlags(opportunity: Record<string, unknown>, titleOccurrenceIndex: number) {
+  const title = titleText(opportunity);
+  const flags: string[] = [];
+  const isGeneralAdmission = /\bgeneral admission\b/.test(title);
+  const titleLimit = isGeneralAdmission ? 1 : 2;
+
+  if (isGeneralAdmission) flags.push("general_admission");
+  if (titleOccurrenceIndex > titleLimit) flags.push("recurring_title_over_cap");
+
+  return flags;
+}
+
+function qualityPenaltyForFlags(flags: string[]) {
+  let penalty = 0;
+  for (const flag of flags) {
+    if (flag === "general_admission") penalty += 10;
+    else if (flag === "recurring_title_over_cap") penalty += 24;
+    else penalty += 18;
+  }
+  return Math.min(40, penalty);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -319,6 +351,7 @@ Deno.serve(async (req) => {
     const proposalsToUpsert = [];
     const reasonsByProposalKey = new Map<string, Array<Record<string, unknown>>>();
     const audienceByProposalKey = new Map<string, string[]>();
+    const titleOccurrenceByKey = new Map<string, number>();
 
     for (const opportunity of opportunityRows) {
       const trustScore = opportunity.primary_external_record_id
@@ -383,9 +416,15 @@ Deno.serve(async (req) => {
         interest_match_score: interestMatchScore,
       };
 
+      const titleKey = normalizedTitleKey(opportunity);
+      const titleOccurrenceIndex = titleKey ? Number(titleOccurrenceByKey.get(titleKey) ?? 0) + 1 : 1;
+      if (titleKey) titleOccurrenceByKey.set(titleKey, titleOccurrenceIndex);
+
       const rankingFeatures = buildRankingFeatures(opportunity, trustScore, rankingContext);
-      const qualityFlags = sourceQualityFlags(opportunity);
-      const qualityPenalty = qualityFlags.length > 0 ? Math.min(30, 18 + (qualityFlags.length - 1) * 4) : 0;
+      const sourceFlags = sourceQualityFlags(opportunity);
+      const repetitionFlags = repetitionQualityFlags(opportunity, titleOccurrenceIndex);
+      const qualityFlags = Array.from(new Set([...sourceFlags, ...repetitionFlags]));
+      const qualityPenalty = qualityPenaltyForFlags(qualityFlags);
       const engagementBoost = Math.min(12, feedbackSummary.clicks * 4);
       const dismissalPenalty = Math.min(18, feedbackSummary.dismisses * 6 + feedbackSummary.ignores * 4);
       const overservedPenalty = feedbackSummary.views >= 8 && feedbackSummary.clicks === 0 ? 8 : 0;
@@ -406,7 +445,7 @@ Deno.serve(async (req) => {
       const hasAffinityMatch = affinityAudience.length >= 1;
       const hasUsableInterest = interestScore >= 15;
       const hasValidEventData = hasUsableEventData(opportunity);
-      const hasSourceQualityIssue = qualityFlags.length > 0;
+      const hasBlockingQualityIssue = sourceFlags.length > 0 || repetitionFlags.includes("recurring_title_over_cap");
       const minimumAutoApprovalScore =
         hasAffinityMatch && hasUsableInterest
           ? 38
@@ -418,7 +457,7 @@ Deno.serve(async (req) => {
         (
           trustedSource &&
           hasValidEventData &&
-          !hasSourceQualityIssue &&
+          !hasBlockingQualityIssue &&
           hasStarterAudience &&
           adjustedScore >= minimumAutoApprovalScore &&
           (
@@ -448,6 +487,8 @@ Deno.serve(async (req) => {
         has_social_proof: hasSocialProof,
         source_quality_flags: qualityFlags,
         quality_penalty: qualityPenalty,
+        title_occurrence_index: titleOccurrenceIndex,
+        title_occurrence_key: titleKey,
         adjusted_score: adjustedScore,
         minimum_score: minimumAutoApprovalScore,
       };
@@ -474,8 +515,10 @@ Deno.serve(async (req) => {
           ...rankingFeatures,
           source_quality_flags: qualityFlags,
           quality_penalty: qualityPenalty,
+          title_occurrence_index: titleOccurrenceIndex,
+          title_occurrence_key: titleKey,
         },
-        model_version: "rules-v5",
+        model_version: "rules-v6",
         confidence_score: adjustedScore,
         approval_required: finalPolicy.approval_required,
         expires_at: fallbackProposalExpiry(opportunity),
