@@ -8,6 +8,18 @@ import {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const NICHE_CATEGORY_MAP: Record<string, string[]> = {
+  live_music: ["culture"],
+  sports: ["sports"],
+  books_ideas: ["culture"],
+  arts_culture: ["culture"],
+  food_drink: ["food_drink"],
+  outdoors: ["outdoors"],
+  wellness: ["wellness"],
+  faith_community: ["faith", "community"],
+  volunteering: ["community"],
+  founders_careers: ["professional"],
+};
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -35,8 +47,51 @@ function normalizeCategory(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
 }
 
+function normalizeInterestCategory(value: unknown) {
+  const raw = normalizeCategory(value);
+  if (!raw) return null;
+  const normalized = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+  if (
+    normalized.includes("music") ||
+    normalized.includes("concert") ||
+    normalized.includes("arts") ||
+    normalized.includes("theatre") ||
+    normalized.includes("theater") ||
+    normalized.includes("comedy") ||
+    normalized.includes("dance") ||
+    normalized.includes("culture")
+  ) return "culture";
+  if (normalized.includes("sport")) return "sports";
+  if (normalized.includes("food") || normalized.includes("drink") || normalized.includes("coffee")) return "food_drink";
+  if (normalized.includes("outdoor") || normalized.includes("hiking") || normalized.includes("run")) return "outdoors";
+  if (normalized.includes("health") || normalized.includes("wellness") || normalized.includes("fitness")) return "wellness";
+  if (normalized.includes("faith") || normalized.includes("religion") || normalized.includes("church")) return "faith";
+  if (normalized.includes("business") || normalized.includes("career") || normalized.includes("professional")) return "professional";
+  if (normalized.includes("community") || normalized.includes("family") || normalized.includes("miscellaneous")) return "community";
+
+  return normalized;
+}
+
 function normalizeCity(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+}
+
+function hasUsableEventData(opportunity: Record<string, unknown>) {
+  const metadata = typeof opportunity.metadata === "object" && opportunity.metadata
+    ? opportunity.metadata as Record<string, unknown>
+    : {};
+
+  return Boolean(
+    typeof opportunity.title === "string" &&
+    opportunity.title.trim().length > 0 &&
+    opportunity.starts_at &&
+    opportunity.city &&
+    (
+      opportunity.venue_name ||
+      typeof metadata.source_url === "string"
+    ),
+  );
 }
 
 Deno.serve(async (req) => {
@@ -87,11 +142,7 @@ Deno.serve(async (req) => {
     const categories = Array.from(
       new Set(
         (opportunities ?? [])
-          .map((opportunity) =>
-            typeof opportunity.feature_snapshot?.category === "string" && opportunity.feature_snapshot.category.trim().length > 0
-              ? opportunity.feature_snapshot.category.trim()
-              : null
-          )
+          .map((opportunity) => normalizeInterestCategory(opportunity.feature_snapshot?.category))
           .filter((value): value is string => Boolean(value))
       )
     );
@@ -123,7 +174,7 @@ Deno.serve(async (req) => {
       score: number;
     }>).filter((row) => {
       if (row.interest_type === "category") {
-        return categories.map((value) => value.toLowerCase()).includes(row.interest_key);
+        return categories.includes(row.interest_key);
       }
       if (row.interest_type === "context") {
         return cityContexts.includes(row.interest_key);
@@ -137,6 +188,22 @@ Deno.serve(async (req) => {
       const target = row.interest_type === "category" ? categoryInterestByUser : contextInterestByUser;
       if (!target.has(row.interest_key)) target.set(row.interest_key, new Map());
       target.get(row.interest_key)?.set(row.user_id, Number(row.score ?? 0));
+    }
+
+    const { data: selectedNicheRows } =
+      categories.length > 0
+        ? await client
+            .from("agent_user_selected_niches")
+            .select("user_id, niche_key")
+        : { data: [] };
+
+    for (const row of (selectedNicheRows ?? []) as Array<{ user_id: string; niche_key: string }>) {
+      for (const category of NICHE_CATEGORY_MAP[row.niche_key] ?? []) {
+        if (!categories.includes(category)) continue;
+        const existing = categoryInterestByUser.get(category) ?? new Map<string, number>();
+        existing.set(row.user_id, Math.max(Number(existing.get(row.user_id) ?? 0), 30));
+        categoryInterestByUser.set(category, existing);
+      }
     }
 
     const opportunityRows = opportunities ?? [];
@@ -233,7 +300,7 @@ Deno.serve(async (req) => {
         ? feedbackByProposalId.get(existingProposal.id) ?? { views: 0, clicks: 0, dismisses: 0, ignores: 0 }
         : { views: 0, clicks: 0, dismisses: 0, ignores: 0 };
 
-      const opportunityCategory = normalizeCategory(opportunity.feature_snapshot?.category);
+      const opportunityCategory = normalizeInterestCategory(opportunity.feature_snapshot?.category);
       const opportunityCity = normalizeCity(opportunity.city);
 
       const scoredAudience =
@@ -301,22 +368,30 @@ Deno.serve(async (req) => {
 
       const personalizationScore = Number(rankingFeatures.personalization_score ?? 0);
       const interestScore = Number(rankingFeatures.interest_match_score ?? 0);
-      const highTrustBootstrap = trustScore >= 85;
-      const hasMeaningfulAudience = computedAudienceUserIds.length >= 3;
+      const trustedSource = trustScore >= 70;
       const hasStarterAudience = computedAudienceUserIds.length >= 1;
       const hasSocialProof = socialGoing + socialInterested >= 2;
-      const hasStrongInterest = interestScore >= 30;
-      const hasUsableInterest = interestScore >= 20;
+      const hasAffinityMatch = affinityAudience.length >= 1;
+      const hasUsableInterest = interestScore >= 15;
+      const hasValidEventData = hasUsableEventData(opportunity);
+      const minimumAutoApprovalScore =
+        hasAffinityMatch && hasUsableInterest
+          ? 38
+          : hasSocialProof
+            ? 35
+            : 50;
       const eventAutoSuggestEligible =
         opportunity.kind !== "event" ||
         (
-          adjustedScore >= 60 &&
+          trustedSource &&
+          hasValidEventData &&
+          hasStarterAudience &&
+          adjustedScore >= minimumAutoApprovalScore &&
           (
-            hasStrongInterest ||
-            personalizationScore >= 24 ||
-            hasMeaningfulAudience ||
-            hasSocialProof ||
-            (highTrustBootstrap && hasStarterAudience && hasUsableInterest)
+            hasAffinityMatch ||
+            hasUsableInterest ||
+            personalizationScore >= 18 ||
+            hasSocialProof
           )
         );
 
@@ -329,6 +404,17 @@ Deno.serve(async (req) => {
               initial_status: "draft",
             }
           : policy;
+      const approvalDecision = {
+        event_auto_suggest_eligible: eventAutoSuggestEligible,
+        trusted_source: trustedSource,
+        valid_event_data: hasValidEventData,
+        has_audience: hasStarterAudience,
+        has_affinity_match: hasAffinityMatch,
+        has_usable_interest: hasUsableInterest,
+        has_social_proof: hasSocialProof,
+        adjusted_score: adjustedScore,
+        minimum_score: minimumAutoApprovalScore,
+      };
 
       const proposal = {
         opportunity_id: opportunity.id,
@@ -346,9 +432,10 @@ Deno.serve(async (req) => {
           policy: finalPolicy,
           personalization: rankingContext,
           feedback_summary: feedbackSummary,
+          approval_decision: approvalDecision,
         },
         ranking_features: rankingFeatures,
-        model_version: "rules-v2",
+        model_version: "rules-v4",
         confidence_score: adjustedScore,
         approval_required: finalPolicy.approval_required,
         expires_at: fallbackProposalExpiry(opportunity),

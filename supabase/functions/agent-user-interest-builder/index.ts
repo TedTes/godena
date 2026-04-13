@@ -30,6 +30,31 @@ function normalizeKey(value: unknown) {
   return trimmed.replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+function normalizeInterestCategory(value: unknown) {
+  const normalized = normalizeKey(value);
+  if (!normalized) return null;
+
+  if (
+    normalized.includes("music") ||
+    normalized.includes("concert") ||
+    normalized.includes("arts") ||
+    normalized.includes("theatre") ||
+    normalized.includes("theater") ||
+    normalized.includes("comedy") ||
+    normalized.includes("dance") ||
+    normalized.includes("culture")
+  ) return "culture";
+  if (normalized.includes("sport")) return "sports";
+  if (normalized.includes("food") || normalized.includes("drink") || normalized.includes("coffee")) return "food_drink";
+  if (normalized.includes("outdoor") || normalized.includes("hiking") || normalized.includes("run")) return "outdoors";
+  if (normalized.includes("health") || normalized.includes("wellness") || normalized.includes("fitness")) return "wellness";
+  if (normalized.includes("faith") || normalized.includes("religion") || normalized.includes("church")) return "faith";
+  if (normalized.includes("business") || normalized.includes("career") || normalized.includes("professional")) return "professional";
+  if (normalized.includes("community") || normalized.includes("family") || normalized.includes("miscellaneous")) return "community";
+
+  return normalized;
+}
+
 function addScore(
   bucket: Map<string, { score: number; evidence: Record<string, number> }>,
   interestType: "category" | "niche" | "context",
@@ -168,7 +193,7 @@ Deno.serve(async (req) => {
       const bucket = scoreBuckets.get(row.user_id);
       const opportunity = opportunityById.get(row.opportunity_id);
       if (!bucket || !opportunity) continue;
-      const category = normalizeKey(opportunity.feature_snapshot?.category);
+      const category = normalizeInterestCategory(opportunity.feature_snapshot?.category);
       if (row.status === "going") addScore(bucket, "category", category, 12, "external_event_going");
       if (row.status === "interested") addScore(bucket, "category", category, 8, "external_event_interested");
     }
@@ -178,7 +203,7 @@ Deno.serve(async (req) => {
       const opportunityId = proposalToOpportunityId.get(row.proposal_id);
       const opportunity = opportunityId ? opportunityById.get(opportunityId) : null;
       if (!bucket || !opportunity) continue;
-      const category = normalizeKey(opportunity.feature_snapshot?.category);
+      const category = normalizeInterestCategory(opportunity.feature_snapshot?.category);
       if (row.event_type === "clicked") addScore(bucket, "category", category, 10, "proposal_clicked");
       if (row.event_type === "rsvped_event") addScore(bucket, "category", category, 14, "proposal_rsvped");
       if (row.event_type === "joined_group") addScore(bucket, "category", category, 14, "proposal_joined_group");
