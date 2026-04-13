@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 
 export type ConnectionRow = {
   id: string;
@@ -30,11 +31,6 @@ export type ConnectionMessageRow = {
   sent_at: string;
   read_at: string | null;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchConnection(connectionId: string) {
   return supabase

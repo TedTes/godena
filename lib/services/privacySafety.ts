@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 import { resolveProfilePhotoUrl } from './photoUrls';
 
 export type BlockedUserRow = {
@@ -21,11 +22,6 @@ export type BlockedProfile = {
   full_name: string | null;
   avatar_url: string | null;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchBlockedUsers(userId: string) {
   return supabase

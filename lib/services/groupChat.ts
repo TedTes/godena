@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 import { resolveProfilePhotoUrl } from './photoUrls';
 
 export type GroupChatGroup = {
@@ -16,11 +17,6 @@ export type GroupChatMessageRow = {
   content: string;
   sent_at: string;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchGroup(groupId: string) {
   return supabase

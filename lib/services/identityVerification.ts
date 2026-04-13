@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 
 export type VerificationStatus = 'unverified' | 'pending' | 'requires_input' | 'verified' | 'failed' | 'canceled';
 
@@ -15,11 +16,6 @@ export type IdentityVerificationAttempt = {
   updated_at: string;
   failure_reason: string | null;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getUser();
-  return data.user?.id ?? null;
-}
 
 export async function fetchVerificationSummary(userId: string) {
   return supabase

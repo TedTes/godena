@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 import { resolveProfilePhotoUrl } from './photoUrls';
 
 export type PendingConnection = {
@@ -25,11 +26,6 @@ export type GroupMini = {
   name: string;
   category: string;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchPendingConnections(userId: string) {
   return supabase

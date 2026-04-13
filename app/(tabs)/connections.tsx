@@ -8,6 +8,10 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
+  type ImageStyle,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -61,7 +65,7 @@ type DatingMessageRow = {
 type PendingReveal = {
   id: string;
   matchName: string;
-  matchPhoto: string;
+  matchPhoto: string | null;
   groupName: string;
   groupEmoji: string;
   message: string;
@@ -71,7 +75,7 @@ type ActiveConnection = {
   id: string;
   source: 'connection' | 'dating';
   name: string;
-  photo: string;
+  photo: string | null;
   groupName: string;
   groupEmoji: string;
   lastMessage: string;
@@ -90,6 +94,34 @@ function groupEmoji(category?: string) {
     case 'culture': return '🎉';
     default: return '👥';
   }
+}
+
+function initialsForName(name?: string | null) {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('');
+}
+
+function ProfilePhoto({
+  uri,
+  name,
+  style,
+  textStyle,
+}: {
+  uri?: string | null;
+  name?: string | null;
+  style: StyleProp<ImageStyle>;
+  textStyle: StyleProp<TextStyle>;
+}) {
+  if (uri) {
+    return <Image source={{ uri }} style={style} />;
+  }
+
+  return (
+    <View style={[style as StyleProp<ViewStyle>, styles.initialsAvatar]}>
+      <Text style={textStyle}>{initialsForName(name)}</Text>
+    </View>
+  );
 }
 
 export default function ConnectionsScreen() {
@@ -227,7 +259,7 @@ export default function ConnectionsScreen() {
           setPendingReveal({
             id: top.id,
             matchName: p?.full_name || 'Someone',
-            matchPhoto: p?.avatar_url || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=240&q=80',
+            matchPhoto: p?.avatar_url ?? null,
             groupName: g?.name || 'Your group',
             groupEmoji: groupEmoji(g?.category),
             message: `You both have been consistently showing up in ${g?.name || 'this group'}.`,
@@ -245,7 +277,7 @@ export default function ConnectionsScreen() {
             id: c.id,
             source: 'connection',
             name: p?.full_name || 'Connection',
-            photo: p?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=200&q=80',
+            photo: p?.avatar_url ?? null,
             groupName: g?.name || 'Group',
             groupEmoji: groupEmoji(g?.category),
             lastMessage: m?.content || 'No messages yet',
@@ -261,7 +293,7 @@ export default function ConnectionsScreen() {
             id: m.id,
             source: 'dating',
             name: p?.full_name || 'Dating match',
-            photo: p?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=200&q=80',
+            photo: p?.avatar_url ?? null,
             groupName: 'Dating Mode',
             groupEmoji: '💘',
             lastMessage: lastDatingMessage?.content || 'Say hello to your match',
@@ -286,8 +318,8 @@ export default function ConnectionsScreen() {
         setDatingModeEnabled(datingEnabled);
         setDatingMatchCount(matchCount ?? 0);
         if (datingEnabled) {
-          const { data: candidates } = await supabase.rpc('get_dating_candidates', { p_limit: 12 });
-          setDatingCandidateCount(((candidates as Array<unknown> | null) ?? []).length);
+          const { data: candidateCount } = await supabase.rpc('get_dating_candidate_count');
+          setDatingCandidateCount(Number(candidateCount ?? 0));
         } else {
           setDatingCandidateCount(0);
         }
@@ -414,7 +446,12 @@ export default function ConnectionsScreen() {
                     <View style={styles.revealGlow} />
                     <View style={styles.revealRow}>
                       <View style={styles.revealTop}>
-                        <Image source={{ uri: pendingReveal.matchPhoto }} style={styles.revealPhoto} />
+                        <ProfilePhoto
+                          uri={pendingReveal.matchPhoto}
+                          name={pendingReveal.matchName}
+                          style={styles.revealPhoto}
+                          textStyle={styles.revealInitials}
+                        />
                         <View style={styles.revealBadge}>
                           <Text style={styles.revealBadgeText}>✨</Text>
                         </View>
@@ -477,7 +514,12 @@ export default function ConnectionsScreen() {
                         activeOpacity={0.82}
                       >
                         <View style={styles.connPhotoWrap}>
-                          <Image source={{ uri: c.photo }} style={styles.connPhoto} />
+                          <ProfilePhoto
+                            uri={c.photo}
+                            name={c.name}
+                            style={styles.connPhoto}
+                            textStyle={styles.connInitials}
+                          />
                           {c.source === 'dating' && (
                             <View style={styles.connDatingDot}>
                               <Text style={styles.connDatingDotText}>💘</Text>
@@ -528,6 +570,11 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   safe: { flex: 1 },
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  initialsAvatar: {
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // ── Header ──
   header: {
@@ -761,6 +808,7 @@ const styles = StyleSheet.create({
   },
   revealTop: { position: 'relative', width: 68, height: 68 },
   revealPhoto: { width: 68, height: 68, borderRadius: 34, borderWidth: 2, borderColor: Colors.terraLight },
+  revealInitials: { color: Colors.brown, fontSize: 22, fontWeight: '800' },
   revealBadge: {
     position: 'absolute',
     bottom: -2,
@@ -792,6 +840,7 @@ const styles = StyleSheet.create({
   },
   connPhotoWrap: { position: 'relative' },
   connPhoto: { width: 54, height: 54, borderRadius: 27 },
+  connInitials: { color: Colors.brown, fontSize: 16, fontWeight: '800' },
   connDatingDot: {
     position: 'absolute',
     bottom: -1,

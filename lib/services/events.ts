@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 
 export type EventRow = {
   id: string;
@@ -73,11 +74,6 @@ export type BasicProfileRow = {
   full_name: string | null;
   avatar_url: string | null;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchMembershipGroupIds(userId: string) {
   return supabase

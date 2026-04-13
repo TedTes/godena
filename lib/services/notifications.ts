@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 
 export type NotificationPrefs = {
   notify_group_messages: boolean;
@@ -7,11 +8,6 @@ export type NotificationPrefs = {
   notify_events: boolean;
   notify_marketing: boolean;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchNotificationPrefs(userId: string) {
   return supabase
@@ -29,4 +25,3 @@ export async function updateNotificationPrefs(userId: string, patch: Partial<Not
     .select('notify_group_messages, notify_connection_messages, notify_reveals, notify_events, notify_marketing')
     .single();
 }
-

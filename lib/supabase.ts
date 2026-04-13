@@ -20,6 +20,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+export async function getSessionUserId() {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.id ?? null;
+}
+
 // Keep Realtime auth in sync with the current session JWT so RLS-based
 // postgres_changes subscriptions receive events for authenticated users.
 void supabase.auth.getSession().then(({ data }) => {

@@ -1,10 +1,6 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 import { resolveProfilePhotoUrl } from './photoUrls';
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchGroup(groupId: string) {
   return supabase

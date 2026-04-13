@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+export { getSessionUserId } from '../supabase';
 import { deriveGroupIcon } from './groupIcons';
 
 export type GroupRow = {
@@ -24,11 +25,6 @@ export type RecentGroupMessageRow = {
   sent_at: string;
   content: string;
 };
-
-export async function getSessionUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
-}
 
 export async function fetchGroups() {
   return supabase
