@@ -33,19 +33,6 @@ Deno.serve(async (req) => {
 
     const authHeader = req.headers.get("authorization");
 
-    const mutual = await callFunction("mutual-detection", internalSecret, authHeader);
-    if (!mutual.ok) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          step: "mutual-detection",
-          status: mutual.status,
-          response: mutual.body,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
-      );
-    }
-
     const trigger = await callFunction("reveal-trigger", internalSecret, authHeader);
     if (!trigger.ok) {
       return new Response(
@@ -62,8 +49,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         ok: true,
-        pipeline: "mutual-detection -> reveal-trigger",
-        mutual_detection: mutual.body,
+        pipeline: "reveal-trigger",
         reveal_trigger: trigger.body,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
