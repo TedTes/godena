@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { pairOrder } from "../_shared/compatibility.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -28,6 +29,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const minScore = Math.max(10, Math.min(Number(body.min_score ?? 25), 100));
+    const minCompatibilityScore = Math.max(0, Math.min(Number(body.compatibility_min_score ?? 45), 100));
     const cityFilter = typeof body.city === "string" ? body.city : null;
 
     const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
@@ -123,6 +125,28 @@ Deno.serve(async (req) => {
     ]);
 
     const externalGroupId = matchingConfigRows?.external_group_id ?? null;
+    const { data: companionCompatibilityRows } = companionUserIds.length
+      ? await client
+          .from("agent_user_compatibility_scores")
+          .select("user_a_id, user_b_id, score, reasons, reason_codes, feature_snapshot, expires_at")
+          .eq("intent", "event_companion")
+          .gte("score", minCompatibilityScore)
+          .in("user_a_id", companionUserIds)
+          .in("user_b_id", companionUserIds)
+      : { data: [] };
+    const companionCompatibilityByPair = new Map(
+      ((companionCompatibilityRows ?? []) as Array<{
+        user_a_id: string;
+        user_b_id: string;
+        score: number;
+        reasons: unknown[];
+        reason_codes: string[];
+        feature_snapshot: Record<string, unknown>;
+        expires_at: string | null;
+      }>)
+        .filter((row) => !row.expires_at || new Date(row.expires_at).getTime() > Date.now())
+        .map((row) => [`${row.user_a_id}:${row.user_b_id}`, row]),
+    );
     const { data: existingCompanionConnections } = externalGroupId && companionUserIds.length
       ? await client
           .from("connections")
@@ -153,12 +177,13 @@ Deno.serve(async (req) => {
 
         for (let i = 0; i < rows.length; i += 1) {
           for (let j = i + 1; j < rows.length; j += 1) {
-            const userA = rows[i].user_id < rows[j].user_id ? rows[i].user_id : rows[j].user_id;
-            const userB = rows[i].user_id < rows[j].user_id ? rows[j].user_id : rows[i].user_id;
+            const [userA, userB] = pairOrder(rows[i].user_id, rows[j].user_id);
             const profileA = companionProfileByUser.get(userA);
             const profileB = companionProfileByUser.get(userB);
             if (!profileA || !profileB) continue;
             if (existingCompanionConnectionPairs.has(`${userA}:${userB}`)) continue;
+            const compatibility = companionCompatibilityByPair.get(`${userA}:${userB}`);
+            if (!compatibility) continue;
 
             const canonicalKey = `intro:event_companion:${opportunityId}:${userA}:${userB}`;
             const title = `${profileA.full_name ?? "Someone"} and ${profileB.full_name ?? "someone"} both want company`;
@@ -176,6 +201,8 @@ Deno.serve(async (req) => {
                   source: "event_companion_request",
                   event_id: opportunityId,
                   event_title: event.title,
+                  compatibility_score: compatibility.score,
+                  compatibility_reason_codes: compatibility.reason_codes ?? [],
                 },
                 metadata: {
                   candidate_user_ids: [userA, userB],
@@ -183,6 +210,8 @@ Deno.serve(async (req) => {
                   anchor_group_name: "Local event companion",
                   anchor_event_id: opportunityId,
                   anchor_event_title: event.title,
+                  compatibility_reasons: compatibility.reasons ?? [],
+                  compatibility_features: compatibility.feature_snapshot ?? {},
                 },
                 expires_at: event.starts_at ?? isoDaysFromNow(7),
               }, { onConflict: "canonical_key" });
@@ -199,6 +228,7 @@ Deno.serve(async (req) => {
       intro_opportunities_upserted: upserted,
       companion_requests_scanned: companionRows?.length ?? 0,
       companion_intro_opportunities_upserted: companionIntroOpportunitiesUpserted,
+      compatibility_min_score: minCompatibilityScore,
       min_score: minScore,
     });
   } catch (error) {
