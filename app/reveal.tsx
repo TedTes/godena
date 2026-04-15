@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../constants/theme';
 import {
   fetchGroups,
+  fetchConnectionRevealContext,
   fetchPendingConnections,
   fetchProfiles,
   getSessionUserId,
@@ -21,6 +22,7 @@ import {
   type GroupMini,
   type PendingConnection,
   type ProfileMini,
+  type RevealContext,
 } from '../lib/services/reveal';
 
 function getGroupEmoji(category?: string) {
@@ -46,6 +48,39 @@ function ageFromBirthDate(birthDate: string | null) {
   return age >= 18 && age <= 99 ? age : null;
 }
 
+function formatBreakdownLabel(eventType: string) {
+  switch (eventType) {
+    case 'chat_reply': return 'Chat replies';
+    case 'post_reaction': return 'Post reactions';
+    case 'same_event_attendance': return 'Shared event attendance';
+    case 'same_event_rsvp': return 'Shared event interest';
+    case 'mention': return 'Mentions';
+    default: return eventType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
+function contextSignals(context: RevealContext | null) {
+  const compatibilityReasons = (context?.compatibility_reasons ?? [])
+    .map((reason) => reason.label)
+    .filter((label): label is string => typeof label === 'string' && label.trim().length > 0)
+    .slice(0, 3);
+
+  if (compatibilityReasons.length > 0) {
+    return compatibilityReasons;
+  }
+
+  const counts = context?.event_breakdown?.counts ?? {};
+  const breakdownSignals = Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([eventType, count]) => `${formatBreakdownLabel(eventType)} x${count}`)
+    .slice(0, 3);
+
+  return breakdownSignals.length > 0
+    ? breakdownSignals
+    : ['Mutual openness in this group', 'Recent shared activity'];
+}
+
 export default function RevealScreen() {
   const { connectionId } = useLocalSearchParams<{ connectionId?: string }>();
   const router = useRouter();
@@ -55,6 +90,7 @@ export default function RevealScreen() {
   const [connection, setConnection] = useState<PendingConnection | null>(null);
   const [counterpart, setCounterpart] = useState<ProfileMini | null>(null);
   const [group, setGroup] = useState<GroupMini | null>(null);
+  const [revealContext, setRevealContext] = useState<RevealContext | null>(null);
   const [successState, setSuccessState] = useState<'waiting' | 'connected' | null>(null);
 
   useEffect(() => {
@@ -84,6 +120,7 @@ export default function RevealScreen() {
         setConnection(null);
         setCounterpart(null);
         setGroup(null);
+        setRevealContext(null);
         setLoading(false);
         return;
       }
@@ -94,13 +131,15 @@ export default function RevealScreen() {
       setSuccessState(hasResponded ? 'waiting' : null);
 
       const counterpartId = pending.user_a_id === uid ? pending.user_b_id : pending.user_a_id;
-      const [{ data: profiles }, { data: groups }] = await Promise.all([
+      const [{ data: profiles }, { data: groups }, { data: context }] = await Promise.all([
         fetchProfiles([counterpartId]),
         fetchGroups([pending.group_id]),
+        fetchConnectionRevealContext(pending.id),
       ]);
 
       setCounterpart(((profiles ?? []) as ProfileMini[])[0] ?? null);
       setGroup(((groups ?? []) as GroupMini[])[0] ?? null);
+      setRevealContext((context as RevealContext | null) ?? null);
       setLoading(false);
     };
 
@@ -112,21 +151,22 @@ export default function RevealScreen() {
     const matchAge = ageFromBirthDate(counterpart?.birth_date ?? null);
     const groupName = group?.name || 'your group';
     const groupEmoji = getGroupEmoji(group?.category);
+    const sharedSignals = contextSignals(revealContext);
+    const score = revealContext?.compatibility_score ?? revealContext?.interaction_score ?? null;
     return {
       matchName,
       matchAge,
       matchPhoto: counterpart?.avatar_url || null,
       groupName,
       groupEmoji,
-      message: `You and ${matchName} have both been showing up in ${groupName}. Want a gentle introduction?`,
+      message: score
+        ? `You and ${matchName} have a ${Math.round(Number(score))}/100 warm-intro signal around ${groupName}. Want a gentle introduction?`
+        : `You and ${matchName} have both been showing up in ${groupName}. Want a gentle introduction?`,
       activitySuggestion: connection?.activity_suggested || `Try a simple meetup through ${groupName}`,
       activityDate: 'This week',
-      sharedSignals: [
-        'Mutual openness in this group',
-        'Recent shared activity',
-      ],
+      sharedSignals,
     };
-  }, [counterpart, group, connection]);
+  }, [counterpart, group, connection, revealContext]);
 
   const handleAccept = () => {
     void (async () => {
@@ -277,12 +317,12 @@ export default function RevealScreen() {
             <Text style={styles.whyTitle}>What brought this about</Text>
             <View style={styles.reasonRow}>
               <Ionicons name="people-circle-outline" size={14} color={Colors.oliveLight} />
-              <Text style={styles.reasonText}>Both of you quietly signaled openness here</Text>
+              <Text style={styles.reasonText}>{revealData.sharedSignals[0] ?? 'Both of you quietly signaled openness here'}</Text>
             </View>
             <View style={styles.reasonRow}>
               <Ionicons name="flame-outline" size={14} color={Colors.oliveLight} />
               <Text style={styles.reasonText}>
-                You've been genuinely active together recently
+                {revealData.sharedSignals[1] ?? "You've been genuinely active together recently"}
               </Text>
             </View>
             <View style={styles.signalChips}>

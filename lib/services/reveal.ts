@@ -27,6 +27,23 @@ export type GroupMini = {
   category: string;
 };
 
+export type RevealContext = {
+  connection_id: string;
+  interaction_score: number | null;
+  event_breakdown: {
+    counts?: Record<string, number>;
+    weighted?: Record<string, number>;
+    total_score?: number;
+  } | null;
+  compatibility_score: number | null;
+  compatibility_reasons: Array<{
+    code?: string;
+    label?: string;
+    weight?: number;
+    evidence?: Record<string, unknown>;
+  }> | null;
+};
+
 export async function fetchPendingConnections(userId: string) {
   return supabase
     .from('connections')
@@ -65,6 +82,12 @@ export async function fetchConnectionById(connectionId: string) {
     .from('connections')
     .select('id, group_id, user_a_id, user_b_id, status, activity_suggested, responded_a_at, responded_b_at, revealed_at')
     .eq('id', connectionId)
+    .maybeSingle();
+}
+
+export async function fetchConnectionRevealContext(connectionId: string) {
+  return supabase
+    .rpc('get_connection_reveal_context', { p_connection_id: connectionId })
     .maybeSingle();
 }
 

@@ -92,6 +92,8 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const runScout = body.run_scout !== false;
+    const aggregateScores = body.aggregate_scores !== false;
+    const decayScores = body.decay_scores !== false;
     const buildGroups = body.build_groups !== false;
     const buildInterests = body.build_interests !== false;
     const buildCompatibility = body.build_compatibility !== false;
@@ -113,6 +115,12 @@ Deno.serve(async (req) => {
       } else {
         results.source_sync = await invoke("agent-source-sync", body.sync_payload ?? {});
       }
+    }
+    if (aggregateScores) {
+      results.score_aggregation = await invoke("score-aggregation", body.score_aggregation_payload ?? {});
+    }
+    if (decayScores) {
+      results.score_decay = await invoke("score-decay", body.score_decay_payload ?? {});
     }
     if (buildGroups) {
       results.group_builder = await invoke("agent-group-opportunity-builder", body.group_payload ?? {});
