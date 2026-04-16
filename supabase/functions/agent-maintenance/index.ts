@@ -62,10 +62,16 @@ Deno.serve(async (req) => {
       proposalsExpired = proposalIds.length;
     }
 
+    const { data: archivedChatCount, error: archiveChatError } = await client.rpc(
+      "archive_expired_agent_event_chats",
+    );
+    if (archiveChatError) throw archiveChatError;
+
     return jsonResponse({
       ok: true,
       opportunities_expired: opportunitiesExpired,
       proposals_expired: proposalsExpired,
+      event_chats_archived: archivedChatCount ?? 0,
       ran_at: nowIso,
     });
   } catch (error) {

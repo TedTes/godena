@@ -32,6 +32,7 @@ export type ExternalEventRow = {
   price_min: number | null;
   organizer_name: string | null;
   organizer_source_id: string | null;
+  image_url: string | null;
 };
 
 export type UnifiedEventRow = {
@@ -51,6 +52,9 @@ export type UnifiedEventRow = {
   going_user_ids: string[];
   attendee_label: string | null;
   proposal_id?: string | null;
+  trusted_going_count?: number;
+  trusted_going_avatar_urls?: (string | null)[];
+  image_url?: string | null;
 };
 
 export type GroupRow = {
@@ -363,6 +367,25 @@ export async function fetchExternalEventRsvps(eventIds: string[]) {
     .in('opportunity_id', eventIds);
 }
 
+export type ExternalEventSocialProofRow = {
+  opportunity_id: string;
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  total_count: number;
+};
+
+export async function fetchExternalEventSharedGroupSocialProof(eventIds: string[]) {
+  if (eventIds.length === 0) {
+    return { data: [] as ExternalEventSocialProofRow[], error: null };
+  }
+
+  return supabase.rpc('fetch_agent_event_shared_group_social_proof', {
+    p_opportunity_ids: eventIds,
+    p_limit_per_event: 3,
+  });
+}
+
 export async function upsertEventRsvp(
   eventId: string,
   userId: string,
@@ -544,6 +567,7 @@ function mapOpportunityToExternalEventRow(row: {
     price_min: typeof featureSnapshot.price_min === 'number' ? featureSnapshot.price_min : null,
     organizer_name: typeof metadata.organizer_name === 'string' ? metadata.organizer_name : null,
     organizer_source_id: typeof metadata.organizer_source_id === 'string' ? metadata.organizer_source_id : null,
+    image_url: typeof featureSnapshot.image_url === 'string' ? featureSnapshot.image_url : null,
   };
 }
 
@@ -592,6 +616,18 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
 
   const rsvps = (rsvpRes.data ?? []) as EventRsvpRow[];
   const externalRsvps = (externalRsvpRes.data ?? []) as ExternalEventRsvpRow[];
+
+  const { data: socialProofRows, error: socialProofError } = await fetchExternalEventSharedGroupSocialProof(externalIds);
+  if (socialProofError) return { data: null, error: socialProofError };
+  const trustedProofByEvent = new Map<string, { count: number; avatarUrls: (string | null)[] }>();
+  for (const row of (socialProofRows ?? []) as ExternalEventSocialProofRow[]) {
+    const existing = trustedProofByEvent.get(row.opportunity_id) ?? { count: row.total_count ?? 0, avatarUrls: [] };
+    existing.count = Math.max(existing.count, row.total_count ?? 0);
+    if (existing.avatarUrls.length < 3) {
+      existing.avatarUrls.push(row.avatar_url ?? null);
+    }
+    trustedProofByEvent.set(row.opportunity_id, existing);
+  }
 
   const myRsvpByEvent = new Map(
     rsvps.filter((r) => r.user_id === userId).map((r) => [r.event_id, r.status])
@@ -692,6 +728,9 @@ export async function fetchUnifiedEventsForUser(userId: string, city: string | n
       going_user_ids: [],
       attendee_label: buildAttendeeLabel(e.id),
       proposal_id: e.proposal_id ?? null,
+      trusted_going_count: trustedProofByEvent.get(e.id)?.count ?? 0,
+      trusted_going_avatar_urls: trustedProofByEvent.get(e.id)?.avatarUrls ?? [],
+      image_url: e.image_url ?? null,
     })),
   ];
 

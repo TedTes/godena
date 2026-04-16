@@ -96,6 +96,7 @@ export default function GroupChatScreen() {
     member_count: number;
     category: string;
     icon_emoji: string | null;
+    is_active: boolean;
   } | null>(null);
   const [liveMemberCount, setLiveMemberCount] = useState<number | null>(null);
   const [messages, setMessages] = useState<RawMsg[]>([]);
@@ -318,7 +319,7 @@ export default function GroupChatScreen() {
 
   const send = () => {
     void (async () => {
-      if (!id || !userId) return;
+      if (!id || !userId || group?.is_active === false) return;
       const text = input.trim();
       if (!text) return;
 
@@ -372,7 +373,8 @@ export default function GroupChatScreen() {
     })();
   };
 
-  const sendDisabled = !input.trim() || !userId;
+  const isArchived = group?.is_active === false;
+  const sendDisabled = !input.trim() || !userId || isArchived;
 
   const headerContent = (
     <View style={[styles.header, { backgroundColor: groupVisuals.coverColor }]}>
@@ -556,6 +558,13 @@ export default function GroupChatScreen() {
         )}
         </View>
 
+        {isArchived ? (
+          <View style={styles.archiveNotice}>
+            <Ionicons name="archive-outline" size={16} color={Colors.muted} />
+            <Text style={styles.archiveNoticeText}>This event thread is archived.</Text>
+          </View>
+        ) : null}
+
         {/* ── Input bar ── */}
         <SafeAreaView edges={['bottom']} style={styles.inputSafe}>
           <View style={styles.inputRow}>
@@ -564,12 +573,13 @@ export default function GroupChatScreen() {
             </TouchableOpacity>
             <TextInput
               style={styles.input}
-              placeholder="Message the group..."
+              placeholder={isArchived ? 'Thread archived' : 'Message the group...'}
               placeholderTextColor={Colors.muted}
               value={input}
               onChangeText={setInput}
               multiline
               maxLength={500}
+              editable={!isArchived}
             />
             <TouchableOpacity
               style={[styles.sendBtn, sendDisabled && styles.sendBtnDisabled]}
@@ -744,6 +754,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendBtnDisabled: { backgroundColor: Colors.borderDark },
+  archiveNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    backgroundColor: Colors.paper,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  archiveNoticeText: {
+    fontSize: 12,
+    color: Colors.muted,
+    fontWeight: '600',
+  },
 
   // ── New messages pill ──
   newMsgPillWrap: {

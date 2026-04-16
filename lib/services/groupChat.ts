@@ -8,6 +8,7 @@ export type GroupChatGroup = {
   member_count: number;
   category: string;
   icon_emoji: string | null;
+  is_active: boolean;
 };
 
 export type GroupChatMessageRow = {
@@ -21,7 +22,7 @@ export type GroupChatMessageRow = {
 export async function fetchGroup(groupId: string) {
   return supabase
     .from('groups')
-    .select('id, name, member_count, category, icon_emoji')
+    .select('id, name, member_count, category, icon_emoji, is_active')
     .eq('id', groupId)
     .maybeSingle();
 }
