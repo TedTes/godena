@@ -3,6 +3,8 @@ import {
   Animated,
   ActivityIndicator,
   Alert,
+  Image,
+  ImageBackground,
   Linking,
   ScrollView,
   StyleSheet,
@@ -21,12 +23,14 @@ import {
   deleteExternalEventRsvp,
   fetchExternalEventById,
   fetchExternalEventRsvps,
-  fetchProfilesBasic,
+  fetchExternalEventSharedGroupSocialProof,
   getSessionUserId,
   upsertExternalEventRsvp,
+  type ExternalEventSocialProofRow,
   type ExternalEventRow,
   type ExternalEventRsvpRow,
 } from '../../../lib/services/events';
+import { resolveProfilePhotoUrl } from '../../../lib/services/photoUrls';
 
 type MyStatus = 'going' | 'interested' | 'not_going';
 
@@ -67,6 +71,41 @@ const RSVP_OPTIONS: RsvpOption[] = [
   { status: 'interested',label: 'Interested',    icon: 'eye',              color: Colors.gold },
   { status: 'not_going', label: "Can't make it", icon: 'close-circle',     color: Colors.muted },
 ];
+
+function cleanExternalText(value: string) {
+  return value
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/(\d)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .trim();
+}
+
+function getUsefulExternalDescription(value?: string | null) {
+  const cleaned = cleanExternalText(value ?? '');
+  if (cleaned.length < 40) return null;
+
+  const lower = cleaned.toLowerCase();
+  const boilerplateHits = [
+    'delivery delay',
+    'tickets will be delivered',
+    'ticketweb account',
+    'all sales are final',
+    'no refunds or exchanges',
+    'box office',
+    'will call',
+    'legal age',
+  ].filter((needle) => lower.includes(needle)).length;
+
+  if (boilerplateHits >= 2) return null;
+  return cleaned.length > 520 ? `${cleaned.slice(0, 520).trim()}...` : cleaned;
+}
 
 function RsvpRow({
   opt,
@@ -133,13 +172,33 @@ export default function ExternalEventDetailScreen() {
   const [requestingCompanion, setRequestingCompanion] = useState(false);
   const [eventRow, setEventRow] = useState<ExternalEventRow | null>(null);
   const [attendeeLabel, setAttendeeLabel] = useState<string | null>(null);
+  const [attendeeAvatars, setAttendeeAvatars] = useState<(string | null)[]>([]);
   const [goingCount, setGoingCount] = useState(0);
   const [myStatus, setMyStatus] = useState<MyStatus | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
-  const buildAttendeeLabel = (rsvps: ExternalEventRsvpRow[], names: string[]) => {
+  const buildAttendeeLabel = (rsvps: ExternalEventRsvpRow[], names: string[], uid: string) => {
     const going = rsvps.filter((r) => r.status === 'going');
     if (going.length === 0) { setAttendeeLabel(null); return; }
+    const currentUserGoing = going.some((r) => r.user_id === uid);
+    const otherCount = going.filter((r) => r.user_id !== uid).length;
+    if (currentUserGoing && otherCount === 0) {
+      setAttendeeLabel("You're going");
+      return;
+    }
+    if (currentUserGoing && names.length === 0) {
+      setAttendeeLabel(`You and ${otherCount} other${otherCount === 1 ? '' : 's'} are going`);
+      return;
+    }
+    if (currentUserGoing) {
+      const a = names[0] ?? 'someone';
+      if (otherCount === 1) {
+        setAttendeeLabel(`You and ${a} are going`);
+        return;
+      }
+      setAttendeeLabel(`You, ${a} and ${otherCount - 1} others are going`);
+      return;
+    }
     if (names.length === 0) {
       setAttendeeLabel(going.length === 1 ? '1 person going' : `${going.length} people going`);
       return;
@@ -170,13 +229,18 @@ export default function ExternalEventDetailScreen() {
     setMyStatus((mine?.status ?? null) as MyStatus | null);
     const going = rsvps.filter((r) => r.status === 'going');
     setGoingCount(going.length);
-    const topIds = going.slice(0, 2).map((r) => r.user_id);
-    if (topIds.length > 0) {
-      const { data: profiles } = await fetchProfilesBasic(topIds);
-      const names = (profiles ?? []).map((p) => p.full_name).filter((v): v is string => Boolean(v));
-      buildAttendeeLabel(rsvps, names);
+    const { data: socialProofRows } = await fetchExternalEventSharedGroupSocialProof([id]);
+    const proofRows = ((socialProofRows ?? []) as ExternalEventSocialProofRow[]).filter((row) => row.opportunity_id === id);
+    if (proofRows.length > 0) {
+      const names = proofRows.map((p) => p.full_name).filter((v): v is string => Boolean(v));
+      const avatars = await Promise.all(
+        proofRows.slice(0, 3).map(async (p) => resolveProfilePhotoUrl(p.avatar_url))
+      );
+      setAttendeeAvatars(avatars);
+      buildAttendeeLabel(rsvps, names, uid);
     } else {
-      setAttendeeLabel(null);
+      setAttendeeAvatars([]);
+      buildAttendeeLabel(rsvps, [], uid);
     }
   };
 
@@ -212,6 +276,16 @@ export default function ExternalEventDetailScreen() {
       } else {
         const { error } = await upsertExternalEventRsvp(id, userId, next);
         if (error) setMyStatus(prev);
+        if (!error && (next === 'going' || next === 'interested')) {
+          Alert.alert(
+            next === 'going' ? "You're going" : "You're interested",
+            "The attendee thread is open to people who RSVP'd.",
+            [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Open thread', onPress: handleStartGroupChat },
+            ]
+          );
+        }
       }
       setSaving(false);
       await loadRsvpState(userId);
@@ -224,7 +298,17 @@ export default function ExternalEventDetailScreen() {
       setCreatingChat(true);
       const { groupId, error } = await createExternalEventChat(id);
       setCreatingChat(false);
-      if (error || !groupId) return;
+      if (error || !groupId) {
+        Alert.alert(
+          'Could not open thread',
+          error === 'rsvp_required'
+            ? 'RSVP as Going or Interested to join the attendee thread.'
+            : error === 'event_chat_archived'
+              ? 'This event thread has been archived.'
+              : error ?? 'Please try again.'
+        );
+        return;
+      }
       router.push(`/group/chat/${groupId}`);
     })();
   };
@@ -254,14 +338,6 @@ export default function ExternalEventDetailScreen() {
     return eventRow.city ?? 'Location TBA';
   }, [eventRow]);
 
-  const cleanText = (value: string) =>
-    value
-      .replace(/\\n/gi, '\n')
-      .replace(/\\,/g, ',')
-      .replace(/\\;/g, ';')
-      .replace(/\\\\/g, '\\')
-      .replace(/\\/g, '');
-
   if (loading) {
     return (
       <View style={styles.loadingWrap}>
@@ -282,48 +358,66 @@ export default function ExternalEventDetailScreen() {
   }
 
   const { emoji, color: heroColor } = getCategoryMeta(eventRow.category);
+  const usefulDescription = getUsefulExternalDescription(eventRow.description);
+  const heroContent = (
+    <>
+      <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.8}>
+        <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.9)" />
+      </TouchableOpacity>
+
+      <View style={styles.heroBody}>
+        {eventRow.image_url ? null : (
+          <View style={styles.heroEmojiWrap}>
+            <Text style={styles.heroEmoji}>{emoji}</Text>
+          </View>
+        )}
+        <Text style={styles.heroTitle}>{eventRow.title}</Text>
+        {eventRow.organizer_name ? (
+          <View style={styles.groupPill}>
+            <Text style={styles.groupPillText}>{eventRow.organizer_name}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.heroStrip}>
+        <View style={styles.heroChip}>
+          <Text style={styles.heroChipText}>{formatDateShort(eventRow.start_at)}</Text>
+        </View>
+        <View style={styles.stripDot} />
+        <Text style={styles.stripText}>{formatWeekday(eventRow.start_at)}</Text>
+        <View style={styles.stripDot} />
+        <Text style={styles.stripText}>{formatTime(eventRow.start_at)}</Text>
+        {eventRow.is_free && (
+          <>
+            <View style={styles.stripDot} />
+            <View style={styles.freeBadge}>
+              <Text style={styles.freeBadgeText}>Free</Text>
+            </View>
+          </>
+        )}
+      </View>
+    </>
+  );
 
   return (
     <RAnimated.View entering={FadeIn.duration(260)} style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.safe}>
 
         {/* ── Hero ── */}
-        <View style={[styles.hero, { backgroundColor: heroColor }]}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.8}>
-            <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.9)" />
-          </TouchableOpacity>
-
-          <View style={styles.heroBody}>
-            <View style={styles.heroEmojiWrap}>
-              <Text style={styles.heroEmoji}>{emoji}</Text>
-            </View>
-            <Text style={styles.heroTitle}>{eventRow.title}</Text>
-            {eventRow.organizer_name ? (
-              <View style={styles.groupPill}>
-                <Text style={styles.groupPillText}>{eventRow.organizer_name}</Text>
-              </View>
-            ) : null}
+        {eventRow.image_url ? (
+          <ImageBackground
+            source={{ uri: eventRow.image_url }}
+            style={styles.hero}
+            imageStyle={styles.heroImage}
+          >
+            <View style={styles.heroImageOverlay} />
+            {heroContent}
+          </ImageBackground>
+        ) : (
+          <View style={[styles.hero, { backgroundColor: heroColor }]}>
+            {heroContent}
           </View>
-
-          {/* Date strip */}
-          <View style={styles.heroStrip}>
-            <View style={styles.heroChip}>
-              <Text style={styles.heroChipText}>{formatDateShort(eventRow.start_at)}</Text>
-            </View>
-            <View style={styles.stripDot} />
-            <Text style={styles.stripText}>{formatWeekday(eventRow.start_at)}</Text>
-            <View style={styles.stripDot} />
-            <Text style={styles.stripText}>{formatTime(eventRow.start_at)}</Text>
-            {eventRow.is_free && (
-              <>
-                <View style={styles.stripDot} />
-                <View style={styles.freeBadge}>
-                  <Text style={styles.freeBadgeText}>Free</Text>
-                </View>
-              </>
-            )}
-          </View>
-        </View>
+        )}
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
@@ -348,7 +442,7 @@ export default function ExternalEventDetailScreen() {
               </View>
               <View style={styles.detailText}>
                 <Text style={styles.detailLabel}>Location</Text>
-                <Text style={styles.detailValue}>{cleanText(locationLine)}</Text>
+                <Text style={styles.detailValue}>{cleanExternalText(locationLine)}</Text>
               </View>
             </View>
 
@@ -368,17 +462,37 @@ export default function ExternalEventDetailScreen() {
                 {attendeeLabel ? (
                   <Text style={styles.detailSub}>{attendeeLabel}</Text>
                 ) : null}
+                {attendeeAvatars.length > 0 ? (
+                  <View style={styles.attendeeAvatarRow}>
+                    {attendeeAvatars.map((uri, index) => (
+                      uri ? (
+                        <Image
+                          key={`${uri}-${index}`}
+                          source={{ uri }}
+                          style={[styles.attendeeAvatar, { marginLeft: index === 0 ? 0 : -8 }]}
+                        />
+                      ) : (
+                        <View
+                          key={`avatar-${index}`}
+                          style={[styles.attendeeAvatar, styles.attendeeAvatarFallback, { marginLeft: index === 0 ? 0 : -8 }]}
+                        >
+                          <Ionicons name="person" size={10} color={Colors.muted} />
+                        </View>
+                      )
+                    ))}
+                  </View>
+                ) : null}
               </View>
             </View>
           </RAnimated.View>
 
           {/* ── About ── */}
-          <RAnimated.View entering={FadeInDown.delay(140).duration(300)} style={styles.aboutCard}>
-            <Text style={styles.aboutTitle}>About</Text>
-            <Text style={[styles.aboutText, !eventRow.description?.trim() && styles.aboutEmpty]}>
-              {eventRow.description ? cleanText(eventRow.description.trim()) : 'No description provided.'}
-            </Text>
-          </RAnimated.View>
+          {usefulDescription ? (
+            <RAnimated.View entering={FadeInDown.delay(140).duration(300)} style={styles.aboutCard}>
+              <Text style={styles.aboutTitle}>About</Text>
+              <Text style={styles.aboutText}>{usefulDescription}</Text>
+            </RAnimated.View>
+          ) : null}
 
           {/* ── RSVP ── */}
           <RAnimated.View entering={FadeInDown.delay(220).duration(300)} style={styles.rsvpCard}>
@@ -408,7 +522,7 @@ export default function ExternalEventDetailScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.companionCtaTitle}>Find someone to go with</Text>
-                  <Text style={styles.chatCtaSub}>Ask the agent to look for a compatible match around this event</Text>
+                  <Text style={styles.chatCtaSub}>We'll look for someone compatible who also wants company</Text>
                 </View>
               </View>
               {requestingCompanion ? (
@@ -420,7 +534,7 @@ export default function ExternalEventDetailScreen() {
           </RAnimated.View>
 
           {/* ── Group chat CTA ── */}
-          {goingCount >= 3 ? (
+          {myStatus === 'going' || myStatus === 'interested' ? (
             <RAnimated.View entering={FadeInDown.delay(300).duration(300)}>
               <TouchableOpacity
                 style={styles.chatCta}
@@ -433,8 +547,8 @@ export default function ExternalEventDetailScreen() {
                     <Ionicons name="chatbubbles" size={18} color={Colors.olive} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.chatCtaTitle}>Start group chat</Text>
-                    <Text style={styles.chatCtaSub}>Connect with people attending this event</Text>
+                    <Text style={styles.chatCtaTitle}>Open attendee thread</Text>
+                    <Text style={styles.chatCtaSub}>Only people who RSVP'd can join. Archives 24 hours after the event.</Text>
                   </View>
                 </View>
                 {creatingChat ? (
@@ -480,6 +594,7 @@ const styles = StyleSheet.create({
 
   // ── Hero ──
   hero: {
+    minHeight: 270,
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
     overflow: 'hidden',
@@ -488,6 +603,14 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
+  },
+  heroImage: {
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  heroImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(45,31,23,0.42)',
   },
   backBtn: {
     position: 'absolute',
@@ -605,6 +728,23 @@ const styles = StyleSheet.create({
   },
   detailValue: { fontSize: 14, color: Colors.ink, fontWeight: '700' },
   detailSub: { fontSize: 12, color: Colors.muted, marginTop: 2 },
+  attendeeAvatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  attendeeAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: Colors.warmWhite,
+  },
+  attendeeAvatarFallback: {
+    backgroundColor: Colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   detailDivider: { height: 1, backgroundColor: Colors.border, marginLeft: 16 + 14 + 38 },
 
   // ── About ──

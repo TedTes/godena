@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Alert,
-  Linking,
   View,
   Text,
   StyleSheet,
@@ -15,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import {
+  createExternalEventChat,
   fetchGoingUserProfiles,
   fetchMembershipGroupIds,
   createEventCompanionRequest,
@@ -51,6 +51,10 @@ type EventCard = {
   attendeeLabel?: string | null;
   externalUrl?: string | null;
   proposalId?: string | null;
+  trustedGoingCount?: number;
+  imageUrl?: string | null;
+  isSuggested?: boolean;
+  reasons?: Array<{ id: string; label: string }>;
 };
 
 type EventIntentAction = 'interested' | 'going' | 'find_company' | 'not_for_me' | 'hide_similar';
@@ -85,8 +89,14 @@ function cleanText(value: string) {
     .replace(/\\,/g, ',')
     .replace(/\\;/g, ';')
     .replace(/\\\\/g, '\\')
-    .replace(/\\/g, '');
+    .replace(/\\/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/(\d)([A-Z][a-z])/g, '$1 $2')
+    .trim();
 }
+
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -108,9 +118,7 @@ export default function EventsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [events, setEvents]   = useState<EventCard[]>([]);
-  const [agentSuggestions, setAgentSuggestions] = useState<AgentEventSuggestion[]>([]);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
-  const [actingSuggestionId, setActingSuggestionId] = useState<string | null>(null);
   const [actingEventIds, setActingEventIds] = useState<string[]>([]);
   const viewedProposalIdsRef = useRef<Set<string>>(new Set());
   const enterStyle = useScreenEnter();
@@ -135,26 +143,19 @@ export default function EventsScreen() {
       fetchAgentEventSuggestions({ city: userCity, userId: uid, limit: 6 }),
     ]);
     if (unifiedError) { setError(unifiedError.message); setLoading(false); return; }
-    if (suggestionError) {
-      console.warn('fetchAgentEventSuggestions failed', suggestionError.message);
-      setAgentSuggestions([]);
-    } else {
-      setAgentSuggestions(suggestionRows ?? []);
-      for (const suggestion of suggestionRows ?? []) {
-        if (viewedProposalIdsRef.current.has(suggestion.proposalId)) {
-          continue;
-        }
+
+    // Log viewed feedback for suggestions
+    const validSuggestions = (suggestionRows ?? []).filter((s) => Boolean(s.opportunityId));
+    if (!suggestionError) {
+      for (const suggestion of validSuggestions) {
+        if (viewedProposalIdsRef.current.has(suggestion.proposalId)) continue;
         const { error: feedbackError } = await logAgentFeedbackEvent({
           proposalId: suggestion.proposalId,
           userId: uid,
           eventType: 'viewed',
           metadata: { source: 'events_screen' },
         });
-        if (feedbackError) {
-          console.warn('logAgentFeedbackEvent(viewed) failed', feedbackError.message);
-          continue;
-        }
-        viewedProposalIdsRef.current.add(suggestion.proposalId);
+        if (!feedbackError) viewedProposalIdsRef.current.add(suggestion.proposalId);
       }
     }
 
@@ -176,40 +177,82 @@ export default function EventsScreen() {
       for (const { id, url } of resolved) userAvatarMap[id] = url;
     }
 
+    // Suggestion opportunity IDs are excluded from the unified list (dedup)
     const suggestedOpportunityIds = new Set(
-      (suggestionRows ?? [])
-        .map((row) => row.opportunityId)
-        .filter((value): value is string => Boolean(value))
+      validSuggestions.map((s) => s.opportunityId as string)
     );
 
-    const mapped: EventCard[] = unified
+    const externalSocialAvatarPaths = Array.from(
+      new Set(
+        unified
+          .filter((e) => e.source === 'external')
+          .flatMap((e) => e.trusted_going_avatar_urls ?? [])
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    const externalSocialAvatarMap: Record<string, string | null> = {};
+    if (externalSocialAvatarPaths.length > 0) {
+      const resolved = await Promise.all(
+        externalSocialAvatarPaths.map(async (path) => ({ path, url: await resolveProfilePhotoUrl(path) }))
+      );
+      for (const { path, url } of resolved) externalSocialAvatarMap[path] = url;
+    }
+
+    // Convert suggestions to EventCards (shown at top, with isSuggested flag)
+    const suggestionCards: EventCard[] = validSuggestions.map((s) => ({
+      id:            s.opportunityId as string,
+      source:        'external' as const,
+      groupId:       'external',
+      groupName:     s.city ?? 'Local event',
+      groupEmoji:    '🗓️',
+      title:         s.title,
+      startsAt:      s.startsAt ?? new Date().toISOString(),
+      time:          s.startsAt ? formatTime(s.startsAt) : '',
+      location:      s.venueName ?? s.city ?? 'TBA',
+      isVirtual:     false,
+      attendeeCount: 0,
+      myStatus:      null,
+      goingAvatars:  [],
+      proposalId:    s.proposalId,
+      imageUrl:      s.imageUrl ?? null,
+      isSuggested:   true,
+      reasons:       s.reasons.slice(0, 2),
+    }));
+
+    // Regular events (suggestions deduped out)
+    const regularCards: EventCard[] = unified
       .filter((e) => !(e.source === 'external' && suggestedOpportunityIds.has(e.id)))
       .map((e) => {
-      const isExternal = e.source === 'external';
-      const cat = normalizeExternalCategory(e.category);
-      const rawLocation = e.is_virtual ? 'Virtual' : (e.location_name || 'TBA');
-      const location = isExternal ? cleanText(rawLocation) : rawLocation;
-      return {
-        id:            e.id,
-        source:        e.source,
-        groupId:       e.group_id ?? 'external',
-        groupName:     e.group_name ?? (e.city ?? 'Local event'),
-        groupEmoji:    categoryEmoji(isExternal ? cat : e.category ?? undefined),
-        title:         e.title,
-        startsAt:      e.starts_at,
-        time:          formatTime(e.starts_at),
-        location,
-        isVirtual:     e.is_virtual,
-        attendeeCount: e.attendee_count,
-        myStatus:      e.my_status as EventCard['myStatus'],
-        goingAvatars:  isExternal ? [] : e.going_user_ids.map((id) => userAvatarMap[id] ?? null),
-        attendeeLabel: e.attendee_label ?? null,
-        externalUrl:   e.source_url,
-        proposalId:    e.proposal_id ?? null,
-      };
-    });
+        const isExternal = e.source === 'external';
+        const cat = normalizeExternalCategory(e.category);
+        const rawLocation = e.is_virtual ? 'Virtual' : (e.location_name || 'TBA');
+        const location = isExternal ? cleanText(rawLocation) : rawLocation;
+        const trustedAvatarUrls = (e.trusted_going_avatar_urls ?? []).map((path) =>
+          path ? externalSocialAvatarMap[path] ?? null : null
+        );
+        return {
+          id:            e.id,
+          source:        e.source,
+          groupId:       e.group_id ?? 'external',
+          groupName:     e.group_name ?? (e.city ?? 'Local event'),
+          groupEmoji:    categoryEmoji(isExternal ? cat : e.category ?? undefined),
+          title:         e.title,
+          startsAt:      e.starts_at,
+          time:          formatTime(e.starts_at),
+          location,
+          isVirtual:     e.is_virtual,
+          attendeeCount: e.attendee_count,
+          myStatus:      e.my_status as EventCard['myStatus'],
+          goingAvatars:  isExternal ? trustedAvatarUrls : e.going_user_ids.map((id) => userAvatarMap[id] ?? null),
+          attendeeLabel: e.attendee_label ?? null,
+          externalUrl:   e.source_url,
+          proposalId:    e.proposal_id ?? null,
+          trustedGoingCount: isExternal ? e.trusted_going_count ?? 0 : undefined,
+          imageUrl:      isExternal ? (e.image_url ?? null) : null,
+        };
+      });
 
-    setEvents(mapped);
+    setEvents([...suggestionCards, ...regularCards]);
     setLoading(false);
   }, []);
 
@@ -240,44 +283,6 @@ export default function EventsScreen() {
     return events.filter((e) => e.myStatus === 'going' || e.myStatus === 'interested');
   }, [events, filter]);
 
-  const dismissSuggestion = useCallback(async (suggestion: AgentEventSuggestion) => {
-    if (!sessionUserId || actingSuggestionId) return;
-    setActingSuggestionId(suggestion.proposalId);
-    const { error: feedbackError } = await logAgentFeedbackEvent({
-      proposalId: suggestion.proposalId,
-      userId: sessionUserId,
-      eventType: 'dismissed',
-      metadata: { source: 'events_screen', reason: 'not_for_me' },
-    });
-    setActingSuggestionId(null);
-    if (feedbackError) {
-      Alert.alert('Could not hide suggestion', feedbackError.message);
-      return;
-    }
-    setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
-  }, [actingSuggestionId, sessionUserId]);
-
-  const ignoreSuggestionType = useCallback(async (suggestion: AgentEventSuggestion) => {
-    if (!sessionUserId || actingSuggestionId) return;
-    setActingSuggestionId(suggestion.proposalId);
-    const categoryLabel = suggestion.reasons.find((reason) => reason.label.toLowerCase().includes('interest'))?.label ?? null;
-    const { error: feedbackError } = await logAgentFeedbackEvent({
-      proposalId: suggestion.proposalId,
-      userId: sessionUserId,
-      eventType: 'ignored',
-      metadata: {
-        source: 'events_screen',
-        reason: 'less_like_this',
-        category_hint: categoryLabel,
-      },
-    });
-    setActingSuggestionId(null);
-    if (feedbackError) {
-      Alert.alert('Could not update preference', feedbackError.message);
-      return;
-    }
-    setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
-  }, [actingSuggestionId, sessionUserId]);
 
   const updateExternalCardStatus = useCallback((eventId: string, next: EventCard['myStatus']) => {
     setEvents((prev) => prev.map((event) => {
@@ -317,6 +322,26 @@ export default function EventsScreen() {
           });
           if (feedbackError) console.warn('logAgentFeedbackEvent(intent) failed', feedbackError.message);
         }
+        Alert.alert(
+          action === 'going' ? "You're going" : "You're interested",
+          "The attendee thread is open to people who RSVP'd.",
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'Open thread',
+              onPress: () => {
+                void (async () => {
+                  const { groupId, error } = await createExternalEventChat(event.id);
+                  if (error || !groupId) {
+                    Alert.alert('Could not open thread', error ?? 'Please try again.');
+                    return;
+                  }
+                  router.push(`/group/chat/${groupId}`);
+                })();
+              },
+            },
+          ]
+        );
         return;
       }
 
@@ -379,152 +404,19 @@ export default function EventsScreen() {
     } finally {
       setActingEventIds((prev) => prev.filter((id) => id !== event.id));
     }
-  }, [actingEventIds, hideExternalCard, sessionUserId, updateExternalCardStatus]);
+  }, [actingEventIds, hideExternalCard, router, sessionUserId, updateExternalCardStatus]);
 
-  const handleSuggestionRsvp = useCallback(async (
-    suggestion: AgentEventSuggestion,
-    status: 'interested' | 'going',
-  ) => {
-    if (!sessionUserId || actingSuggestionId || !suggestion.opportunityId) return;
-    setActingSuggestionId(suggestion.proposalId);
-    try {
-      const { error: rsvpError } = await upsertExternalEventRsvp(suggestion.opportunityId, sessionUserId, status);
-      if (rsvpError) throw new Error(rsvpError.message);
-      const { error: feedbackError } = await logAgentFeedbackEvent({
-        proposalId: suggestion.proposalId,
-        userId: sessionUserId,
-        eventType: status === 'going' ? 'rsvped_event' : 'clicked',
-        metadata: { source: 'events_suggestion_card', action: status },
-      });
-      if (feedbackError) console.warn('logAgentFeedbackEvent(suggestion intent) failed', feedbackError.message);
-      setAgentSuggestions((prev) => prev.filter((item) => item.proposalId !== suggestion.proposalId));
-    } catch (err) {
-      Alert.alert('Could not update event', err instanceof Error ? err.message : 'Please try again.');
-    } finally {
-      setActingSuggestionId(null);
-    }
-  }, [actingSuggestionId, sessionUserId]);
+  const hasSuggestions = visibleEvents.some((e) => e.isSuggested);
 
-  const renderHeader = () => (
-    <>
-      {agentSuggestions.length > 0 && (
-        <View style={styles.suggestionSection}>
-          <View style={styles.suggestionHeaderRow}>
-            <Text style={styles.suggestionSectionLabel}>Suggested For You</Text>
-            <View style={styles.suggestionHintPill}>
-              <Ionicons name="sparkles-outline" size={12} color={Colors.terracotta} />
-              <Text style={styles.suggestionHintText}>Agent-screened</Text>
-            </View>
-          </View>
-          <View style={styles.suggestionList}>
-            {agentSuggestions.map((suggestion) => (
-              <TouchableOpacity
-                key={suggestion.proposalId}
-                style={styles.suggestionCard}
-                activeOpacity={0.88}
-                onPress={async () => {
-                  const { error: feedbackError } = await logAgentFeedbackEvent({
-                    proposalId: suggestion.proposalId,
-                    userId: sessionUserId,
-                    eventType: 'clicked',
-                    metadata: { source: 'events_screen' },
-                  });
-                  if (feedbackError) {
-                    console.warn('logAgentFeedbackEvent(clicked) failed', feedbackError.message);
-                  }
-                  if (suggestion.opportunityId) {
-                    router.push(`/event/external/${suggestion.opportunityId}`);
-                    return;
-                  }
-                  if (suggestion.sourceUrl) {
-                    await Linking.openURL(suggestion.sourceUrl);
-                  }
-                }}
-              >
-                <View style={styles.suggestionTopRow}>
-                  <View style={styles.suggestionTopLeft}>
-                    <View style={styles.suggestionBadge}>
-                      <Text style={styles.suggestionBadgeText}>Suggested</Text>
-                    </View>
-                    <View style={styles.suggestionActionRow}>
-                      <TouchableOpacity
-                        style={[styles.dismissBtn, styles.positiveIntentBtn]}
-                        activeOpacity={0.8}
-                        disabled={actingSuggestionId === suggestion.proposalId || !suggestion.opportunityId}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          void handleSuggestionRsvp(suggestion, 'interested');
-                        }}
-                      >
-                        <Text style={[styles.dismissBtnText, styles.positiveIntentText]}>
-                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Interested'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.dismissBtn, styles.positiveIntentBtn]}
-                        activeOpacity={0.8}
-                        disabled={actingSuggestionId === suggestion.proposalId || !suggestion.opportunityId}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          void handleSuggestionRsvp(suggestion, 'going');
-                        }}
-                      >
-                        <Text style={[styles.dismissBtnText, styles.positiveIntentText]}>
-                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Going'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.dismissBtn}
-                        activeOpacity={0.8}
-                        disabled={actingSuggestionId === suggestion.proposalId}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          void dismissSuggestion(suggestion);
-                        }}
-                      >
-                        <Text style={styles.dismissBtnText}>
-                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Hide'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.dismissBtn}
-                        activeOpacity={0.8}
-                        disabled={actingSuggestionId === suggestion.proposalId}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          void ignoreSuggestionType(suggestion);
-                        }}
-                      >
-                        <Text style={styles.dismissBtnText}>
-                          {actingSuggestionId === suggestion.proposalId ? '...' : 'Less like this'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <Text style={styles.suggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
-                </View>
-                <Text style={styles.suggestionTitle} numberOfLines={2}>{suggestion.title}</Text>
-                <Text style={styles.suggestionMeta} numberOfLines={1}>
-                  {suggestion.startsAt ? `${formatRelativeDate(suggestion.startsAt)} · ${formatTime(suggestion.startsAt)}` : 'Flexible timing'}
-                  {suggestion.venueName ? ` · ${suggestion.venueName}` : suggestion.city ? ` · ${suggestion.city}` : ''}
-                </Text>
-                {suggestion.body ? (
-                  <Text style={styles.suggestionBody} numberOfLines={2}>{suggestion.body}</Text>
-                ) : null}
-                <View style={styles.suggestionReasonRow}>
-                  {suggestion.reasons.slice(0, 2).map((reason) => (
-                    <View key={reason.id} style={styles.suggestionReasonPill}>
-                      <Text style={styles.suggestionReasonText}>{reason.label}</Text>
-                    </View>
-                  ))}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-    </>
-  );
+  const renderHeader = () => hasSuggestions ? (
+    <View style={styles.suggestionHeaderRow}>
+      <Text style={styles.suggestionSectionLabel}>Suggested For You</Text>
+      <View style={styles.suggestionHintPill}>
+        <Ionicons name="sparkles-outline" size={12} color={Colors.terracotta} />
+        <Text style={styles.suggestionHintText}>Picked for you</Text>
+      </View>
+    </View>
+  ) : null;
 
   return (
     <View style={styles.container}>
@@ -568,8 +460,13 @@ export default function EventsScreen() {
             showsVerticalScrollIndicator={false}
             ListHeaderComponent={renderHeader}
             ListEmptyComponent={<EmptyState error={error} filter={filter} />}
-            renderItem={({ item: ev }) => (
-              <View>
+            renderItem={({ item: ev, index }) => (
+              <>
+                {!ev.isSuggested && index > 0 && visibleEvents[index - 1]?.isSuggested && (
+                  <View style={styles.sectionDivider}>
+                    <Text style={styles.sectionDividerText}>All Events</Text>
+                  </View>
+                )}
                 <EventItem
                   ev={ev}
                   acting={actingEventIds.includes(ev.id)}
@@ -582,7 +479,7 @@ export default function EventsScreen() {
                   }}
                   onIntent={(action) => void handleExternalEventIntent(ev, action)}
                 />
-              </View>
+              </>
             )}
           />
         )}
@@ -623,182 +520,160 @@ function EventItem({
   const relDate  = formatRelativeDate(ev.startsAt);
   const isToday  = relDate === 'Today';
   const isExternal = ev.source === 'external';
+  const socialProofCount = isExternal ? ev.trustedGoingCount ?? 0 : ev.attendeeCount;
+  const goingLabel = isExternal && socialProofCount > 0
+    ? `${socialProofCount} from your groups going`
+    : `${ev.attendeeCount} going`;
+
+  // Real avatars only — skip placeholder fallbacks
+  const realAvatars = ev.goingAvatars.filter((uri): uri is string => Boolean(uri)).slice(0, 3);
+  const extraCount  = socialProofCount > realAvatars.length ? socialProofCount - realAvatars.length : 0;
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
-      {/* Date block */}
-      <View style={[
-        styles.dateBlock,
-        isGoing && styles.dateBlockGoing,
-        isToday && styles.dateBlockToday,
-        isExternal && styles.dateBlockExternal,
-      ]}>
-        <Text style={styles.dateMonth}>{month}</Text>
-        <Text style={styles.dateDay}>{day}</Text>
-      </View>
-
-      {/* Card body */}
-      <View style={styles.cardBody}>
-        {/* Group pill */}
-        <View style={styles.groupPill}>
-          <Text style={styles.groupPillText}>{ev.groupEmoji} {ev.groupName}</Text>
+      {/* ── Top content row ── */}
+      <View style={styles.cardTopRow}>
+        {/* Date block */}
+        <View style={[
+          styles.dateBlock,
+          isGoing && styles.dateBlockGoing,
+          isToday && styles.dateBlockToday,
+          isExternal && !ev.isSuggested && styles.dateBlockExternal,
+          ev.isSuggested && styles.dateBlockSuggested,
+        ]}>
+          {ev.isSuggested && <Text style={styles.dateBlockBadge}>✦</Text>}
+          <Text style={styles.dateMonth}>{month}</Text>
+          <Text style={styles.dateDay}>{day}</Text>
         </View>
 
-        <Text style={styles.eventTitle} numberOfLines={2}>{ev.title}</Text>
+        {/* Card body */}
+        <View style={styles.cardBody}>
+          {/* Suggested badge row OR group pill */}
+          {ev.isSuggested ? (
+            <View style={styles.suggestedTopRow}>
+              <View style={styles.suggestedBadge}>
+                <Text style={styles.suggestedBadgeText}>Suggested</Text>
+              </View>
+              <Text style={styles.suggestedMatchText}>Strong match</Text>
+            </View>
+          ) : (
+            <View style={styles.groupPill}>
+              <Text style={styles.groupPillText}>{ev.groupEmoji} {ev.groupName}</Text>
+            </View>
+          )}
 
-        {/* Date + time */}
-        <View style={styles.metaRow}>
-          <Ionicons name="time-outline" size={12} color={Colors.muted} />
-          <Text style={[styles.metaText, isToday && styles.metaTextToday]}>
-            {relDate} · {ev.time}
-          </Text>
-        </View>
+          <Text style={styles.eventTitle} numberOfLines={2}>{ev.title}</Text>
 
-        {/* Location */}
-        <View style={styles.metaRow}>
-          <Ionicons
-            name={ev.isVirtual ? 'globe-outline' : 'location-outline'}
-            size={12}
-            color={ev.isVirtual ? Colors.olive : Colors.muted}
-          />
-          <Text style={[styles.metaText, ev.isVirtual && styles.metaTextVirtual]} numberOfLines={1}>
-            {ev.location}
-          </Text>
-          {ev.isVirtual && <View style={styles.virtualPill}><Text style={styles.virtualPillText}>Online</Text></View>}
-        </View>
+          <View style={styles.metaRow}>
+            <Ionicons name="time-outline" size={12} color={Colors.muted} />
+            <Text style={[styles.metaText, isToday && styles.metaTextToday]}>
+              {relDate} · {ev.time}
+            </Text>
+          </View>
 
-        {/* Footer: avatar stack + status badge */}
-        <View style={styles.cardFooter}>
-          {ev.goingAvatars.length > 0 ? (
-            <View style={styles.avatarStack}>
-              {ev.goingAvatars.map((uri, i) =>
-                uri ? (
-                  <FadeImage
-                    key={i}
-                    uri={uri}
-                    style={[styles.avatar, { marginLeft: i === 0 ? 0 : -7 }]}
-                  />
-                ) : (
-                  <View key={i} style={[styles.avatar, styles.avatarFallback, { marginLeft: i === 0 ? 0 : -7 }]}>
-                    <Ionicons name="person" size={9} color={Colors.muted} />
-                  </View>
-                )
-              )}
-              {ev.attendeeCount > 3 && (
-                <View style={[styles.avatar, styles.avatarOverflow, { marginLeft: -7 }]}>
-                  <Text style={styles.avatarOverflowText}>+{ev.attendeeCount - 3}</Text>
+          <View style={styles.metaRow}>
+            <Ionicons
+              name={ev.isVirtual ? 'globe-outline' : 'location-outline'}
+              size={12}
+              color={ev.isVirtual ? Colors.olive : Colors.muted}
+            />
+            <Text style={[styles.metaText, ev.isVirtual && styles.metaTextVirtual]} numberOfLines={1}>
+              {ev.location}
+            </Text>
+            {ev.isVirtual && <View style={styles.virtualPill}><Text style={styles.virtualPillText}>Online</Text></View>}
+          </View>
+
+          {/* Real avatar stack — only when photos exist */}
+          {realAvatars.length > 0 && (
+            <View style={styles.avatarRow}>
+              {realAvatars.map((uri, i) => (
+                <FadeImage
+                  key={i}
+                  uri={uri}
+                  style={[styles.avatar, { marginLeft: i === 0 ? 0 : -8 }]}
+                />
+              ))}
+              {extraCount > 0 && (
+                <View style={[styles.avatar, styles.avatarOverflow, { marginLeft: -8 }]}>
+                  <Text style={styles.avatarOverflowText}>+{extraCount}</Text>
                 </View>
               )}
-              <Text style={styles.goingLabel}>{ev.attendeeCount} going</Text>
+              <Text style={styles.goingLabel} numberOfLines={1}>{goingLabel}</Text>
             </View>
-          ) : ev.attendeeCount > 0 ? (
-            <View style={styles.attendeePill}>
-              <Ionicons name="people-outline" size={11} color={Colors.muted} />
-              <Text style={styles.attendeeText}>{ev.attendeeCount} going</Text>
-            </View>
-          ) : isExternal && ev.attendeeLabel ? (
-            <View style={styles.attendeePill}>
-              <Ionicons name="people-outline" size={11} color={Colors.muted} />
-              <Text style={styles.attendeeText} numberOfLines={1}>{ev.attendeeLabel}</Text>
-            </View>
-          ) : (
-            <View />
           )}
-          {isExternal ? (
-            ev.myStatus === 'going' ? (
-              <View style={styles.statusGoing}>
-                <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
-                <Text style={styles.statusGoingText}>Going</Text>
-              </View>
-            ) : (
-              <View style={styles.statusExternal}>
-                <Text style={styles.statusExternalText}>View details</Text>
-                <Ionicons name="arrow-forward" size={12} color={Colors.terracotta} />
-              </View>
-            )
-          ) : isGoing ? (
-            <View style={styles.statusGoing}>
-              <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
-              <Text style={styles.statusGoingText}>Going</Text>
-            </View>
-          ) : isMaybe ? (
-            <View style={styles.statusMaybe}>
-              <Text style={styles.statusMaybeText}>👀 Interested</Text>
-            </View>
-          ) : (
-            <View style={styles.statusRsvp}>
-              <Text style={styles.statusRsvpText}>RSVP</Text>
-              <Ionicons name="chevron-forward" size={11} color={Colors.terracotta} />
+
+          {/* Group event status badge */}
+          {!isExternal && (
+            <View style={styles.cardFooter}>
+              {isGoing ? (
+                <View style={styles.statusGoing}>
+                  <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
+                  <Text style={styles.statusGoingText}>Going</Text>
+                </View>
+              ) : isMaybe ? (
+                <View style={styles.statusMaybe}>
+                  <Text style={styles.statusMaybeText}>👀 Interested</Text>
+                </View>
+              ) : (
+                <View style={styles.statusRsvp}>
+                  <Text style={styles.statusRsvpText}>RSVP</Text>
+                  <Ionicons name="chevron-forward" size={11} color={Colors.terracotta} />
+                </View>
+              )}
             </View>
           )}
         </View>
 
-        {isExternal ? (
-          <View style={styles.intentRow}>
-            <TouchableOpacity
-              style={[styles.intentBtn, ev.myStatus === 'interested' && styles.intentBtnSelected]}
-              activeOpacity={0.82}
-              disabled={acting}
-              onPress={(event) => {
-                event.stopPropagation();
-                onIntent('interested');
-              }}
-            >
-              <Text style={[styles.intentBtnText, ev.myStatus === 'interested' && styles.intentBtnTextSelected]}>
-                {acting ? '...' : 'Interested'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.intentBtn, styles.intentBtnPrimary, ev.myStatus === 'going' && styles.intentBtnGoing]}
-              activeOpacity={0.82}
-              disabled={acting}
-              onPress={(event) => {
-                event.stopPropagation();
-                onIntent('going');
-              }}
-            >
-              <Text style={[styles.intentBtnText, styles.intentBtnPrimaryText]}>
-                {acting ? '...' : 'Going'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.intentBtn, styles.companionBtn]}
-              activeOpacity={0.82}
-              disabled={acting}
-              onPress={(event) => {
-                event.stopPropagation();
-                onIntent('find_company');
-              }}
-            >
-              <Text style={[styles.intentBtnText, styles.companionBtnText]}>
-                {acting ? '...' : 'Find company'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.intentTextBtn}
-              activeOpacity={0.75}
-              disabled={acting}
-              onPress={(event) => {
-                event.stopPropagation();
-                onIntent('not_for_me');
-              }}
-            >
-              <Text style={styles.intentTextBtnLabel}>Not for me</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.intentTextBtn}
-              activeOpacity={0.75}
-              disabled={acting}
-              onPress={(event) => {
-                event.stopPropagation();
-                onIntent('hide_similar');
-              }}
-            >
-              <Text style={styles.intentTextBtnLabel}>Hide similar</Text>
-            </TouchableOpacity>
-          </View>
+        {/* Event image */}
+        {ev.imageUrl ? (
+          <FadeImage uri={ev.imageUrl} style={styles.cardThumb} />
         ) : null}
       </View>
+
+      {/* ── Action bar (external events only) ── */}
+      {isExternal && (
+        <View style={styles.cardActionBar}>
+          <TouchableOpacity
+            style={styles.actionBarBtn}
+            activeOpacity={0.65}
+            disabled={acting}
+            onPress={(e) => { e.stopPropagation(); onIntent('not_for_me'); }}
+          >
+            <Ionicons name="close-outline" size={20} color={Colors.muted} />
+            <Text style={styles.actionBarLabel}>Pass</Text>
+          </TouchableOpacity>
+
+          <View style={styles.actionBarDivider} />
+
+          <TouchableOpacity
+            style={styles.actionBarBtn}
+            activeOpacity={0.65}
+            disabled={acting}
+            onPress={(e) => { e.stopPropagation(); onIntent('find_company'); }}
+          >
+            <Ionicons name="people-outline" size={20} color={Colors.terracotta} />
+            <Text style={[styles.actionBarLabel, { color: Colors.terracotta }]}>Company</Text>
+          </TouchableOpacity>
+
+          <View style={styles.actionBarDivider} />
+
+          <TouchableOpacity
+            style={styles.actionBarBtn}
+            activeOpacity={0.65}
+            disabled={acting}
+            onPress={(e) => { e.stopPropagation(); onIntent('going'); }}
+          >
+            <Ionicons
+              name={isGoing ? 'checkmark-circle' : 'checkmark-circle-outline'}
+              size={20}
+              color={isGoing ? Colors.olive : Colors.brownMid}
+            />
+            <Text style={[styles.actionBarLabel, isGoing && { color: Colors.olive, fontWeight: '700' }]}>
+              {isGoing ? 'Going ✓' : 'Going'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -851,7 +726,6 @@ const styles = StyleSheet.create({
   // ── List ──
   list: { paddingHorizontal: Spacing.lg, gap: 10, paddingBottom: 32 },
   skeletonList: { paddingHorizontal: Spacing.lg, gap: 10, paddingTop: 4 },
-  suggestionSection: { paddingBottom: 16, gap: 12 },
   suggestionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -879,107 +753,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.terracotta,
   },
-  suggestionList: { gap: 10 },
-  suggestionCard: {
-    backgroundColor: Colors.paper,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 14,
-    gap: 8,
+  // ── Section divider between suggested and regular events ──
+  sectionDivider: {
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  suggestionTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  suggestionTopLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexShrink: 1,
-  },
-  suggestionActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 1,
-  },
-  suggestionBadge: {
-    borderRadius: Radius.full,
-    backgroundColor: Colors.brown,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  suggestionBadgeText: {
-    fontSize: 10,
+  sectionDividerText: {
+    fontSize: 11,
     fontWeight: '800',
-    color: Colors.cream,
-    letterSpacing: 0.4,
     textTransform: 'uppercase',
-  },
-  suggestionScore: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.olive,
-  },
-  dismissBtn: {
-    borderRadius: Radius.full,
-    backgroundColor: Colors.warmWhite,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  dismissBtnText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.brownMid,
-  },
-  positiveIntentBtn: {
-    backgroundColor: 'rgba(122,140,92,0.10)',
-    borderColor: 'rgba(122,140,92,0.25)',
-  },
-  positiveIntentText: {
-    color: Colors.olive,
-  },
-  suggestionTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: Colors.ink,
-    lineHeight: 22,
-  },
-  suggestionMeta: {
-    fontSize: 12,
-    color: Colors.brownMid,
-  },
-  suggestionBody: {
-    fontSize: 13,
+    letterSpacing: 1,
     color: Colors.muted,
-    lineHeight: 19,
-  },
-  suggestionReasonRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  suggestionReasonPill: {
-    borderRadius: Radius.full,
-    backgroundColor: Colors.warmWhite,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  suggestionReasonText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.brownMid,
   },
 
   // ── Card ──
   card: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     backgroundColor: Colors.warmWhite,
     borderRadius: Radius.lg,
     borderWidth: 1,
@@ -990,6 +779,9 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
+  },
+  cardTopRow: {
+    flexDirection: 'row',
   },
 
   // Date block
@@ -1004,6 +796,12 @@ const styles = StyleSheet.create({
   dateBlockGoing: { backgroundColor: Colors.olive },
   dateBlockToday: { backgroundColor: Colors.terraDim },
   dateBlockExternal: { backgroundColor: Colors.brownMid },
+  dateBlockSuggested: { backgroundColor: Colors.terracotta },
+  dateBlockBadge: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.7)',
+    marginBottom: -2,
+  },
   dateMonth: {
     fontSize: 10,
     fontWeight: '800',
@@ -1019,6 +817,38 @@ const styles = StyleSheet.create({
 
   // Card body
   cardBody: { flex: 1, padding: 12, gap: 4 },
+
+  // Suggested card elements
+  suggestedTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  suggestedBadge: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.brown,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  suggestedBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.cream,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  suggestedMatchText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.olive,
+  },
+
+  // Image thumbnail
+  cardThumb: {
+    width: 72,
+    alignSelf: 'stretch',
+  },
 
   groupPill: {
     alignSelf: 'flex-start',
@@ -1036,38 +866,59 @@ const styles = StyleSheet.create({
   metaText:     { fontSize: 12, color: Colors.muted, flex: 1 },
   metaTextToday:{ color: Colors.terracotta, fontWeight: '600' },
 
-  // Footer
+  // Group event status footer
   cardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginTop: 6,
   },
-  attendeePill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  attendeeText: { fontSize: 11, color: Colors.muted },
 
-  // Avatar stack
-  avatarStack: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  // Real avatar row
+  avatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    gap: 0,
+  },
   avatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: Colors.warmWhite,
-  },
-  avatarFallback: {
-    backgroundColor: Colors.paper,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   avatarOverflow: {
     backgroundColor: Colors.paper,
     borderColor: Colors.warmWhite,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1.5,
   },
   avatarOverflowText: { fontSize: 8, fontWeight: '800', color: Colors.muted },
-  goingLabel: { fontSize: 11, color: Colors.muted, marginLeft: 2 },
+  goingLabel: { fontSize: 11, color: Colors.muted, marginLeft: 6, flexShrink: 1 },
+
+  // ── Action bar ──
+  cardActionBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  actionBarBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+  },
+  actionBarLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.muted,
+  },
+  actionBarDivider: {
+    width: 1,
+    backgroundColor: Colors.border,
+    marginVertical: 8,
+  },
 
   // Virtual badge
   metaTextVirtual: { color: Colors.olive },
@@ -1089,63 +940,6 @@ const styles = StyleSheet.create({
 
   statusRsvp: { flexDirection: 'row', alignItems: 'center', gap: 1 },
   statusRsvpText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
-  statusExternal: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statusExternalText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
-  intentRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 7,
-    marginTop: 10,
-  },
-  intentBtn: {
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.paper,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  intentBtnSelected: {
-    borderColor: Colors.gold,
-    backgroundColor: 'rgba(201,168,76,0.12)',
-  },
-  intentBtnPrimary: {
-    borderColor: 'rgba(122,140,92,0.28)',
-    backgroundColor: 'rgba(122,140,92,0.12)',
-  },
-  intentBtnGoing: {
-    borderColor: Colors.success,
-    backgroundColor: 'rgba(54,128,82,0.12)',
-  },
-  companionBtn: {
-    borderColor: 'rgba(196,98,45,0.28)',
-    backgroundColor: 'rgba(196,98,45,0.10)',
-  },
-  intentBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.brownMid,
-  },
-  intentBtnTextSelected: {
-    color: Colors.gold,
-  },
-  intentBtnPrimaryText: {
-    color: Colors.olive,
-  },
-  companionBtnText: {
-    color: Colors.terracotta,
-  },
-  intentTextBtn: {
-    paddingHorizontal: 3,
-    paddingVertical: 6,
-  },
-  intentTextBtnLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.muted,
-  },
-
   // ── Empty ──
   emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 12, paddingHorizontal: Spacing.lg },
   emptyIconBox: {

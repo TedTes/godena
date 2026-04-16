@@ -65,6 +65,7 @@ export type AgentEventSuggestion = {
   startsAt: string | null;
   venueName: string | null;
   sourceUrl: string | null;
+  imageUrl: string | null;
   reasons: Array<{
     id: string;
     label: string;
@@ -122,7 +123,7 @@ export async function fetchAgentEventSuggestions(params?: {
   const { data: opportunities, error: opportunityError } = opportunityIds.length
     ? await supabase
         .from('agent_opportunities')
-        .select('id, starts_at, venue_name, metadata')
+        .select('id, starts_at, venue_name, metadata, feature_snapshot')
         .in('id', opportunityIds)
     : { data: [], error: null };
 
@@ -131,7 +132,7 @@ export async function fetchAgentEventSuggestions(params?: {
   }
 
   const opportunityById = new Map(
-    (((opportunities ?? []) as Array<{ id: string; starts_at: string | null; venue_name: string | null; metadata: Record<string, unknown> | null }>)
+    (((opportunities ?? []) as Array<{ id: string; starts_at: string | null; venue_name: string | null; metadata: Record<string, unknown> | null; feature_snapshot: Record<string, unknown> | null }>)
       .map((row) => [row.id, row]))
   );
 
@@ -160,6 +161,7 @@ export async function fetchAgentEventSuggestions(params?: {
     data: rows.map((row) => {
       const opportunity = row.opportunity_id ? opportunityById.get(row.opportunity_id) : null;
       const metadata = (opportunity?.metadata ?? {}) as Record<string, unknown>;
+      const featureSnapshot = (opportunity?.feature_snapshot ?? {}) as Record<string, unknown>;
       return {
         proposalId: row.id,
         opportunityId: row.opportunity_id,
@@ -170,6 +172,7 @@ export async function fetchAgentEventSuggestions(params?: {
         startsAt: opportunity?.starts_at ?? null,
         venueName: opportunity?.venue_name ?? null,
         sourceUrl: typeof metadata.source_url === 'string' ? metadata.source_url : null,
+        imageUrl: typeof featureSnapshot.image_url === 'string' ? featureSnapshot.image_url : null,
         reasons: reasonsByProposal.get(row.id) ?? [],
       };
     }),
