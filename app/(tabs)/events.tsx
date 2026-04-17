@@ -7,6 +7,7 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  useWindowDimensions,
 } from 'react-native';
 import { useScreenEnter } from '../../hooks/useScreenEnter';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -17,7 +18,6 @@ import {
   createExternalEventChat,
   fetchGoingUserProfiles,
   fetchMembershipGroupIds,
-  createEventCompanionRequest,
   fetchUnifiedEventsForUser,
   getSessionUserId,
   removeChannel,
@@ -57,7 +57,7 @@ type EventCard = {
   reasons?: Array<{ id: string; label: string }>;
 };
 
-type EventIntentAction = 'interested' | 'going' | 'find_company' | 'not_for_me' | 'hide_similar';
+type EventIntentAction = 'interested' | 'going' | 'not_for_me' | 'hide_similar';
 
 function categoryEmoji(category?: string) {
   switch (category) {
@@ -114,11 +114,13 @@ function formatRelativeDate(iso: string): string {
 
 export default function EventsScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const [filter, setFilter]   = useState<'all' | 'mine'>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [events, setEvents]   = useState<EventCard[]>([]);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string | null>(null);
   const [actingEventIds, setActingEventIds] = useState<string[]>([]);
   const viewedProposalIdsRef = useRef<Set<string>>(new Set());
   const enterStyle = useScreenEnter();
@@ -133,10 +135,13 @@ export default function EventsScreen() {
 
     const { data: profileRow } = await supabase
       .from('profiles')
-      .select('city')
+      .select('city, avatar_url')
       .eq('user_id', uid)
       .maybeSingle();
-    const userCity = (profileRow as { city?: string | null } | null)?.city ?? null;
+    const profile = profileRow as { city?: string | null; avatar_url?: string | null } | null;
+    const userCity = profile?.city ?? null;
+    const currentUserAvatarUrl = await resolveProfilePhotoUrl(profile?.avatar_url ?? null);
+    setSessionAvatarUrl(currentUserAvatarUrl);
 
     const [{ data: unifiedRows, error: unifiedError }, { data: suggestionRows, error: suggestionError }] = await Promise.all([
       fetchUnifiedEventsForUser(uid, userCity),
@@ -198,26 +203,44 @@ export default function EventsScreen() {
       for (const { path, url } of resolved) externalSocialAvatarMap[path] = url;
     }
 
+    const unifiedById = new Map(unified.map((e) => [e.id, e]));
+    const externalAvatarsFor = (e: UnifiedEventRow | undefined) => {
+      const trustedAvatarUrls = (e?.trusted_going_avatar_urls ?? []).map((path) =>
+        path ? externalSocialAvatarMap[path] ?? null : null
+      );
+      if (e?.my_status === 'going' && currentUserAvatarUrl) {
+        return Array.from(new Set([currentUserAvatarUrl, ...trustedAvatarUrls.filter(Boolean)])).slice(0, 3);
+      }
+      return trustedAvatarUrls;
+    };
+
     // Convert suggestions to EventCards (shown at top, with isSuggested flag)
-    const suggestionCards: EventCard[] = validSuggestions.map((s) => ({
-      id:            s.opportunityId as string,
-      source:        'external' as const,
-      groupId:       'external',
-      groupName:     s.city ?? 'Local event',
-      groupEmoji:    '🗓️',
-      title:         s.title,
-      startsAt:      s.startsAt ?? new Date().toISOString(),
-      time:          s.startsAt ? formatTime(s.startsAt) : '',
-      location:      s.venueName ?? s.city ?? 'TBA',
-      isVirtual:     false,
-      attendeeCount: 0,
-      myStatus:      null,
-      goingAvatars:  [],
-      proposalId:    s.proposalId,
-      imageUrl:      s.imageUrl ?? null,
-      isSuggested:   true,
-      reasons:       s.reasons.slice(0, 2),
-    }));
+    const suggestionCards: EventCard[] = validSuggestions.map((s) => {
+      const matched = unifiedById.get(s.opportunityId as string);
+      const startsAt = matched?.starts_at ?? s.startsAt ?? new Date().toISOString();
+      return {
+        id:            s.opportunityId as string,
+        source:        'external' as const,
+        groupId:       'external',
+        groupName:     matched?.group_name ?? s.city ?? 'Local event',
+        groupEmoji:    categoryEmoji(normalizeExternalCategory(matched?.category ?? undefined)),
+        title:         matched?.title ?? s.title,
+        startsAt,
+        time:          formatTime(startsAt),
+        location:      cleanText(matched?.location_name ?? s.venueName ?? s.city ?? 'TBA'),
+        isVirtual:     false,
+        attendeeCount: matched?.attendee_count ?? 0,
+        myStatus:      (matched?.my_status ?? null) as EventCard['myStatus'],
+        goingAvatars:  externalAvatarsFor(matched),
+        attendeeLabel: matched?.attendee_label ?? null,
+        externalUrl:   matched?.source_url ?? null,
+        proposalId:    s.proposalId,
+        trustedGoingCount: matched?.trusted_going_count ?? 0,
+        imageUrl:      matched?.image_url ?? s.imageUrl ?? null,
+        isSuggested:   true,
+        reasons:       s.reasons.slice(0, 2),
+      };
+    });
 
     // Regular events (suggestions deduped out)
     const regularCards: EventCard[] = unified
@@ -227,9 +250,6 @@ export default function EventsScreen() {
         const cat = normalizeExternalCategory(e.category);
         const rawLocation = e.is_virtual ? 'Virtual' : (e.location_name || 'TBA');
         const location = isExternal ? cleanText(rawLocation) : rawLocation;
-        const trustedAvatarUrls = (e.trusted_going_avatar_urls ?? []).map((path) =>
-          path ? externalSocialAvatarMap[path] ?? null : null
-        );
         return {
           id:            e.id,
           source:        e.source,
@@ -243,7 +263,7 @@ export default function EventsScreen() {
           isVirtual:     e.is_virtual,
           attendeeCount: e.attendee_count,
           myStatus:      e.my_status as EventCard['myStatus'],
-          goingAvatars:  isExternal ? trustedAvatarUrls : e.going_user_ids.map((id) => userAvatarMap[id] ?? null),
+          goingAvatars:  isExternal ? externalAvatarsFor(e) : e.going_user_ids.map((id) => userAvatarMap[id] ?? null),
           attendeeLabel: e.attendee_label ?? null,
           externalUrl:   e.source_url,
           proposalId:    e.proposal_id ?? null,
@@ -289,19 +309,91 @@ export default function EventsScreen() {
       if (event.id !== eventId || event.source !== 'external') return event;
       const wasGoing = event.myStatus === 'going';
       const willBeGoing = next === 'going';
+      const goingAvatars = sessionAvatarUrl
+        ? willBeGoing
+          ? Array.from(new Set([sessionAvatarUrl, ...event.goingAvatars.filter(Boolean)])).slice(0, 3)
+          : wasGoing
+            ? event.goingAvatars.filter((url) => url !== sessionAvatarUrl)
+            : event.goingAvatars
+        : event.goingAvatars;
       return {
         ...event,
         myStatus: next,
+        goingAvatars,
         attendeeCount: wasGoing === willBeGoing
           ? event.attendeeCount
           : Math.max(0, event.attendeeCount + (willBeGoing ? 1 : -1)),
       };
     }));
-  }, []);
+  }, [sessionAvatarUrl]);
 
   const hideExternalCard = useCallback((eventId: string) => {
     setEvents((prev) => prev.filter((event) => event.id !== eventId));
   }, []);
+
+  const handleOpenEventChat = useCallback(async (ev: EventCard) => {
+    if (ev.source === 'group') {
+      router.push(`/group/chat/${ev.groupId}`);
+      return;
+    }
+
+    if (!sessionUserId || actingEventIds.includes(ev.id)) return;
+
+    const openThread = async () => {
+      const { groupId, error } = await createExternalEventChat(ev.id);
+      if (error || !groupId) {
+        throw new Error(error ?? 'Please try again.');
+      }
+      router.push(`/group/chat/${groupId}`);
+    };
+
+    const rsvpAndOpenThread = async (status: 'going' | 'interested') => {
+      setActingEventIds((prev) => Array.from(new Set([...prev, ev.id])));
+      try {
+        const { error: rsvpError } = await upsertExternalEventRsvp(ev.id, sessionUserId, status);
+        if (rsvpError) throw new Error(rsvpError.message);
+        updateExternalCardStatus(ev.id, status);
+
+        if (ev.proposalId) {
+          const { error: feedbackError } = await logAgentFeedbackEvent({
+            proposalId: ev.proposalId,
+            userId: sessionUserId,
+            eventType: status === 'going' ? 'rsvped_event' : 'clicked',
+            metadata: { source: 'events_card', action: `open_chat_${status}` },
+          });
+          if (feedbackError) console.warn('logAgentFeedbackEvent(open chat) failed', feedbackError.message);
+        }
+
+        await openThread();
+      } catch (err) {
+        Alert.alert('Could not open thread', err instanceof Error ? err.message : 'Please try again.');
+      } finally {
+        setActingEventIds((prev) => prev.filter((id) => id !== ev.id));
+      }
+    };
+
+    if (ev.myStatus === 'going' || ev.myStatus === 'interested') {
+      setActingEventIds((prev) => Array.from(new Set([...prev, ev.id])));
+      try {
+        await openThread();
+      } catch (err) {
+        Alert.alert('Could not open thread', err instanceof Error ? err.message : 'Please try again.');
+      } finally {
+        setActingEventIds((prev) => prev.filter((id) => id !== ev.id));
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Join event chat?',
+      "RSVP as Going or Interested to enter the attendee thread.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Interested', onPress: () => void rsvpAndOpenThread('interested') },
+        { text: 'Going', onPress: () => void rsvpAndOpenThread('going') },
+      ]
+    );
+  }, [actingEventIds, router, sessionUserId, updateExternalCardStatus]);
 
   const handleExternalEventIntent = useCallback(async (event: EventCard, action: EventIntentAction) => {
     if (!sessionUserId || actingEventIds.includes(event.id) || event.source !== 'external') return;
@@ -342,23 +434,6 @@ export default function EventsScreen() {
             },
           ]
         );
-        return;
-      }
-
-      if (action === 'find_company') {
-        const { ok, error } = await createEventCompanionRequest(event.id);
-        if (!ok) throw new Error(error ?? 'Please try again.');
-        updateExternalCardStatus(event.id, event.myStatus === 'going' ? 'going' : 'interested');
-        if (event.proposalId) {
-          const { error: feedbackError } = await logAgentFeedbackEvent({
-            proposalId: event.proposalId,
-            userId: sessionUserId,
-            eventType: 'clicked',
-            metadata: { source: 'events_card', action },
-          });
-          if (feedbackError) console.warn('logAgentFeedbackEvent(find company) failed', feedbackError.message);
-        }
-        Alert.alert('Request saved', "We'll look for someone compatible who also wants company for this event.");
         return;
       }
 
@@ -407,13 +482,14 @@ export default function EventsScreen() {
   }, [actingEventIds, hideExternalCard, router, sessionUserId, updateExternalCardStatus]);
 
   const hasSuggestions = visibleEvents.some((e) => e.isSuggested);
+  const screenPadding = width < 380 ? Spacing.md : Spacing.lg;
 
   const renderHeader = () => hasSuggestions ? (
     <View style={styles.suggestionHeaderRow}>
-      <Text style={styles.suggestionSectionLabel}>Suggested For You</Text>
+      <Text maxFontSizeMultiplier={1.1} style={styles.suggestionSectionLabel}>Suggested For You</Text>
       <View style={styles.suggestionHintPill}>
         <Ionicons name="sparkles-outline" size={12} color={Colors.terracotta} />
-        <Text style={styles.suggestionHintText}>Picked for you</Text>
+        <Text maxFontSizeMultiplier={1.1} style={styles.suggestionHintText}>Picked for you</Text>
       </View>
     </View>
   ) : null;
@@ -424,24 +500,24 @@ export default function EventsScreen() {
         <Animated.View style={[{ flex: 1 }, enterStyle]}>
 
         {/* ── Header ── */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingHorizontal: screenPadding }]}>
           <View>
-            <Text style={styles.headerTitle}>Events</Text>
-            <Text style={styles.headerSub}>
+            <Text maxFontSizeMultiplier={1.15} style={styles.headerTitle}>Events</Text>
+            <Text maxFontSizeMultiplier={1.1} style={styles.headerSub}>
               {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
             </Text>
           </View>
         </View>
 
         {/* ── Filter tabs ── */}
-        <View style={styles.tabRow}>
+        <View style={[styles.tabRow, { marginHorizontal: screenPadding }]}>
           {(['all', 'mine'] as const).map((f) => (
             <TouchableOpacity
               key={f}
               style={[styles.tabBtn, filter === f && styles.tabBtnActive]}
               onPress={() => setFilter(f)}
             >
-              <Text style={[styles.tabText, filter === f && styles.tabTextActive]}>
+              <Text maxFontSizeMultiplier={1.1} style={[styles.tabText, filter === f && styles.tabTextActive]}>
                 {f === 'all' ? 'All Events' : "RSVP'd"}
               </Text>
             </TouchableOpacity>
@@ -456,7 +532,7 @@ export default function EventsScreen() {
           <FlatList
             data={visibleEvents}
             keyExtractor={(e) => e.id}
-            contentContainerStyle={styles.list}
+            contentContainerStyle={[styles.list, { paddingHorizontal: screenPadding }]}
             showsVerticalScrollIndicator={false}
             ListHeaderComponent={renderHeader}
             ListEmptyComponent={<EmptyState error={error} filter={filter} />}
@@ -464,7 +540,7 @@ export default function EventsScreen() {
               <>
                 {!ev.isSuggested && index > 0 && visibleEvents[index - 1]?.isSuggested && (
                   <View style={styles.sectionDivider}>
-                    <Text style={styles.sectionDividerText}>All Events</Text>
+                    <Text maxFontSizeMultiplier={1.1} style={styles.sectionDividerText}>All Events</Text>
                   </View>
                 )}
                 <EventItem
@@ -478,6 +554,7 @@ export default function EventsScreen() {
                     }
                   }}
                   onIntent={(action) => void handleExternalEventIntent(ev, action)}
+                  onAttendeePress={() => void handleOpenEventChat(ev)}
                 />
               </>
             )}
@@ -506,12 +583,15 @@ function EventItem({
   acting,
   onPress,
   onIntent,
+  onAttendeePress,
 }: {
   ev: EventCard;
   acting: boolean;
   onPress: () => void;
   onIntent: (action: EventIntentAction) => void;
+  onAttendeePress: () => void;
 }) {
+  const { width } = useWindowDimensions();
   const d        = new Date(ev.startsAt);
   const month    = d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
   const day      = d.getDate();
@@ -520,14 +600,18 @@ function EventItem({
   const relDate  = formatRelativeDate(ev.startsAt);
   const isToday  = relDate === 'Today';
   const isExternal = ev.source === 'external';
-  const socialProofCount = isExternal ? ev.trustedGoingCount ?? 0 : ev.attendeeCount;
-  const goingLabel = isExternal && socialProofCount > 0
-    ? `${socialProofCount} from your groups going`
-    : `${ev.attendeeCount} going`;
+  const trustedGoingCount = isExternal ? ev.trustedGoingCount ?? 0 : ev.attendeeCount;
+  const displayGoingCount = isExternal ? Math.max(ev.attendeeCount, trustedGoingCount) : ev.attendeeCount;
+  const goingLabel = isExternal && trustedGoingCount > 0
+    ? `${displayGoingCount} from your groups going`
+    : `${displayGoingCount} going`;
 
   // Real avatars only — skip placeholder fallbacks
   const realAvatars = ev.goingAvatars.filter((uri): uri is string => Boolean(uri)).slice(0, 3);
-  const extraCount  = socialProofCount > realAvatars.length ? socialProofCount - realAvatars.length : 0;
+  const extraCount  = displayGoingCount > realAvatars.length ? displayGoingCount - realAvatars.length : 0;
+  const compact = width < 380;
+  const dateWidth = compact ? 52 : 58;
+  const thumbWidth = compact ? 68 : Math.min(88, Math.max(74, Math.round(width * 0.2)));
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
@@ -536,14 +620,15 @@ function EventItem({
         {/* Date block */}
         <View style={[
           styles.dateBlock,
+          { width: dateWidth },
           isGoing && styles.dateBlockGoing,
           isToday && styles.dateBlockToday,
           isExternal && !ev.isSuggested && styles.dateBlockExternal,
           ev.isSuggested && styles.dateBlockSuggested,
         ]}>
-          {ev.isSuggested && <Text style={styles.dateBlockBadge}>✦</Text>}
-          <Text style={styles.dateMonth}>{month}</Text>
-          <Text style={styles.dateDay}>{day}</Text>
+          {ev.isSuggested && <Text maxFontSizeMultiplier={1.1} style={styles.dateBlockBadge}>✦</Text>}
+          <Text maxFontSizeMultiplier={1.1} style={styles.dateMonth}>{month}</Text>
+          <Text maxFontSizeMultiplier={1.1} style={styles.dateDay}>{day}</Text>
         </View>
 
         {/* Card body */}
@@ -552,21 +637,21 @@ function EventItem({
           {ev.isSuggested ? (
             <View style={styles.suggestedTopRow}>
               <View style={styles.suggestedBadge}>
-                <Text style={styles.suggestedBadgeText}>Suggested</Text>
+                <Text maxFontSizeMultiplier={1.05} style={styles.suggestedBadgeText}>Suggested</Text>
               </View>
-              <Text style={styles.suggestedMatchText}>Strong match</Text>
+              <Text maxFontSizeMultiplier={1.05} style={styles.suggestedMatchText} numberOfLines={1}>Strong match</Text>
             </View>
           ) : (
             <View style={styles.groupPill}>
-              <Text style={styles.groupPillText}>{ev.groupEmoji} {ev.groupName}</Text>
+              <Text maxFontSizeMultiplier={1.1} style={styles.groupPillText} numberOfLines={1}>{ev.groupEmoji} {ev.groupName}</Text>
             </View>
           )}
 
-          <Text style={styles.eventTitle} numberOfLines={2}>{ev.title}</Text>
+          <Text maxFontSizeMultiplier={1.15} style={styles.eventTitle} numberOfLines={2}>{ev.title}</Text>
 
           <View style={styles.metaRow}>
             <Ionicons name="time-outline" size={12} color={Colors.muted} />
-            <Text style={[styles.metaText, isToday && styles.metaTextToday]}>
+            <Text maxFontSizeMultiplier={1.1} style={[styles.metaText, isToday && styles.metaTextToday]} numberOfLines={1}>
               {relDate} · {ev.time}
             </Text>
           </View>
@@ -577,10 +662,10 @@ function EventItem({
               size={12}
               color={ev.isVirtual ? Colors.olive : Colors.muted}
             />
-            <Text style={[styles.metaText, ev.isVirtual && styles.metaTextVirtual]} numberOfLines={1}>
+            <Text maxFontSizeMultiplier={1.1} style={[styles.metaText, ev.isVirtual && styles.metaTextVirtual]} numberOfLines={1}>
               {ev.location}
             </Text>
-            {ev.isVirtual && <View style={styles.virtualPill}><Text style={styles.virtualPillText}>Online</Text></View>}
+            {ev.isVirtual && <View style={styles.virtualPill}><Text maxFontSizeMultiplier={1.05} style={styles.virtualPillText}>Online</Text></View>}
           </View>
 
           {/* Real avatar stack — only when photos exist */}
@@ -595,10 +680,10 @@ function EventItem({
               ))}
               {extraCount > 0 && (
                 <View style={[styles.avatar, styles.avatarOverflow, { marginLeft: -8 }]}>
-                  <Text style={styles.avatarOverflowText}>+{extraCount}</Text>
+                  <Text maxFontSizeMultiplier={1.05} style={styles.avatarOverflowText}>+{extraCount}</Text>
                 </View>
               )}
-              <Text style={styles.goingLabel} numberOfLines={1}>{goingLabel}</Text>
+              <Text maxFontSizeMultiplier={1.1} style={styles.goingLabel} numberOfLines={1}>{goingLabel}</Text>
             </View>
           )}
 
@@ -608,15 +693,15 @@ function EventItem({
               {isGoing ? (
                 <View style={styles.statusGoing}>
                   <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
-                  <Text style={styles.statusGoingText}>Going</Text>
+                  <Text maxFontSizeMultiplier={1.1} style={styles.statusGoingText}>Going</Text>
                 </View>
               ) : isMaybe ? (
                 <View style={styles.statusMaybe}>
-                  <Text style={styles.statusMaybeText}>👀 Interested</Text>
+                  <Text maxFontSizeMultiplier={1.1} style={styles.statusMaybeText}>👀 Interested</Text>
                 </View>
               ) : (
                 <View style={styles.statusRsvp}>
-                  <Text style={styles.statusRsvpText}>RSVP</Text>
+                  <Text maxFontSizeMultiplier={1.1} style={styles.statusRsvpText}>RSVP</Text>
                   <Ionicons name="chevron-forward" size={11} color={Colors.terracotta} />
                 </View>
               )}
@@ -626,7 +711,7 @@ function EventItem({
 
         {/* Event image */}
         {ev.imageUrl ? (
-          <FadeImage uri={ev.imageUrl} style={styles.cardThumb} />
+          <FadeImage uri={ev.imageUrl} style={[styles.cardThumb, { width: thumbWidth }]} />
         ) : null}
       </View>
 
@@ -640,19 +725,26 @@ function EventItem({
             onPress={(e) => { e.stopPropagation(); onIntent('not_for_me'); }}
           >
             <Ionicons name="close-outline" size={20} color={Colors.muted} />
-            <Text style={styles.actionBarLabel}>Pass</Text>
+            <Text maxFontSizeMultiplier={1.1} style={styles.actionBarLabel}>Pass</Text>
           </TouchableOpacity>
 
           <View style={styles.actionBarDivider} />
 
           <TouchableOpacity
-            style={styles.actionBarBtn}
+            style={styles.actionBarAttendees}
             activeOpacity={0.65}
             disabled={acting}
-            onPress={(e) => { e.stopPropagation(); onIntent('find_company'); }}
+            onPress={(e) => { e.stopPropagation(); onAttendeePress(); }}
           >
-            <Ionicons name="people-outline" size={20} color={Colors.terracotta} />
-            <Text style={[styles.actionBarLabel, { color: Colors.terracotta }]}>Company</Text>
+            <View style={styles.actionChatCopy}>
+              <Text maxFontSizeMultiplier={1.1} style={styles.actionChatLabel} numberOfLines={1}>Chat</Text>
+              {displayGoingCount > 0 && (
+                <Text maxFontSizeMultiplier={1.05} style={styles.actionChatMeta} numberOfLines={1}>
+                  {displayGoingCount} going
+                </Text>
+              )}
+            </View>
+            <Ionicons name="chevron-forward" size={11} color={Colors.muted} />
           </TouchableOpacity>
 
           <View style={styles.actionBarDivider} />
@@ -668,7 +760,7 @@ function EventItem({
               size={20}
               color={isGoing ? Colors.olive : Colors.brownMid}
             />
-            <Text style={[styles.actionBarLabel, isGoing && { color: Colors.olive, fontWeight: '700' }]}>
+            <Text maxFontSizeMultiplier={1.1} style={[styles.actionBarLabel, isGoing && { color: Colors.olive, fontWeight: '700' }]}>
               {isGoing ? 'Going ✓' : 'Going'}
             </Text>
           </TouchableOpacity>
@@ -724,13 +816,15 @@ const styles = StyleSheet.create({
   tabTextActive: { color: Colors.terracotta, fontWeight: '700' },
 
   // ── List ──
-  list: { paddingHorizontal: Spacing.lg, gap: 10, paddingBottom: 32 },
+  list: { gap: 14, paddingBottom: 116 },
   skeletonList: { paddingHorizontal: Spacing.lg, gap: 10, paddingTop: 4 },
   suggestionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingTop: 4,
+    marginBottom: 2,
+    gap: 12,
   },
   suggestionSectionLabel: {
     fontSize: 11,
@@ -782,15 +876,15 @@ const styles = StyleSheet.create({
   },
   cardTopRow: {
     flexDirection: 'row',
+    minHeight: 126,
   },
 
   // Date block
   dateBlock: {
-    width: 58,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.terracotta,
-    paddingVertical: 16,
+    paddingVertical: 12,
     gap: 2,
   },
   dateBlockGoing: { backgroundColor: Colors.olive },
@@ -816,16 +910,18 @@ const styles = StyleSheet.create({
   },
 
   // Card body
-  cardBody: { flex: 1, padding: 12, gap: 4 },
+  cardBody: { flex: 1, minWidth: 0, padding: 12, gap: 5 },
 
   // Suggested card elements
   suggestedTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
     marginBottom: 2,
   },
   suggestedBadge: {
+    flexShrink: 0,
     borderRadius: Radius.full,
     backgroundColor: Colors.brown,
     paddingHorizontal: 8,
@@ -839,15 +935,17 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   suggestedMatchText: {
+    flex: 1,
     fontSize: 11,
     fontWeight: '700',
     color: Colors.olive,
+    textAlign: 'right',
   },
 
   // Image thumbnail
   cardThumb: {
-    width: 72,
     alignSelf: 'stretch',
+    backgroundColor: Colors.paper,
   },
 
   groupPill: {
@@ -860,7 +958,7 @@ const styles = StyleSheet.create({
   },
   groupPillText: { fontSize: 10, fontWeight: '700', color: Colors.brownMid },
 
-  eventTitle: { fontSize: 15, fontWeight: '800', color: Colors.ink, lineHeight: 20 },
+  eventTitle: { fontSize: 15, fontWeight: '800', color: Colors.ink, lineHeight: 20, flexShrink: 1 },
 
   metaRow:      { flexDirection: 'row', alignItems: 'center', gap: 5 },
   metaText:     { fontSize: 12, color: Colors.muted, flex: 1 },
@@ -900,6 +998,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderTopWidth: 1,
     borderTopColor: Colors.border,
+    minHeight: 48,
   },
   actionBarBtn: {
     flex: 1,
@@ -940,6 +1039,30 @@ const styles = StyleSheet.create({
 
   statusRsvp: { flexDirection: 'row', alignItems: 'center', gap: 1 },
   statusRsvpText: { fontSize: 12, fontWeight: '700', color: Colors.terracotta },
+
+  // ── Event chat action ──
+  actionBarAttendees: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+  },
+  actionChatCopy: {
+    minWidth: 0,
+    alignItems: 'center',
+  },
+  actionChatLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.terracotta,
+  },
+  actionChatMeta: {
+    fontSize: 9,
+    fontWeight: '500',
+    color: Colors.muted,
+  },
   // ── Empty ──
   emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 12, paddingHorizontal: Spacing.lg },
   emptyIconBox: {
