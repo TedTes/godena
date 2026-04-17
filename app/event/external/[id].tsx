@@ -15,11 +15,11 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as WebBrowser from 'expo-web-browser';
 import { Colors, Spacing, Radius } from '../../../constants/theme';
 import RAnimated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import {
   createExternalEventChat,
-  createEventCompanionRequest,
   deleteExternalEventRsvp,
   fetchExternalEventById,
   fetchExternalEventRsvps,
@@ -169,7 +169,6 @@ export default function ExternalEventDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [creatingChat, setCreatingChat] = useState(false);
-  const [requestingCompanion, setRequestingCompanion] = useState(false);
   const [eventRow, setEventRow] = useState<ExternalEventRow | null>(null);
   const [attendeeLabel, setAttendeeLabel] = useState<string | null>(null);
   const [attendeeAvatars, setAttendeeAvatars] = useState<(string | null)[]>([]);
@@ -313,21 +312,72 @@ export default function ExternalEventDetailScreen() {
     })();
   };
 
-  const handleFindCompanion = () => {
+  const handleJoinChatWithStatus = (next: 'going' | 'interested') => {
     void (async () => {
-      if (!id || requestingCompanion) return;
-      setRequestingCompanion(true);
-      const { ok, error } = await createEventCompanionRequest(id);
-      setRequestingCompanion(false);
-      if (!ok) {
-        Alert.alert('Could not save request', error ?? 'Please try again.');
+      if (!id || !userId || saving || creatingChat) return;
+      const prev = myStatus;
+      setSaving(true);
+      setCreatingChat(true);
+      setMyStatus(next);
+      setGoingCount((c) => {
+        const wasGoing = prev === 'going';
+        const willBeGoing = next === 'going';
+        if (wasGoing === willBeGoing) return c;
+        return Math.max(0, c + (willBeGoing ? 1 : -1));
+      });
+
+      const { error: rsvpError } = await upsertExternalEventRsvp(id, userId, next);
+      if (rsvpError) {
+        setMyStatus(prev);
+        Alert.alert('Could not update RSVP', rsvpError.message);
+        setSaving(false);
+        setCreatingChat(false);
         return;
       }
-      if (myStatus !== 'going') {
-        setMyStatus('interested');
+
+      const { groupId, error } = await createExternalEventChat(id);
+      setSaving(false);
+      setCreatingChat(false);
+      if (error || !groupId) {
+        Alert.alert(
+          'Could not open thread',
+          error === 'event_chat_archived'
+            ? 'This event thread has been archived.'
+            : error ?? 'Please try again.'
+        );
+        if (userId) await loadRsvpState(userId);
+        return;
       }
-      Alert.alert('Request saved', "We'll look for someone compatible who also wants company for this event.");
+      router.push(`/group/chat/${groupId}`);
       if (userId) await loadRsvpState(userId);
+    })();
+  };
+
+  const handleJoinChatPrompt = () => {
+    Alert.alert(
+      'Join event chat?',
+      "RSVP as Going or Interested to enter the attendee thread.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Interested', onPress: () => handleJoinChatWithStatus('interested') },
+        { text: 'Going', onPress: () => handleJoinChatWithStatus('going') },
+      ]
+    );
+  };
+
+  const handleOpenSourceUrl = () => {
+    void (async () => {
+      const url = eventRow?.source_url;
+      if (!url) return;
+      try {
+        await WebBrowser.openBrowserAsync(url);
+      } catch (err) {
+        try {
+          await Linking.openURL(url);
+        } catch {
+          Alert.alert('Could not open event page', err instanceof Error ? err.message : 'Please try again.');
+        }
+      }
     })();
   };
 
@@ -509,29 +559,31 @@ export default function ExternalEventDetailScreen() {
             ))}
           </RAnimated.View>
 
-          <RAnimated.View entering={FadeInDown.delay(260).duration(300)}>
-            <TouchableOpacity
-              style={styles.companionCta}
-              onPress={handleFindCompanion}
-              disabled={requestingCompanion}
-              activeOpacity={0.85}
-            >
-              <View style={styles.chatCtaLeft}>
-                <View style={styles.companionCtaIconBox}>
-                  <Ionicons name="people-circle-outline" size={19} color={Colors.terracotta} />
+          {myStatus !== 'going' && myStatus !== 'interested' ? (
+            <RAnimated.View entering={FadeInDown.delay(260).duration(300)}>
+              <TouchableOpacity
+                style={styles.chatCta}
+                onPress={handleJoinChatPrompt}
+                disabled={saving || creatingChat}
+                activeOpacity={0.85}
+              >
+                <View style={styles.chatCtaLeft}>
+                  <View style={styles.chatCtaIconBox}>
+                    <Ionicons name="chatbubbles-outline" size={19} color={Colors.olive} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.chatCtaTitle}>Join event chat</Text>
+                    <Text style={styles.chatCtaSub}>RSVP to enter the attendee thread.</Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.companionCtaTitle}>Find someone to go with</Text>
-                  <Text style={styles.chatCtaSub}>We'll look for someone compatible who also wants company</Text>
-                </View>
-              </View>
-              {requestingCompanion ? (
-                <ActivityIndicator size="small" color={Colors.terracotta} />
-              ) : (
-                <Ionicons name="chevron-forward" size={16} color={Colors.terracotta} />
-              )}
-            </TouchableOpacity>
-          </RAnimated.View>
+                {saving || creatingChat ? (
+                  <ActivityIndicator size="small" color={Colors.olive} />
+                ) : (
+                  <Ionicons name="chevron-forward" size={16} color={Colors.olive} />
+                )}
+              </TouchableOpacity>
+            </RAnimated.View>
+          ) : null}
 
           {/* ── Group chat CTA ── */}
           {myStatus === 'going' || myStatus === 'interested' ? (
@@ -565,7 +617,7 @@ export default function ExternalEventDetailScreen() {
             <RAnimated.View entering={FadeInDown.delay(280).duration(300)}>
               <TouchableOpacity
                 style={styles.openBtn}
-                onPress={() => Linking.openURL(eventRow.source_url!)}
+                onPress={handleOpenSourceUrl}
                 activeOpacity={0.85}
               >
                 <Text style={styles.openBtnText}>Open event page</Text>
@@ -815,16 +867,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: Spacing.md,
   },
-  companionCta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(196,98,45,0.08)',
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(196,98,45,0.22)',
-    padding: Spacing.md,
-  },
   chatCtaLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -840,25 +882,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  companionCtaIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 11,
-    backgroundColor: 'rgba(196,98,45,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
   chatCtaTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: Colors.ink,
-    marginBottom: 2,
-  },
-  companionCtaTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: Colors.terracotta,
     marginBottom: 2,
   },
   chatCtaSub: {

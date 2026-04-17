@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as WebBrowser from 'expo-web-browser';
 import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
@@ -580,7 +581,15 @@ export default function HomeScreen() {
                         return;
                       }
                       if (suggestion.sourceUrl) {
-                        await Linking.openURL(suggestion.sourceUrl);
+                        try {
+                          await WebBrowser.openBrowserAsync(suggestion.sourceUrl);
+                        } catch (err) {
+                          try {
+                            await Linking.openURL(suggestion.sourceUrl);
+                          } catch {
+                            console.warn('Could not open suggestion URL', err);
+                          }
+                        }
                       }
                     }}
                   >
