@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   compatibilityPairKey,
   computeCompatibilityScore,
+  normalizeCompatibilityWeights,
   pairOrder,
 } from "../_shared/compatibility.ts";
 
@@ -95,6 +96,18 @@ Deno.serve(async (req) => {
     const minScore = Math.max(0, Math.min(Number(body.min_score ?? 25), 100));
 
     const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    const { data: configRow, error: configError } = await client
+      .from("matching_config")
+      .select("compatibility_weights")
+      .eq("id", 1)
+      .maybeSingle();
+    if (configError) throw configError;
+
+    const compatibilityWeights = normalizeCompatibilityWeights(
+      typeof body.compatibility_weights === "object" && body.compatibility_weights
+        ? body.compatibility_weights
+        : configRow?.compatibility_weights,
+    );
 
     let profileQuery = client
       .from("profiles")
@@ -249,6 +262,7 @@ Deno.serve(async (req) => {
           interactionScore: Number(pair.interactionScore ?? 0),
           blocked: blockedPairs.has(pairSetKey(userA, userB)),
           reported: reportedPairs.has(pairSetKey(userA, userB)),
+          weights: compatibilityWeights,
         });
         if (score.score < minScore && intent !== "event_companion") continue;
         rows.push({
