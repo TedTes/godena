@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 export const SUPPORTED_SOURCES = ["eventbrite", "meetup", "ticketmaster", "ics", "reddit", "weather", "manual"];
 
 function cleanText(value: unknown) {
