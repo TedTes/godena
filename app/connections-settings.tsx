@@ -19,9 +19,8 @@ import { supabase } from '../lib/supabase';
 export default function ConnectionsSettingsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [busyKey, setBusyKey] = useState<'dating' | 'open' | 'bulk_on' | 'bulk_off' | null>(null);
+  const [busyKey, setBusyKey] = useState<'open' | 'bulk_on' | 'bulk_off' | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [datingModeOn, setDatingModeOn] = useState(false);
   const [showInGroups, setShowInGroups] = useState(true);
 
   useEffect(() => {
@@ -36,21 +35,13 @@ export default function ConnectionsSettingsScreen() {
 
       setUserId(uid);
 
-      const [{ data: profileData }, { data: datingData }] = await Promise.all([
-        supabase
-          .from('profiles')
-          .select('is_open_to_connections')
-          .eq('user_id', uid)
-          .maybeSingle(),
-        supabase
-          .from('dating_profiles')
-          .select('is_enabled')
-          .eq('user_id', uid)
-          .maybeSingle(),
-      ]);
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('is_open_to_connections')
+        .eq('user_id', uid)
+        .maybeSingle();
 
       setShowInGroups(profileData?.is_open_to_connections ?? true);
-      setDatingModeOn(datingData?.is_enabled ?? false);
       setLoading(false);
     };
 
@@ -99,41 +90,6 @@ export default function ConnectionsSettingsScreen() {
     }
   };
 
-  const persistDatingMode = async (value: boolean) => {
-    if (!userId || busyKey) return;
-    const prev = datingModeOn;
-    setBusyKey('dating');
-    setDatingModeOn(value);
-
-    const { error } = await supabase
-      .from('dating_profiles')
-      .upsert({ user_id: userId, is_enabled: value }, { onConflict: 'user_id' });
-
-    if (error) {
-      setDatingModeOn(prev);
-      Alert.alert('Update failed', error.message);
-    }
-
-    setBusyKey(null);
-  };
-
-  const updateDatingMode = async (value: boolean) => {
-    if (!userId || busyKey) return;
-    if (value && !datingModeOn) {
-      Alert.alert(
-        'Enable Dating Mode?',
-        'Dating Mode uses your dating preferences to show swipe candidates and create matches.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Enable', onPress: () => { void persistDatingMode(true); } },
-        ]
-      );
-      return;
-    }
-
-    await persistDatingMode(value);
-  };
-
   if (loading) {
     return (
       <View style={styles.loadingWrap}>
@@ -156,29 +112,6 @@ export default function ConnectionsSettingsScreen() {
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <View style={styles.card}>
             <View style={styles.row}>
-              <View style={[styles.iconWrap, { backgroundColor: 'rgba(92,143,98,0.14)' }]}>
-                <Ionicons name="heart-half-outline" size={18} color={Colors.success} />
-              </View>
-              <View style={styles.rowLeft}>
-                <Text style={styles.rowTitle}>Dating Mode</Text>
-                <Text style={styles.rowSub}>Use your dating preferences to show swipe candidates and match with potential partners.</Text>
-              </View>
-              <View style={styles.rowRight}>
-                {busyKey === 'dating' ? (
-                  <ActivityIndicator size="small" color={Colors.success} />
-                ) : (
-                  <Switch
-                    value={datingModeOn}
-                    onValueChange={(value) => { void updateDatingMode(value); }}
-                    trackColor={{ false: Colors.borderDark, true: Colors.success }}
-                    thumbColor={Colors.warmWhite}
-                    ios_backgroundColor={Colors.borderDark}
-                  />
-                )}
-              </View>
-            </View>
-
-            <View style={[styles.row, styles.rowDivider]}>
               <View style={[styles.iconWrap, { backgroundColor: 'rgba(196,98,45,0.12)' }]}>
                 <Ionicons name="sparkles-outline" size={18} color={Colors.terracotta} />
               </View>

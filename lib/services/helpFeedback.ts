@@ -1,7 +1,7 @@
 import { supabase } from '../supabase';
 export { getSessionUserId } from '../supabase';
 
-export type FeedbackCategory = 'bug' | 'feedback' | 'account' | 'billing' | 'other';
+export type FeedbackCategory = 'bug' | 'feedback' | 'account' | 'other';
 
 export type FeedbackRow = {
   id: string;

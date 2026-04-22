@@ -45,7 +45,6 @@ import {
   updateGroupIcon,
   upsertEventRsvp,
 } from '../../lib/services/groupDetail';
-import { canUserJoinAnotherGroup } from '../../lib/services/billing';
 
 function getGroupVisuals(category: string, iconEmoji?: string | null): { emoji: string; coverColor: string; label: string } {
   let base: { emoji: string; coverColor: string; label: string };
@@ -448,18 +447,6 @@ export default function GroupDetailScreen() {
 
   const joinGroup = async () => {
     if (!userId || !id || joining) return;
-    const gate = await canUserJoinAnotherGroup(userId);
-    if (!gate.allowed) {
-      Alert.alert(
-        'Premium required',
-        `Free plan allows up to ${gate.freeLimit} group joins. Upgrade to Premium for unlimited groups.`,
-        [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Upgrade', onPress: () => router.push('/premium') },
-        ]
-      );
-      return;
-    }
     setJoining(true);
     const { error } = await joinGroupMembership(id, userId);
     setJoining(false);

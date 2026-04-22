@@ -2,7 +2,7 @@ import { supabase } from '../supabase';
 
 export type InboxItem = {
   id: string;
-  kind: 'intro' | 'message';
+  kind: 'message';
   connectionId: string;
   title: string;
   subtitle: string;
@@ -93,17 +93,6 @@ export async function fetchNotificationInboxItems(userId: string): Promise<Inbox
     const otherName = profileByUser.get(otherId)?.full_name || 'Someone';
     const groupName = groupById.get(c.group_id)?.name || 'your group';
 
-    if (c.status === 'pending') {
-      nextItems.push({
-        id: `intro:${c.id}`,
-        kind: 'intro',
-        connectionId: c.id,
-        title: `New introduction with ${otherName}`,
-        subtitle: `via ${groupName}`,
-        at: toRelativeTime(c.revealed_at),
-      });
-    }
-
     const unread = unreadByConnection.get(c.id);
     if (c.status === 'accepted' && unread) {
       nextItems.push({
@@ -117,11 +106,7 @@ export async function fetchNotificationInboxItems(userId: string): Promise<Inbox
     }
   }
 
-  nextItems.sort((a, b) => {
-    const aRank = a.kind === 'intro' ? 0 : 1;
-    const bRank = b.kind === 'intro' ? 0 : 1;
-    return aRank - bRank;
-  });
+  nextItems.sort((a, b) => a.at.localeCompare(b.at));
 
   return nextItems;
 }

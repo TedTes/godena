@@ -524,12 +524,6 @@ export async function createExternalEventChat(eventId: string): Promise<{ groupI
   return { groupId: data as string, error: null };
 }
 
-export async function createEventCompanionRequest(eventId: string): Promise<{ ok: boolean; error: string | null }> {
-  const { error } = await supabase.rpc('create_agent_event_companion_request', { p_opportunity_id: eventId });
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, error: null };
-}
-
 function mapOpportunityToExternalEventRow(row: {
   id: string;
   title: string;

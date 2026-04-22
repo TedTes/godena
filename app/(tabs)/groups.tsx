@@ -32,7 +32,6 @@ import {
   upsertGroupMembership,
   type GroupRow,
 } from '../../lib/services/groups';
-import { canUserJoinAnotherGroup } from '../../lib/services/billing';
 import { deriveGroupIcon, GROUP_ICON_CHOICES } from '../../lib/services/groupIcons';
 import { GroupRowSkeleton } from '../../components/Skeleton';
 
@@ -136,19 +135,6 @@ export default function GroupsScreen() {
       return;
     }
     if (joinedIds.has(groupId) || joiningId) return;
-
-    const gate = await canUserJoinAnotherGroup(userId);
-    if (!gate.allowed) {
-      Alert.alert(
-        'Premium required',
-        `Free plan allows up to ${gate.freeLimit} group joins. Upgrade to Premium for unlimited groups.`,
-        [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Upgrade', onPress: () => router.push('/premium') },
-        ]
-      );
-      return;
-    }
 
     setJoiningId(groupId);
     const { error } = await joinGroupMembership(groupId, userId);

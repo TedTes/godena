@@ -46,10 +46,6 @@ export default function TermsScreen() {
             body="You agree not to post content that is abusive, harassing, fraudulent, or illegal. We reserve the right to remove content and suspend accounts that violate these standards."
           />
           <Section
-            title="Dating Mode"
-            body="Dating Mode is an opt-in feature. By enabling it, you consent to your profile being shown to other members who have also enabled Dating Mode within shared groups."
-          />
-          <Section
             title="Termination"
             body="We may suspend or terminate your account at our discretion if you violate these terms. You may delete your account at any time from the Profile settings."
           />

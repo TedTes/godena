@@ -47,13 +47,6 @@ type HomeEvent = {
   emoji: string;
 };
 
-type RevealSuggestion = {
-  connectionId: string;
-  matchName: string;
-  matchPhoto: string | null;
-  groupName: string;
-};
-
 type ActivityPost = {
   postId: string;
   groupId: string;
@@ -127,7 +120,6 @@ export default function HomeScreen() {
   const [upcomingEvents, setUpcomingEvents] = useState<HomeEvent[]>([]);
   const [firstName, setFirstName] = useState('there');
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [revealSuggestions, setRevealSuggestions] = useState<RevealSuggestion[]>([]);
   const [eventsThisMonth, setEventsThisMonth] = useState(0);
   const [notificationCount, setNotificationCount] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivityPost[]>([]);
@@ -350,61 +342,6 @@ export default function HomeScreen() {
         setRecentActivity([]);
       }
 
-      const { data: pendingConnections } = await supabase
-        .from('connections')
-        .select('id, group_id, user_a_id, user_b_id, revealed_at')
-        .eq('status', 'pending')
-        .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
-        .order('revealed_at', { ascending: false })
-        .limit(5);
-
-      const pendingRows = (pendingConnections as Array<{
-        id: string;
-        group_id: string;
-        user_a_id: string;
-        user_b_id: string;
-      }> | null) ?? [];
-
-      if (pendingRows.length > 0) {
-        const counterpartIds = pendingRows.map((c) => (
-          c.user_a_id === userId ? c.user_b_id : c.user_a_id
-        ));
-        const groupIdsForPending = pendingRows.map((c) => c.group_id);
-        const [{ data: counterpartRows }, { data: groupRows }] = await Promise.all([
-          supabase.rpc('get_connection_profiles', { p_user_ids: counterpartIds }),
-          supabase.from('groups').select('id, name').in('id', groupIdsForPending),
-        ]);
-
-        const counterpartById = new Map(
-          (((counterpartRows as Array<{ user_id: string; full_name: string | null; avatar_url: string | null }> | null) ?? [])
-            .map((r) => [r.user_id, r]))
-        );
-        const groupNameById = new Map(
-          (((groupRows as Array<{ id: string; name: string }> | null) ?? [])
-            .map((g) => [g.id, g.name]))
-        );
-
-        const built = await Promise.all(
-          pendingRows.map(async (row) => {
-            const counterpartId = row.user_a_id === userId ? row.user_b_id : row.user_a_id;
-            const counterpart = counterpartById.get(counterpartId);
-            const matchPhoto = counterpart?.avatar_url
-              ? await resolveProfilePhotoUrl(counterpart.avatar_url)
-              : null;
-            return {
-              connectionId: row.id,
-              matchName: counterpart?.full_name || 'Someone',
-              matchPhoto,
-              groupName: groupNameById.get(row.group_id) || 'your group',
-            } satisfies RevealSuggestion;
-          })
-        );
-
-        setRevealSuggestions(built);
-      } else {
-        setRevealSuggestions([]);
-      }
-
       setLoadingProfile(false);
     }, []);
 
@@ -449,46 +386,11 @@ export default function HomeScreen() {
           </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-          {revealSuggestions.length > 0 && (
-            <View style={styles.revealStack}>
-              {revealSuggestions.map((suggestion, idx) => (
-                <TouchableOpacity
-                  key={suggestion.connectionId}
-                  style={styles.revealBanner}
-                  onPress={() => router.push(`/reveal?connectionId=${suggestion.connectionId}`)}
-                  activeOpacity={0.88}
-                >
-                  <View style={styles.revealLeft}>
-                    <Text style={styles.revealEyebrow}>
-                      ✨  New Introduction{idx === 0 && revealSuggestions.length > 1 ? ` • ${revealSuggestions.length} waiting` : ''}
-                    </Text>
-                    <Text style={styles.revealTitle}>
-                      {`You and ${suggestion.matchName} might connect`}
-                    </Text>
-                    <Text style={styles.revealSub}>
-                      {`via ${suggestion.groupName}`}
-                    </Text>
-                  </View>
-                  <View style={styles.revealImgWrap}>
-                    {suggestion.matchPhoto ? (
-                      <Image source={{ uri: suggestion.matchPhoto }} style={styles.revealImg} />
-                    ) : (
-                      <View style={[styles.revealImg, styles.revealImgFallback]}>
-                        <Ionicons name="people-outline" size={26} color={C.brownLight} />
-                      </View>
-                    )}
-                    <View style={styles.revealImgBorder} />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
           {eventsThisMonth > 0 && (
             <View style={styles.momentumStrip}>
               <View style={styles.momentumDot} />
               <Text style={styles.momentumText}>
-                {`${eventsThisMonth} event${eventsThisMonth !== 1 ? 's' : ''} attended this month — reveals unlock through consistent presence`}
+                {`${eventsThisMonth} event${eventsThisMonth !== 1 ? 's' : ''} attended this month`}
               </Text>
             </View>
           )}
@@ -764,63 +666,6 @@ function makeStyles(C: typeof Colors) { return StyleSheet.create({
   },
   notifCountText: { fontSize: 9, color: C.white, fontWeight: '800', lineHeight: 10 },
   scroll: { paddingTop: 8 },
-
-  revealBanner: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.xl,
-    backgroundColor: C.brown,
-    borderRadius: Radius.lg,
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  revealStack: { gap: 0 },
-  revealLeft: { flex: 1, paddingRight: Spacing.md },
-  revealEyebrow: {
-    fontSize: 11,
-    color: C.terraLight,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  revealTitle: {
-    fontSize: 21,
-    fontWeight: '800',
-    color: C.cream,
-    marginBottom: 6,
-    lineHeight: 28,
-  },
-  revealSub: {
-    fontSize: 13,
-    color: C.brownLight,
-  },
-  revealImgWrap: {
-    position: 'relative',
-    width: 88,
-    height: 88,
-  },
-  revealImg: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-  },
-  revealImgFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: C.paper,
-  },
-  revealImgBorder: {
-    position: 'absolute',
-    top: -2,
-    left: -2,
-    right: -2,
-    bottom: -2,
-    borderRadius: 46,
-    borderWidth: 2,
-    borderColor: C.terraLight,
-  },
 
   section: { marginBottom: 32 },
   agentSuggestionRail: {

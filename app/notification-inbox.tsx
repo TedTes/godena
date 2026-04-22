@@ -73,14 +73,14 @@ export default function NotificationInboxScreen() {
               <TouchableOpacity
                 key={item.id}
                 style={styles.item}
-                onPress={() => router.push(item.kind === 'intro' ? '/reveal' : `/chat/${item.connectionId}`)}
+                onPress={() => router.push(`/chat/${item.connectionId}`)}
                 activeOpacity={0.85}
               >
-                <View style={[styles.itemIcon, item.kind === 'intro' ? styles.itemIconIntro : styles.itemIconMsg]}>
+                <View style={[styles.itemIcon, styles.itemIconMsg]}>
                   <Ionicons
-                    name={item.kind === 'intro' ? 'sparkles-outline' : 'chatbubble-ellipses-outline'}
+                    name="chatbubble-ellipses-outline"
                     size={16}
-                    color={item.kind === 'intro' ? Colors.terracotta : Colors.brownMid}
+                    color={Colors.brownMid}
                   />
                 </View>
                 <View style={styles.itemText}>

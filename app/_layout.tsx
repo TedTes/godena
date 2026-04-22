@@ -26,7 +26,6 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         {/* OAuth callback — must be outside (auth) group so the deep-link scheme routes here */}
         <Stack.Screen name="auth/callback" />
-        <Stack.Screen name="premium" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="group/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="member/[id]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="group/chat/[id]" options={{ animation: 'slide_from_right' }} />
@@ -41,11 +40,6 @@ export default function RootLayout() {
         <Stack.Screen name="help-feedback" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="agent-review" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="agent-group-proposal/[id]" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="agent-intro/[id]" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="verify-identity" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="dating-mode" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="dating-discover" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="reveal" options={{ animation: 'fade' }} />
       </Stack>
     </>
   );

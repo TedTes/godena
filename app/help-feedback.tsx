@@ -25,7 +25,6 @@ const CATEGORIES: Array<{ label: string; value: FeedbackCategory }> = [
   { label: 'Bug', value: 'bug' },
   { label: 'Feedback', value: 'feedback' },
   { label: 'Account', value: 'account' },
-  { label: 'Billing', value: 'billing' },
   { label: 'Other', value: 'other' },
 ];
 
@@ -114,7 +113,7 @@ export default function HelpFeedbackScreen() {
           <View style={styles.faqCard}>
             <Text style={styles.faqTitle}>Quick Help</Text>
             <Text style={styles.faqText}>1. Login issues: try sign out/sign in once, then retry OAuth.</Text>
-            <Text style={styles.faqText}>2. Missing matches: check openness toggles and profile preferences.</Text>
+            <Text style={styles.faqText}>2. Missing connections: check your openness toggles and group settings.</Text>
             <Text style={styles.faqText}>3. Chat delay: reopen chat once to refresh realtime channel.</Text>
           </View>
 

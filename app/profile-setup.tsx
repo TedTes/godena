@@ -104,7 +104,6 @@ export default function ProfileSetupScreen() {
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [gender, setGender] = useState<GenderValue | null>(null);
   const [isOpenToConnections, setIsOpenToConnections] = useState(true);
-  const [datingModeEnabled, setDatingModeEnabled] = useState(false);
   const [avatarPhoto, setAvatarPhoto] = useState<SelectedPhoto | null>(null);
   const [pickingPhoto, setPickingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -193,12 +192,6 @@ export default function ProfileSetupScreen() {
           });
         }
       }
-      const { data: datingProfile } = await supabase
-        .from('dating_profiles')
-        .select('is_enabled')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      setDatingModeEnabled(datingProfile?.is_enabled ?? false);
       setInitialLoading(false);
     };
 
@@ -246,21 +239,6 @@ export default function ProfileSetupScreen() {
 
   const removePhoto = () => {
     setAvatarPhoto(null);
-  };
-
-  const handleDatingModeToggle = (value: boolean) => {
-    if (value && !datingModeEnabled) {
-      Alert.alert(
-        'Enable Dating Mode?',
-        'Dating Mode uses your dating preferences to show swipe candidates and create matches.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Enable', onPress: () => setDatingModeEnabled(true) },
-        ]
-      );
-      return;
-    }
-    setDatingModeEnabled(value);
   };
 
   const saveProfile = async () => {
@@ -374,13 +352,6 @@ export default function ProfileSetupScreen() {
       return;
     }
 
-    const { error: datingProfileError } = await supabase
-      .from('dating_profiles')
-      .upsert({ user_id: user.id, is_enabled: datingModeEnabled }, { onConflict: 'user_id' });
-    if (datingProfileError) {
-      setError(datingProfileError.message);
-      return;
-    }
     // Keep global openness and per-group signals consistent:
     // when global is turned off, clear all group-level open signals.
     if (!isOpenToConnections) {
@@ -405,8 +376,7 @@ export default function ProfileSetupScreen() {
       return;
     }
 
-    const nextRoute = datingModeEnabled ? '/dating-mode' : '/(tabs)/home';
-    router.replace(`/terms-accept?next=${encodeURIComponent(nextRoute)}`);
+    router.replace(`/terms-accept?next=${encodeURIComponent('/(tabs)/home')}`);
   };
 
   if (initialLoading) {
@@ -623,28 +593,12 @@ export default function ProfileSetupScreen() {
             </View>
             <View style={styles.switchInfo}>
               <Text style={styles.switchTitle}>Open to connections</Text>
-              <Text style={styles.switchSub}>Used for group and event-based matching.</Text>
+              <Text style={styles.switchSub}>Lets people in your groups know you're open to a mutual introduction.</Text>
             </View>
             <Switch
               value={isOpenToConnections}
               onValueChange={setIsOpenToConnections}
               trackColor={{ false: Colors.border, true: Colors.olive }}
-              thumbColor={Colors.white}
-            />
-          </View>
-
-          <View style={styles.switchRow}>
-            <View style={[styles.switchIconWrap, { backgroundColor: 'rgba(196,98,45,0.1)' }]}>
-              <Ionicons name="flame-outline" size={18} color={Colors.terracotta} />
-            </View>
-            <View style={styles.switchInfo}>
-              <Text style={styles.switchTitle}>Dating Mode</Text>
-              <Text style={styles.switchSub}>Turns on swipe-based dating profiles.</Text>
-            </View>
-            <Switch
-              value={datingModeEnabled}
-              onValueChange={handleDatingModeToggle}
-              trackColor={{ false: Colors.border, true: Colors.terracotta }}
               thumbColor={Colors.white}
             />
           </View>

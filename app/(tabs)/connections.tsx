@@ -19,7 +19,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
-import { fetchAgentIntroSuggestions, type AgentIntroSuggestion } from '../../lib/services/agentPipeline';
 
 type ConnectionRow = {
   id: string;
@@ -48,32 +47,8 @@ type MessageRow = {
   sent_at: string;
 };
 
-type DatingMatchRow = {
-  id: string;
-  user_a_id: string;
-  user_b_id: string;
-  status: 'matched' | 'unmatched' | 'blocked' | 'expired';
-  matched_at: string;
-};
-
-type DatingMessageRow = {
-  match_id: string;
-  content: string;
-  sent_at: string;
-};
-
-type PendingReveal = {
-  id: string;
-  matchName: string;
-  matchPhoto: string | null;
-  groupName: string;
-  groupEmoji: string;
-  message: string;
-};
-
 type ActiveConnection = {
   id: string;
-  source: 'connection' | 'dating';
   name: string;
   photo: string | null;
   groupName: string;
@@ -81,8 +56,6 @@ type ActiveConnection = {
   lastMessage: string;
   lastAt: string;
 };
-
-type PendingIntroProposal = AgentIntroSuggestion;
 
 function groupEmoji(category?: string) {
   switch (category) {
@@ -127,12 +100,7 @@ function ProfilePhoto({
 export default function ConnectionsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
-  const [datingModeEnabled, setDatingModeEnabled] = useState(false);
-  const [datingCandidateCount, setDatingCandidateCount] = useState(0);
-  const [datingMatchCount, setDatingMatchCount] = useState(0);
-  const [introSuggestions, setIntroSuggestions] = useState<PendingIntroProposal[]>([]);
 
   const screenFade = useRef(new Animated.Value(0)).current;
 
@@ -145,54 +113,27 @@ export default function ConnectionsScreen() {
         const { data: sessionData } = await supabase.auth.getSession();
         const uid = sessionData.session?.user.id ?? null;
         if (!uid) {
-          setPendingReveal(null);
           setActiveConnections([]);
-          setIntroSuggestions([]);
           setLoading(false);
           return;
         }
 
-        const { data: introRows, error: introError } = await fetchAgentIntroSuggestions({
-          userId: uid,
-          limit: 4,
-        });
-        if (introError) {
-          console.warn('fetchAgentIntroSuggestions failed', introError.message);
-          setIntroSuggestions([]);
-        } else {
-          setIntroSuggestions(introRows ?? []);
-        }
-
-        const [connectionsRes, datingMatchesRes] = await Promise.all([
-          supabase
-            .from('connections')
-            .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
-            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
-            .order('revealed_at', { ascending: false }),
-          supabase
-            .from('dating_matches')
-            .select('id, user_a_id, user_b_id, status, matched_at')
-            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
-            .eq('status', 'matched')
-            .order('matched_at', { ascending: false }),
-        ]);
+        const connectionsRes = await supabase
+          .from('connections')
+          .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
+          .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
+          .order('revealed_at', { ascending: false });
 
         const rows = (connectionsRes.data ?? []) as ConnectionRow[];
-        const datingMatches = (datingMatchesRes.data ?? []) as DatingMatchRow[];
 
         const connectionCounterpartIds = rows.map((c) => (c.user_a_id === uid ? c.user_b_id : c.user_a_id));
-        const datingCounterpartIds = datingMatches.map((m) => (m.user_a_id === uid ? m.user_b_id : m.user_a_id));
-        const counterpartIds = Array.from(new Set([...connectionCounterpartIds, ...datingCounterpartIds]));
+        const counterpartIds = Array.from(new Set(connectionCounterpartIds));
         const groupIds = Array.from(new Set(rows.map((c) => c.group_id)));
         const connectionIds = rows.map((c) => c.id);
-        const datingMatchIds = datingMatches.map((m) => m.id);
 
-        const [connectionProfilesRes, datingProfilesRes, groupsRes, messagesRes, datingMessagesRes] = await Promise.all([
+        const [connectionProfilesRes, groupsRes, messagesRes] = await Promise.all([
           counterpartIds.length > 0
             ? supabase.rpc('get_connection_profiles', { p_user_ids: counterpartIds })
-            : Promise.resolve({ data: [], error: null } as any),
-          counterpartIds.length > 0
-            ? supabase.rpc('get_dating_match_profiles', { p_user_ids: counterpartIds })
             : Promise.resolve({ data: [], error: null } as any),
           groupIds.length > 0
             ? supabase.from('groups').select('id, name, category').in('id', groupIds)
@@ -205,20 +146,9 @@ export default function ConnectionsScreen() {
                 .is('deleted_at', null)
                 .order('sent_at', { ascending: false })
             : Promise.resolve({ data: [], error: null } as any),
-          datingMatchIds.length > 0
-            ? supabase
-                .from('dating_messages')
-                .select('match_id, content, sent_at')
-                .in('match_id', datingMatchIds)
-                .is('deleted_at', null)
-                .order('sent_at', { ascending: false })
-            : Promise.resolve({ data: [], error: null } as any),
         ]);
 
-        const profileRows = [
-          ...((connectionProfilesRes.data ?? []) as ProfileRow[]),
-          ...((datingProfilesRes.data ?? []) as ProfileRow[]),
-        ];
+        const profileRows = ((connectionProfilesRes.data ?? []) as ProfileRow[]);
         const dedupedProfileRows = profileRows.filter(
           (row, i, arr) => arr.findIndex((p) => p.user_id === row.user_id) === i
         );
@@ -231,7 +161,6 @@ export default function ConnectionsScreen() {
         );
         const groups = (groupsRes.data ?? []) as GroupRow[];
         const messages = (messagesRes.data ?? []) as MessageRow[];
-        const datingMessages = (datingMessagesRes.data ?? []) as DatingMessageRow[];
 
         const profileByUser = new Map(profiles.map((p) => [p.user_id, p]));
         const groupById = new Map(groups.map((g) => [g.id, g]));
@@ -241,32 +170,8 @@ export default function ConnectionsScreen() {
             lastMsgByConnection.set(m.connection_id, m);
           }
         }
-        const lastMsgByDatingMatch = new Map<string, DatingMessageRow>();
-        for (const m of datingMessages) {
-          if (!lastMsgByDatingMatch.has(m.match_id)) {
-            lastMsgByDatingMatch.set(m.match_id, m);
-          }
-        }
 
-        const pending = rows.filter((c) => c.status === 'pending');
         const accepted = rows.filter((c) => c.status === 'accepted');
-
-        if (pending.length > 0) {
-          const top = pending[0];
-          const otherId = top.user_a_id === uid ? top.user_b_id : top.user_a_id;
-          const p = profileByUser.get(otherId);
-          const g = groupById.get(top.group_id);
-          setPendingReveal({
-            id: top.id,
-            matchName: p?.full_name || 'Someone',
-            matchPhoto: p?.avatar_url ?? null,
-            groupName: g?.name || 'Your group',
-            groupEmoji: groupEmoji(g?.category),
-            message: `You both have been consistently showing up in ${g?.name || 'this group'}.`,
-          });
-        } else {
-          setPendingReveal(null);
-        }
 
         const connectionCards: ActiveConnection[] = accepted.map((c) => {
           const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
@@ -275,7 +180,6 @@ export default function ConnectionsScreen() {
           const m = lastMsgByConnection.get(c.id);
           return {
             id: c.id,
-            source: 'connection',
             name: p?.full_name || 'Connection',
             photo: p?.avatar_url ?? null,
             groupName: g?.name || 'Group',
@@ -285,44 +189,7 @@ export default function ConnectionsScreen() {
           };
         });
 
-        const datingCards: ActiveConnection[] = datingMatches.map((m) => {
-          const otherId = m.user_a_id === uid ? m.user_b_id : m.user_a_id;
-          const p = profileByUser.get(otherId);
-          const lastDatingMessage = lastMsgByDatingMatch.get(m.id);
-          return {
-            id: m.id,
-            source: 'dating',
-            name: p?.full_name || 'Dating match',
-            photo: p?.avatar_url ?? null,
-            groupName: 'Dating Mode',
-            groupEmoji: '💘',
-            lastMessage: lastDatingMessage?.content || 'Say hello to your match',
-            lastAt: lastDatingMessage?.sent_at
-              ? new Date(lastDatingMessage.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              : '',
-          };
-        });
-
-        setActiveConnections([...datingCards, ...connectionCards]);
-
-        // Dating state
-        const [{ data: datingProfile }, { count: matchCount }] = await Promise.all([
-          supabase.from('dating_profiles').select('is_enabled').eq('user_id', uid).maybeSingle(),
-          supabase
-            .from('dating_matches')
-            .select('id', { count: 'exact', head: true })
-            .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
-            .eq('status', 'matched'),
-        ]);
-        const datingEnabled = (datingProfile as { is_enabled?: boolean } | null)?.is_enabled ?? false;
-        setDatingModeEnabled(datingEnabled);
-        setDatingMatchCount(matchCount ?? 0);
-        if (datingEnabled) {
-          const { data: candidateCount } = await supabase.rpc('get_dating_candidate_count');
-          setDatingCandidateCount(Number(candidateCount ?? 0));
-        } else {
-          setDatingCandidateCount(0);
-        }
+        setActiveConnections(connectionCards);
 
         setLoading(false);
       };
@@ -341,10 +208,7 @@ export default function ConnectionsScreen() {
     }
   }, [loading]);
 
-  const hasAnyData = pendingReveal !== null || activeConnections.length > 0 || introSuggestions.length > 0;
-
-  // Count badge on dating pill: candidates or matches
-  const datingBadgeCount = datingCandidateCount > 0 ? datingCandidateCount : datingMatchCount;
+  const hasAnyData = activeConnections.length > 0;
 
   return (
     <View style={styles.container}>
@@ -356,26 +220,6 @@ export default function ConnectionsScreen() {
             <Text style={styles.title}>Connections</Text>
             <Text style={styles.subtitle}>Introductions &amp; conversations</Text>
           </View>
-          {datingModeEnabled && (
-            <TouchableOpacity
-              style={styles.datingPill}
-              onPress={() => router.push('/dating-discover')}
-              activeOpacity={0.82}
-            >
-              <View style={styles.datingPillIcon}>
-                <Text style={styles.datingPillEmoji}>💘</Text>
-              </View>
-              <View style={styles.datingPillText}>
-                <Text style={styles.datingPillLabel}>Dating</Text>
-                <Text style={styles.datingPillSub}>Discover</Text>
-              </View>
-              {datingBadgeCount > 0 && (
-                <View style={styles.datingPillBadge}>
-                  <Text style={styles.datingPillBadgeText}>{datingBadgeCount}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          )}
         </View>
 
         {loading ? (
@@ -435,70 +279,6 @@ export default function ConnectionsScreen() {
           <Animated.View style={[styles.contentWrap, { opacity: screenFade }]}>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
-              {/* Pending reveal */}
-              {pendingReveal && (
-                <View style={styles.section}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionLabel}>New Introduction</Text>
-                    <View style={styles.newBadge}><Text style={styles.newBadgeText}>New</Text></View>
-                  </View>
-                  <TouchableOpacity style={styles.revealCard} onPress={() => router.push('/reveal')} activeOpacity={0.88}>
-                    <View style={styles.revealGlow} />
-                    <View style={styles.revealRow}>
-                      <View style={styles.revealTop}>
-                        <ProfilePhoto
-                          uri={pendingReveal.matchPhoto}
-                          name={pendingReveal.matchName}
-                          style={styles.revealPhoto}
-                          textStyle={styles.revealInitials}
-                        />
-                        <View style={styles.revealBadge}>
-                          <Text style={styles.revealBadgeText}>✨</Text>
-                        </View>
-                      </View>
-                      <View style={styles.revealContent}>
-                        <Text style={styles.revealName}>{pendingReveal.matchName}</Text>
-                        <Text style={styles.revealGroup}>{pendingReveal.groupEmoji} via {pendingReveal.groupName}</Text>
-                        <Text style={styles.revealMsg} numberOfLines={2}>{pendingReveal.message}</Text>
-                      </View>
-                      <View style={styles.revealChevronWrap}>
-                        <Ionicons name="chevron-forward" size={20} color="rgba(245,240,232,0.85)" />
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {introSuggestions.length > 0 && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionLabel}>Suggested Intros</Text>
-                  <View style={styles.connectionList}>
-                    {introSuggestions.map((suggestion) => (
-                      <TouchableOpacity
-                        key={suggestion.proposalId}
-                        style={styles.introSuggestionCard}
-                        onPress={() => router.push(`/agent-intro/${suggestion.proposalId}`)}
-                        activeOpacity={0.86}
-                      >
-                        <View style={styles.introSuggestionTop}>
-                          <View style={styles.introSuggestionBadge}>
-                            <Text style={styles.introSuggestionBadgeText}>Warm intro</Text>
-                          </View>
-                          <Text style={styles.introSuggestionScore}>{Math.round(suggestion.confidenceScore)} fit</Text>
-                        </View>
-                        <Text style={styles.introSuggestionTitle} numberOfLines={2}>{suggestion.title}</Text>
-                        {suggestion.body ? (
-                          <Text style={styles.introSuggestionBody} numberOfLines={2}>{suggestion.body}</Text>
-                        ) : null}
-                        <Text style={styles.introSuggestionMeta} numberOfLines={1}>
-                          {(suggestion.groupName || 'Shared activity')} {suggestion.city ? `· ${suggestion.city}` : ''}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
-
               {/* Active connections */}
               <View style={styles.section}>
                 {activeConnections.length > 0 && (
@@ -510,7 +290,7 @@ export default function ConnectionsScreen() {
                       <TouchableOpacity
                         key={c.id}
                         style={styles.connectionCard}
-                        onPress={() => router.push(c.source === 'dating' ? `/chat/${c.id}?source=dating` : `/chat/${c.id}`)}
+                        onPress={() => router.push(`/chat/${c.id}`)}
                         activeOpacity={0.82}
                       >
                         <View style={styles.connPhotoWrap}>
@@ -520,11 +300,6 @@ export default function ConnectionsScreen() {
                             style={styles.connPhoto}
                             textStyle={styles.connInitials}
                           />
-                          {c.source === 'dating' && (
-                            <View style={styles.connDatingDot}>
-                              <Text style={styles.connDatingDotText}>💘</Text>
-                            </View>
-                          )}
                         </View>
                         <View style={styles.connInfo}>
                           <View style={styles.connTopRow}>
@@ -591,61 +366,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: '800', color: Colors.ink, letterSpacing: -0.3 },
   subtitle: { fontSize: 13, color: Colors.muted, marginTop: 2 },
 
-  // Dating pill in header
-  datingPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: Colors.brown,
-    borderRadius: Radius.full,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginLeft: 12,
-    borderWidth: 1,
-    borderColor: Colors.terraDim,
-    shadowColor: Colors.brown,
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  datingPillIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(232,133,90,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  datingPillEmoji: { fontSize: 12 },
-  datingPillText: { alignItems: 'flex-start' },
-  datingPillLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.cream,
-  },
-  datingPillSub: {
-    fontSize: 10,
-    color: Colors.terraLight,
-    fontWeight: '600',
-    marginTop: -1,
-  },
-  datingPillBadge: {
-    backgroundColor: Colors.terracotta,
-    borderRadius: Radius.full,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-    marginLeft: 2,
-  },
-  datingPillBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: Colors.white,
-  },
-
   // ── Layout ──
   contentWrap: { flex: 1 },
   scrollContent: { paddingTop: Spacing.lg, paddingBottom: 24 },
@@ -705,53 +425,6 @@ const styles = StyleSheet.create({
   newBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '700' },
 
   connectionList: { gap: 8 },
-  introSuggestionCard: {
-    backgroundColor: Colors.paper,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 14,
-    gap: 8,
-  },
-  introSuggestionTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  introSuggestionBadge: {
-    borderRadius: Radius.full,
-    backgroundColor: Colors.brown,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  introSuggestionBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: Colors.cream,
-    textTransform: 'uppercase',
-  },
-  introSuggestionScore: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.olive,
-  },
-  introSuggestionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.ink,
-    lineHeight: 21,
-  },
-  introSuggestionBody: {
-    fontSize: 13,
-    color: Colors.muted,
-    lineHeight: 19,
-  },
-  introSuggestionMeta: {
-    fontSize: 12,
-    color: Colors.brownMid,
-  },
-
   activeEmptyWrap: {
     paddingVertical: 36,
     paddingHorizontal: 24,
@@ -778,56 +451,6 @@ const styles = StyleSheet.create({
     maxWidth: 220,
   },
 
-  // ── Reveal card ──
-  revealCard: {
-    backgroundColor: Colors.brown,
-    borderRadius: Radius.lg,
-    padding: 14,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  revealRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  revealContent: {
-    flex: 1,
-    minWidth: 0,
-    justifyContent: 'center',
-    paddingRight: 4,
-  },
-  revealGlow: {
-    position: 'absolute',
-    right: -40,
-    top: -40,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(196,98,45,0.18)',
-  },
-  revealTop: { position: 'relative', width: 68, height: 68 },
-  revealPhoto: { width: 68, height: 68, borderRadius: 34, borderWidth: 2, borderColor: Colors.terraLight },
-  revealInitials: { color: Colors.brown, fontSize: 22, fontWeight: '800' },
-  revealBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: Colors.terracotta,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: Colors.brown,
-  },
-  revealBadgeText: { fontSize: 11 },
-  revealName: { fontSize: 17, fontWeight: '800', color: Colors.cream, marginBottom: 2 },
-  revealGroup: { fontSize: 11, color: Colors.brownLight, marginBottom: 8 },
-  revealMsg: { fontSize: 13, color: 'rgba(245,240,232,0.72)', lineHeight: 19 },
-  revealChevronWrap: { alignSelf: 'center', paddingLeft: 4 },
-
   // ── Connection cards ──
   connectionCard: {
     flexDirection: 'row',
@@ -841,18 +464,6 @@ const styles = StyleSheet.create({
   connPhotoWrap: { position: 'relative' },
   connPhoto: { width: 54, height: 54, borderRadius: 27 },
   connInitials: { color: Colors.brown, fontSize: 16, fontWeight: '800' },
-  connDatingDot: {
-    position: 'absolute',
-    bottom: -1,
-    right: -3,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: Colors.cream,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  connDatingDotText: { fontSize: 11 },
   connInfo: { flex: 1, minWidth: 0 },
   connTopRow: {
     flexDirection: 'row',

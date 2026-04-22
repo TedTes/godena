@@ -27,7 +27,6 @@ export default function NotificationsScreen() {
   const [prefs, setPrefs] = useState<NotificationPrefs>({
     notify_group_messages: true,
     notify_connection_messages: true,
-    notify_reveals: true,
     notify_events: true,
     notify_marketing: false,
   });
@@ -47,7 +46,6 @@ export default function NotificationsScreen() {
         setPrefs({
           notify_group_messages: data.notify_group_messages,
           notify_connection_messages: data.notify_connection_messages,
-          notify_reveals: data.notify_reveals,
           notify_events: data.notify_events,
           notify_marketing: data.notify_marketing,
         });
@@ -61,7 +59,6 @@ export default function NotificationsScreen() {
     () => [
       { key: 'notify_group_messages' as const, title: 'Group messages', subtitle: 'New messages in your joined groups' },
       { key: 'notify_connection_messages' as const, title: 'Connection messages', subtitle: '1:1 chat messages from accepted connections' },
-      { key: 'notify_reveals' as const, title: 'Introductions & reveals', subtitle: 'New introduction and reveal updates' },
       { key: 'notify_events' as const, title: 'Events', subtitle: 'RSVP and upcoming event reminders' },
       { key: 'notify_marketing' as const, title: 'Product updates', subtitle: 'Tips, release notes, and optional announcements' },
     ],
@@ -173,4 +170,3 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 14, fontWeight: '700', color: Colors.ink },
   rowSub: { marginTop: 2, fontSize: 12, color: Colors.muted, lineHeight: 17 },
 });
-
