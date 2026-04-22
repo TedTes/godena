@@ -1,7 +1,7 @@
 export const EXTERNAL_ENTITY_KINDS = ['event', 'group', 'venue', 'context'] as const;
 export type ExternalEntityKind = (typeof EXTERNAL_ENTITY_KINDS)[number];
 
-export const OPPORTUNITY_KINDS = ['event', 'group', 'introduction'] as const;
+export const OPPORTUNITY_KINDS = ['event', 'group'] as const;
 export type OpportunityKind = (typeof OPPORTUNITY_KINDS)[number];
 
 export const PROPOSAL_STATUSES = ['draft', 'approved', 'rejected', 'published', 'expired'] as const;

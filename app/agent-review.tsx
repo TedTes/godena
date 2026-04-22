@@ -26,7 +26,7 @@ type ProposalRow = {
   opportunity_id: string | null;
   title: string;
   body: string | null;
-  proposal_kind: 'event' | 'group' | 'introduction';
+  proposal_kind: 'event' | 'group';
   status: FilterStatus | 'published' | 'expired';
   approval_policy: 'auto_suggest' | 'organizer_confirm' | 'manual_only';
   target_surface: 'home' | 'groups' | 'events' | 'connections' | 'profile';
@@ -54,7 +54,6 @@ type OrchestratorAction =
   | 'full'
   | 'sync'
   | 'groups'
-  | 'intros'
   | 'interests'
   | 'proposals'
   | 'maintenance';
@@ -78,7 +77,6 @@ export default function AgentReviewScreen() {
     feedbackCount: 0,
     eventOpportunityCount: 0,
     groupOpportunityCount: 0,
-    introOpportunityCount: 0,
     interestProfileCount: 0,
     dueSourceCount: 0,
     failedSourceCount: 0,
@@ -118,7 +116,6 @@ export default function AgentReviewScreen() {
       { count: feedbackCount },
       { count: eventOpportunityCount },
       { count: groupOpportunityCount },
-      { count: introOpportunityCount },
       { count: interestProfileCount },
       dueSourcesRes,
       failedSourcesRes,
@@ -133,7 +130,6 @@ export default function AgentReviewScreen() {
       supabase.from('agent_feedback_events').select('id', { count: 'exact', head: true }),
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'event'),
       supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'group'),
-      supabase.from('agent_opportunities').select('id', { count: 'exact', head: true }).eq('kind', 'introduction'),
       supabase.from('agent_user_interest_profiles').select('user_id', { count: 'exact', head: true }),
       supabase.from('agent_source_sync_state').select('source_id', { count: 'exact', head: true }).lte('next_run_at', new Date().toISOString()),
       supabase.from('agent_source_sync_state').select('source_id', { count: 'exact', head: true }).eq('last_status', 'failed'),
@@ -158,7 +154,6 @@ export default function AgentReviewScreen() {
       feedbackCount: feedbackCount ?? 0,
       eventOpportunityCount: eventOpportunityCount ?? 0,
       groupOpportunityCount: groupOpportunityCount ?? 0,
-      introOpportunityCount: introOpportunityCount ?? 0,
       interestProfileCount: interestProfileCount ?? 0,
       dueSourceCount: dueSourcesRes.count ?? 0,
       failedSourceCount: failedSourcesRes.count ?? 0,
@@ -215,16 +210,14 @@ export default function AgentReviewScreen() {
       action === 'full'
         ? {}
         : action === 'sync'
-          ? { build_groups: false, build_intros: false, build_interests: false, generate_proposals: false, run_maintenance: false }
+          ? { build_groups: false, build_interests: false, generate_proposals: false, run_maintenance: false }
           : action === 'groups'
-            ? { run_scout: false, build_intros: false, build_interests: false, generate_proposals: false, run_maintenance: false }
-            : action === 'intros'
-              ? { run_scout: false, build_groups: false, build_interests: false, generate_proposals: false, run_maintenance: false }
+            ? { run_scout: false, build_interests: false, generate_proposals: false, run_maintenance: false }
               : action === 'interests'
-                ? { run_scout: false, build_groups: false, build_intros: false, generate_proposals: false, run_maintenance: false }
+                ? { run_scout: false, build_groups: false, generate_proposals: false, run_maintenance: false }
               : action === 'proposals'
-                ? { run_scout: false, build_groups: false, build_intros: false, build_interests: false, run_maintenance: false }
-                : { run_scout: false, build_groups: false, build_intros: false, build_interests: false, generate_proposals: false };
+                ? { run_scout: false, build_groups: false, build_interests: false, run_maintenance: false }
+                : { run_scout: false, build_groups: false, build_interests: false, generate_proposals: false };
 
     const { data, error } = await supabase.functions.invoke('agent-orchestrator', {
       body: payload,
@@ -245,7 +238,6 @@ export default function AgentReviewScreen() {
         const count =
           normalized.opportunities_upserted ??
           normalized.group_opportunities_upserted ??
-          normalized.intro_opportunities_upserted ??
           normalized.interest_rows_upserted ??
           normalized.created ??
           normalized.proposals_expired ??
@@ -340,10 +332,6 @@ export default function AgentReviewScreen() {
                 <Text style={styles.statLabel}>Group Opps</Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.introOpportunityCount}</Text>
-                <Text style={styles.statLabel}>Intro Opps</Text>
-              </View>
-              <View style={styles.statCard}>
                 <Text style={styles.statValue}>{stats.interestProfileCount}</Text>
                 <Text style={styles.statLabel}>Interest Rows</Text>
               </View>
@@ -393,7 +381,6 @@ export default function AgentReviewScreen() {
                   ['full', 'Run all'],
                   ['sync', 'Sync'],
                   ['groups', 'Groups'],
-                  ['intros', 'Intros'],
                   ['interests', 'Interests'],
                   ['proposals', 'Proposals'],
                   ['maintenance', 'Maintenance'],

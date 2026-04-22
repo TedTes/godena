@@ -41,7 +41,7 @@ function fallbackProposalExpiry(opportunity: {
   if (opportunity.starts_at) return opportunity.starts_at;
 
   const now = Date.now();
-  const ttlDays = opportunity.kind === "group" ? 21 : opportunity.kind === "introduction" ? 7 : 14;
+  const ttlDays = opportunity.kind === "group" ? 21 : 14;
   return new Date(now + ttlDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
@@ -479,10 +479,7 @@ Deno.serve(async (req) => {
                 ...Array.from(groupSocialAudience),
                 ...audienceUserIds,
               ]
-            : opportunity.kind === "introduction" &&
-              Array.isArray(opportunity.metadata?.candidate_user_ids)
-                ? opportunity.metadata.candidate_user_ids
-                : audienceUserIds
+            : audienceUserIds
         )
       );
 

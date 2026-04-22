@@ -8,7 +8,7 @@ import type {
 import { AGENT_PROPOSAL_SELECT } from './agentContracts';
 
 export async function fetchAgentOpportunities(params?: {
-  kind?: 'event' | 'group' | 'introduction';
+  kind?: 'event' | 'group';
   city?: string | null;
   limit?: number;
 }) {
@@ -385,12 +385,6 @@ export async function updateAgentProposalStatus(params: {
     .single();
 }
 
-export async function createAgentIntroConnection(proposalId: string) {
-  return supabase.rpc('create_agent_intro_connection', {
-    p_proposal_id: proposalId,
-  });
-}
-
 export async function logAgentFeedbackEvent(params: {
   proposalId: string;
   userId?: string | null;
@@ -400,7 +394,6 @@ export async function logAgentFeedbackEvent(params: {
     | 'dismissed'
     | 'joined_group'
     | 'rsvped_event'
-    | 'accepted_intro'
     | 'ignored';
   metadata?: Record<string, unknown>;
 }) {

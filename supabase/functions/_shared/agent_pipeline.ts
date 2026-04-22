@@ -269,15 +269,6 @@ export function buildOpportunityFromNormalized(
 }
 
 export function approvalPolicyForOpportunity(kind: string, trustScore: number) {
-  if (kind === "introduction") {
-    return {
-      approval_policy: "manual_only",
-      target_surface: "connections",
-      approval_required: true,
-      initial_status: "draft",
-    };
-  }
-
   if (kind === "group") {
     return {
       approval_policy: "organizer_confirm",

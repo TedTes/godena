@@ -96,8 +96,6 @@ Deno.serve(async (req) => {
     const decayScores = body.decay_scores !== false;
     const buildGroups = body.build_groups !== false;
     const buildInterests = body.build_interests !== false;
-    const buildCompatibility = body.build_compatibility !== false;
-    const buildIntros = body.build_intros !== false;
     const generateProposals = body.generate_proposals !== false;
     const runMaintenance = body.run_maintenance !== false;
 
@@ -127,12 +125,6 @@ Deno.serve(async (req) => {
     }
     if (buildInterests) {
       results.interest_builder = await invoke("agent-user-interest-builder", body.interest_payload ?? {});
-    }
-    if (buildCompatibility) {
-      results.compatibility_builder = await invoke("agent-compatibility-builder", body.compatibility_payload ?? {});
-    }
-    if (buildIntros) {
-      results.intro_builder = await invoke("agent-intro-opportunity-builder", body.intro_payload ?? {});
     }
     if (generateProposals) {
       results.proposals = await invoke("agent-proposal-generator", body.proposal_payload ?? {});
