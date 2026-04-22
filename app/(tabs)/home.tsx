@@ -7,7 +7,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
 } from 'react-native';
 import { useScreenEnter } from '../../hooks/useScreenEnter';
 import { useRouter } from 'expo-router';
@@ -17,7 +16,6 @@ import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
 import { Colors, Spacing, Radius, useThemeColors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
-import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import { fetchNotificationInboxItems } from '../../lib/services/notificationInbox';
 import {
   fetchAgentEventSuggestions,
@@ -31,8 +29,6 @@ type HomeGroup = {
   memberCount: number;
   coverColor: string;
   emoji: string;
-  iconEmoji?: string | null;
-  isMember: boolean;
   isOpenToConnect: boolean;
 };
 
@@ -232,8 +228,6 @@ export default function HomeScreen() {
               memberCount: liveCounts[g.id] ?? g.member_count ?? 0,
               coverColor: visuals.coverColor,
               emoji: visuals.emoji,
-              iconEmoji: g.icon_emoji,
-              isMember: true,
               isOpenToConnect: openByGroup.get(g.id) ?? false,
             };
           })
