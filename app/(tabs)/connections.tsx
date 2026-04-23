@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
+  Alert,
   type ImageStyle,
   type StyleProp,
   type TextStyle,
@@ -27,6 +28,7 @@ type ConnectionRow = {
   user_b_id: string;
   status: 'pending' | 'accepted' | 'passed' | 'unmatched' | 'closed';
   revealed_at: string;
+  requested_by: string | null;
 };
 
 type ProfileRow = {
@@ -55,6 +57,15 @@ type ActiveConnection = {
   groupEmoji: string;
   lastMessage: string;
   lastAt: string;
+};
+
+type PendingConnection = {
+  id: string;
+  name: string;
+  photo: string | null;
+  groupName: string;
+  groupEmoji: string;
+  isIncoming: boolean;
 };
 
 function groupEmoji(category?: string) {
@@ -101,6 +112,8 @@ export default function ConnectionsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  const [pendingConnections, setPendingConnections] = useState<PendingConnection[]>([]);
+  const [actingId, setActingId] = useState<string | null>(null);
 
   const screenFade = useRef(new Animated.Value(0)).current;
 
@@ -114,13 +127,14 @@ export default function ConnectionsScreen() {
         const uid = sessionData.session?.user.id ?? null;
         if (!uid) {
           setActiveConnections([]);
+          setPendingConnections([]);
           setLoading(false);
           return;
         }
 
         const connectionsRes = await supabase
           .from('connections')
-          .select('id, group_id, user_a_id, user_b_id, status, revealed_at')
+          .select('id, group_id, user_a_id, user_b_id, status, revealed_at, requested_by')
           .or(`user_a_id.eq.${uid},user_b_id.eq.${uid}`)
           .order('revealed_at', { ascending: false });
 
@@ -172,6 +186,7 @@ export default function ConnectionsScreen() {
         }
 
         const accepted = rows.filter((c) => c.status === 'accepted');
+        const pending = rows.filter((c) => c.status === 'pending');
 
         const connectionCards: ActiveConnection[] = accepted.map((c) => {
           const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
@@ -190,6 +205,21 @@ export default function ConnectionsScreen() {
         });
 
         setActiveConnections(connectionCards);
+        setPendingConnections(
+          pending.map((c) => {
+            const otherId = c.user_a_id === uid ? c.user_b_id : c.user_a_id;
+            const p = profileByUser.get(otherId);
+            const g = groupById.get(c.group_id);
+            return {
+              id: c.id,
+              name: p?.full_name || 'Connection',
+              photo: p?.avatar_url ?? null,
+              groupName: g?.name || 'Group',
+              groupEmoji: groupEmoji(g?.category),
+              isIncoming: c.requested_by !== uid,
+            };
+          })
+        );
 
         setLoading(false);
       };
@@ -208,7 +238,41 @@ export default function ConnectionsScreen() {
     }
   }, [loading]);
 
-  const hasAnyData = activeConnections.length > 0;
+  const respondToRequest = (connectionId: string, accept: boolean) => {
+    if (actingId) return;
+    void (async () => {
+      setActingId(connectionId);
+      const { error } = await supabase.rpc('respond_to_connection_request', {
+        p_connection_id: connectionId,
+        p_accept: accept,
+      });
+      setActingId(null);
+      if (error) {
+        Alert.alert('Could not update request', error.message);
+        return;
+      }
+      setPendingConnections((prev) => prev.filter((c) => c.id !== connectionId));
+      if (accept) {
+        const accepted = pendingConnections.find((c) => c.id === connectionId);
+        if (accepted) {
+          setActiveConnections((prev) => [
+            {
+              id: accepted.id,
+              name: accepted.name,
+              photo: accepted.photo,
+              groupName: accepted.groupName,
+              groupEmoji: accepted.groupEmoji,
+              lastMessage: 'No messages yet',
+              lastAt: '',
+            },
+            ...prev,
+          ]);
+        }
+      }
+    })();
+  };
+
+  const hasAnyData = activeConnections.length > 0 || pendingConnections.length > 0;
 
   return (
     <View style={styles.container}>
@@ -281,6 +345,55 @@ export default function ConnectionsScreen() {
 
               {/* Active connections */}
               <View style={styles.section}>
+                {pendingConnections.length > 0 && (
+                  <>
+                    <Text style={styles.sectionLabel}>Requests</Text>
+                    <View style={styles.connectionList}>
+                      {pendingConnections.map((c) => (
+                        <View key={c.id} style={styles.requestCard}>
+                          <View style={styles.connPhotoWrap}>
+                            <ProfilePhoto
+                              uri={c.photo}
+                              name={c.name}
+                              style={styles.connPhoto}
+                              textStyle={styles.connInitials}
+                            />
+                          </View>
+                          <View style={styles.connInfo}>
+                            <Text style={styles.connName} numberOfLines={1}>{c.name}</Text>
+                            <Text style={styles.connGroup} numberOfLines={1}>{c.groupEmoji} {c.groupName}</Text>
+                            <Text style={styles.requestHint}>
+                              {c.isIncoming ? 'Wants to connect with you' : 'Waiting for them to accept'}
+                            </Text>
+                          </View>
+                          {c.isIncoming ? (
+                            <View style={styles.requestActions}>
+                              <TouchableOpacity
+                                style={styles.passBtn}
+                                onPress={() => respondToRequest(c.id, false)}
+                                disabled={actingId === c.id}
+                              >
+                                <Ionicons name="close" size={17} color={Colors.brownMid} />
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.acceptBtn}
+                                onPress={() => respondToRequest(c.id, true)}
+                                disabled={actingId === c.id}
+                              >
+                                {actingId === c.id ? (
+                                  <ActivityIndicator size="small" color={Colors.white} />
+                                ) : (
+                                  <Ionicons name="checkmark" size={17} color={Colors.white} />
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                          ) : null}
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                )}
+
                 {activeConnections.length > 0 && (
                   <Text style={styles.sectionLabel}>Conversations</Text>
                 )}
@@ -425,6 +538,37 @@ const styles = StyleSheet.create({
   newBadgeText: { fontSize: 10, color: Colors.white, fontWeight: '700' },
 
   connectionList: { gap: 8 },
+  requestCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.paper,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  requestHint: { fontSize: 12, color: Colors.muted, marginTop: 2 },
+  requestActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  passBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.cream,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  acceptBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.terracotta,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   activeEmptyWrap: {
     paddingVertical: 36,
     paddingHorizontal: 24,

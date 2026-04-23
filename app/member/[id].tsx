@@ -16,6 +16,7 @@ import { Colors, Radius, Spacing } from '../../constants/theme';
 import { fetchGroupMemberProfile } from '../../lib/services/groupDetail';
 import { resolveProfilePhotoUrl } from '../../lib/services/photoUrls';
 import { blockUser, getSessionUserId, reportUser } from '../../lib/services/privacySafety';
+import { supabase } from '../../lib/supabase';
 
 type MemberProfileRow = {
   user_id: string;
@@ -49,6 +50,10 @@ export default function MemberProfileScreen() {
   const [profile, setProfile] = useState<MemberProfileRow | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestState, setRequestState] = useState<'none' | 'pending_sent' | 'pending_received' | 'accepted'>('none');
+  const [connectionId, setConnectionId] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -57,7 +62,11 @@ export default function MemberProfileScreen() {
         return;
       }
       setLoading(true);
-      const { data, error } = await fetchGroupMemberProfile(groupId, id);
+      const [profileRes, sessionRes] = await Promise.all([
+        fetchGroupMemberProfile(groupId, id),
+        supabase.auth.getSession(),
+      ]);
+      const { data, error } = profileRes;
       if (!error) {
         const row = ((data as MemberProfileRow[] | null) ?? [])[0] ?? null;
         setProfile(row);
@@ -68,6 +77,34 @@ export default function MemberProfileScreen() {
           setAvatarUri(null);
         }
       }
+
+      const uid = sessionRes.data.session?.user.id ?? null;
+      setCurrentUserId(uid);
+      if (uid && id && groupId && uid !== id) {
+        const userA = uid < id ? uid : id;
+        const userB = uid < id ? id : uid;
+        const { data: existing } = await supabase
+          .from('connections')
+          .select('id, status, requested_by')
+          .eq('group_id', groupId)
+          .eq('user_a_id', userA)
+          .eq('user_b_id', userB)
+          .maybeSingle();
+
+        if (existing?.id) {
+          setConnectionId(existing.id);
+          if (existing.status === 'accepted') {
+            setRequestState('accepted');
+          } else if (existing.status === 'pending') {
+            setRequestState(existing.requested_by === uid ? 'pending_sent' : 'pending_received');
+          } else {
+            setRequestState('none');
+          }
+        } else {
+          setConnectionId(null);
+          setRequestState('none');
+        }
+      }
       setLoading(false);
     };
 
@@ -75,6 +112,51 @@ export default function MemberProfileScreen() {
   }, [id, groupId]);
 
   const age = useMemo(() => calcAge(profile?.birth_date ?? null), [profile?.birth_date]);
+
+  const requestConnection = () => {
+    if (!id || !groupId || requestBusy || requestState !== 'none') return;
+    void (async () => {
+      setRequestBusy(true);
+      const { data, error } = await supabase.rpc('request_group_connection', {
+        p_group_id: groupId,
+        p_target_user_id: id,
+      });
+      setRequestBusy(false);
+      if (error) {
+        Alert.alert('Could not request connection', error.message);
+        return;
+      }
+      const row = data as { id?: string } | null;
+      setConnectionId(row?.id ?? null);
+      setRequestState('pending_sent');
+      Alert.alert('Request sent', 'They can accept from their Connections screen.');
+    })();
+  };
+
+  const acceptConnection = () => {
+    if (!connectionId || requestBusy) return;
+    void (async () => {
+      setRequestBusy(true);
+      const { error } = await supabase.rpc('respond_to_connection_request', {
+        p_connection_id: connectionId,
+        p_accept: true,
+      });
+      setRequestBusy(false);
+      if (error) {
+        Alert.alert('Could not accept connection', error.message);
+        return;
+      }
+      setRequestState('accepted');
+      Alert.alert('Connected', 'You can now start a 1:1 chat.');
+    })();
+  };
+
+  const connectionCta = (() => {
+    if (requestState === 'accepted') return { label: 'Open chat', icon: 'chatbubble-outline' as const };
+    if (requestState === 'pending_sent') return { label: 'Request sent', icon: 'time-outline' as const };
+    if (requestState === 'pending_received') return { label: 'Accept request', icon: 'checkmark-circle-outline' as const };
+    return { label: 'Request connection', icon: 'person-add-outline' as const };
+  })();
 
   const handleReport = (reason: string) => {
     if (!id || actionBusy) return;
@@ -233,6 +315,37 @@ export default function MemberProfileScreen() {
           <Text style={styles.name}>{profile.full_name || 'Member'}</Text>
           {age ? <Text style={styles.subline}>{age} years old</Text> : null}
 
+          {groupId && id && currentUserId !== id ? (
+            <TouchableOpacity
+              style={[
+                styles.connectionBtn,
+                requestState === 'pending_sent' && styles.connectionBtnMuted,
+              ]}
+              activeOpacity={0.86}
+              disabled={requestBusy || requestState === 'pending_sent'}
+              onPress={() => {
+                if (requestState === 'accepted' && connectionId) {
+                  router.push(`/chat/${connectionId}`);
+                  return;
+                }
+                if (requestState === 'pending_received') {
+                  acceptConnection();
+                  return;
+                }
+                requestConnection();
+              }}
+            >
+              {requestBusy ? (
+                <ActivityIndicator size="small" color={Colors.white} />
+              ) : (
+                <>
+                  <Ionicons name={connectionCta.icon} size={17} color={Colors.white} />
+                  <Text style={styles.connectionBtnText}>{connectionCta.label}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          ) : null}
+
           {profile.bio ? (
             <View style={styles.card}>
               <Text style={styles.sectionLabel}>About</Text>
@@ -318,6 +431,26 @@ const styles = StyleSheet.create({
   avatarInitial: { color: Colors.white, fontSize: 36, fontWeight: '800' },
   name: { textAlign: 'center', fontSize: 24, fontWeight: '800', color: Colors.ink },
   subline: { textAlign: 'center', color: Colors.muted, marginTop: -4, marginBottom: 2 },
+  connectionBtn: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 44,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.terracotta,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  connectionBtnMuted: {
+    backgroundColor: Colors.brownLight,
+  },
+  connectionBtnText: {
+    color: Colors.white,
+    fontSize: 14,
+    fontWeight: '800',
+  },
   card: {
     backgroundColor: Colors.warmWhite,
     borderWidth: 1,
