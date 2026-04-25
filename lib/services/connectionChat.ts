@@ -79,13 +79,10 @@ export async function triggerConnectionMessagePush(connectionId: string, message
   });
 }
 
-export async function markConnectionRead(connectionId: string, userId: string) {
-  return supabase
-    .from('connection_messages')
-    .update({ read_at: new Date().toISOString() })
-    .eq('connection_id', connectionId)
-    .is('read_at', null)
-    .neq('sender_id', userId);
+export async function markConnectionRead(connectionId: string) {
+  return supabase.rpc('mark_connection_messages_read', {
+    p_connection_id: connectionId,
+  });
 }
 
 export function subscribeToConnectionMessages(

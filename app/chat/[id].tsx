@@ -117,7 +117,7 @@ export default function ConnectionChatScreen() {
       const resolvedAvatar = await resolveProfilePhotoUrl(rawProfile?.avatar_url);
       setCounterpart(rawProfile ? { ...rawProfile, avatar_url: resolvedAvatar } : null);
       const messageRows = (connectionMessagesRes.data as ConnectionMessageRow[] | null) ?? [];
-      await markConnectionRead(row.id, uid);
+      await markConnectionRead(row.id);
 
       setMessages(
         messageRows.map((m) => ({
@@ -174,7 +174,7 @@ export default function ConnectionChatScreen() {
       });
 
       if (row.sender_id !== userId) {
-        await markConnectionRead(id, userId);
+        await markConnectionRead(id);
       }
 
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
